@@ -357,7 +357,7 @@ private final class MacControlServer {
         }
         var pid: pid_t = 0
         guard AXUIElementGetPid(element, &pid) == .success else { return NSWorkspace.shared.frontmostApplication }
-        return NSRunningApplication(processIdentifier: pid)
+        return NSRunningApplication(processIdentifier: pid) ?? NSWorkspace.shared.frontmostApplication
     }
 
     private func waitUntilFocused(_ app: NSRunningApplication, seconds: Double) -> Bool {
@@ -371,27 +371,22 @@ private final class MacControlServer {
 
     private func bringToFront(_ app: NSRunningApplication) throws {
         if focusedApp()?.processIdentifier == app.processIdentifier { return }
-        app.activate()
-        if waitUntilFocused(app, seconds: 1) { return }
-        // macOS may refuse activation requested by a background process; LaunchServices still honors it.
-        if let url = app.bundleURL {
-            let process = Process()
-            process.executableURL = URL(fileURLWithPath: "/usr/bin/open")
-            process.arguments = [url.path]
-            process.standardOutput = FileHandle.nullDevice
-            process.standardError = FileHandle.nullDevice
-            try? process.run()
-            process.waitUntilExit()
-            if waitUntilFocused(app, seconds: 2) { return }
+        guard app.activate(), waitUntilFocused(app, seconds: 2) else {
+            let current = focusedApp()?.localizedName ?? "another app"
+            throw ToolFailure("Could not bring \(app.localizedName ?? "the app") to the front (\(current) kept focus); no input was sent.")
         }
-        throw ToolFailure("Could not bring \(app.localizedName ?? "the app") to the front; no input was sent.")
     }
 
     // Re-checks focus immediately before posting input, since another app can take focus between tool calls.
+    // A terminal hosting the agent may grab focus back right after activation, so re-activate once.
     private func confirmFocus(_ target: NSRunningApplication?) throws -> String {
-        let current = focusedApp()
+        var current = focusedApp()
         if let target, current?.processIdentifier != target.processIdentifier {
-            throw ToolFailure("\(current?.localizedName ?? "Another app") took focus from \(target.localizedName ?? "the app"); no input was sent.")
+            try bringToFront(target)
+            current = focusedApp()
+            guard current?.processIdentifier == target.processIdentifier else {
+                throw ToolFailure("\(current?.localizedName ?? "Another app") took focus from \(target.localizedName ?? "the app"); no input was sent.")
+            }
         }
         return current?.localizedName ?? "the frontmost app"
     }
