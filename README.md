@@ -1,42 +1,46 @@
 # mac-control-mcp
 
-這是一個在你自己的 Mac 上執行的 MCP 伺服器，讓本機 Claude Code 或 Codex 使用 macOS 的截圖、輔助使用、鍵盤、滑鼠與螢幕錄影功能。它只透過標準輸入／輸出與 MCP 主程式通信，沒有網路監聽埠，也不提供任意 shell 指令。
+English | [繁體中文](README.zh-TW.md)
 
-## 功能
+An MCP server that runs on your own Mac and lets a local Claude Code or Codex session use macOS screenshots, Accessibility, keyboard, mouse, and screen recording. It talks to the MCP host only over standard input and output. It opens no network port and does not offer arbitrary shell commands.
 
-| 工具 | 功能 |
+## Tools
+
+| Tool | What it does |
 | --- | --- |
-| `mac_status` | 查看顯示器、前景 App 和權限狀態 |
-| `mac_request_screen_recording` | 觸發 macOS 螢幕錄製權限提示 |
-| `mac_screenshot` | 擷取主螢幕，回傳 JPEG 給模型 |
-| `mac_ui_tree` | 讀取前景 App（或用 `app` 指定的 App）的輔助使用元素，遮蔽密碼欄位內容 |
-| `mac_mouse` | 移動、點擊、雙擊、右鍵點擊、拖曳 |
-| `mac_scroll` | 垂直或水平捲動 |
-| `mac_type_text` | 暫時放入文字並模擬 Command-V，輸入 Unicode 文字後還原剪貼簿 |
-| `mac_key` | 按 Enter、方向鍵、字母鍵及 Command 等組合鍵 |
-| `mac_record_start` / `mac_record_status` / `mac_record_stop` | 錄製主螢幕影片到本機 MOV 檔，單次最長 120 秒 |
+| `mac_status` | Reports the display, the frontmost app, and permission status |
+| `mac_request_screen_recording` | Triggers the macOS Screen Recording permission prompt |
+| `mac_screenshot` | Captures the main display and returns a JPEG to the model |
+| `mac_ui_tree` | Reads Accessibility elements of the frontmost app, or of the app named by `app`, with password field values hidden |
+| `mac_mouse` | Moves, clicks, double-clicks, right-clicks, and drags |
+| `mac_scroll` | Scrolls vertically or horizontally |
+| `mac_type_text` | Types Unicode text by placing it on the clipboard and pressing Command-V, then restores the clipboard |
+| `mac_key` | Presses Enter, arrow keys, letter keys, and combinations with Command and other modifiers |
+| `mac_record_start` / `mac_record_status` / `mac_record_stop` | Records the main display to a local MOV file, up to 120 seconds at a time |
 
-滑鼠座標使用**最近一次 `mac_screenshot` 影像的像素座標**。螢幕解析度變動後，請先重新截圖。錄影檔存於 `.build/recordings/`，此目錄不會進入 Git；錄影工具回傳的檔案路徑可供本機查看或後續處理。影片沒有額外錄製麥克風或系統音訊。
+Mouse coordinates are **pixel coordinates in the most recent `mac_screenshot` image**. Take a new screenshot after the screen resolution changes. Recordings are saved in `.build/recordings/`, which is not tracked by Git, and the recording tools return the file path for local viewing or further processing. Recordings do not capture the microphone or system audio.
 
-`mac_type_text`、`mac_key` 和 `mac_ui_tree` 可以加上 `app` 參數，填執行中、有 Dock 圖示的 App 名稱或 bundle ID（例如 `TextEdit` 或 `com.apple.TextEdit`）。名稱同時符合多個 App 時，會選目前在前景的那個；都不在前景就回報錯誤並列出候選，請改用 bundle ID。輸入工具會先把該 App 切到前景，送出前再確認一次；如果焦點已經被其他 App 搶走，就不會送出任何輸入，並回報錯誤。`mac_ui_tree` 指定 `app` 時只讀取，不會切換前景 App。代理在終端機裡執行時，焦點常在兩次工具呼叫之間回到終端機，所以建議輸入時一律指定 `app`。iTerm2 等終端機在輔助使用文字裡用 NUL 代表寬字元的補位和空白格：寬字元後的補位會移除，其他 NUL 轉成空格，每行結尾的空白會去掉。
+`mac_type_text`, `mac_key`, and `mac_ui_tree` accept an `app` parameter: the name or bundle ID of a running app with a Dock icon, such as `TextEdit` or `com.apple.TextEdit`. If a name matches several apps, the one in front is chosen; if none of them is in front, the tool reports an error that lists the candidates, and you should use a bundle ID instead. The input tools bring the app to the front first and check again just before sending. If another app has taken focus by then, no input is sent and the tool reports an error. With `app`, `mac_ui_tree` only reads and does not change which app is in front. When the agent runs in a terminal, focus often returns to the terminal between tool calls, so always pass `app` when sending input.
 
-`mac_type_text` 會短暫使用系統剪貼簿，再還原原有內容；如果在貼上期間其他程式更新了剪貼簿，它不會覆寫該更新。超過 40 MB 或無法完整保存的剪貼簿內容會讓輸入取消。這比直接送 Unicode 鍵盤事件更能配合目前的注音輸入法與各 App 文字欄位。
+Terminals such as iTerm2 use NUL in Accessibility text both to pad wide characters and to mark blank cells. Padding after a wide character is removed, other NULs become spaces, and blanks at the end of each line are trimmed.
 
-## 建置與測試
+`mac_type_text` uses the system clipboard briefly and then restores what was there. If another program changes the clipboard during the paste, that change is not overwritten. Clipboard contents larger than 40 MB, or contents that cannot be fully preserved, cancel the input. Pasting works better than sending Unicode key events with input methods such as Zhuyin and with app text fields.
 
-需要已安裝 Xcode Command Line Tools 的 macOS、Swift，以及 Python 3。
+## Build and test
+
+Requires macOS with the Xcode Command Line Tools, Swift, and Python 3.
 
 ```sh
 sh scripts/ci.sh
 ```
 
-這會編譯 `.build/mac-control-mcp` 和 `.build/terminal-text-tests`，執行終端機文字清理的單元測試，以及不操作桌面的 MCP 協定測試。GitHub Actions 使用同一份腳本。
+This builds `.build/mac-control-mcp` and `.build/terminal-text-tests`, runs the terminal text unit tests, and runs MCP protocol tests that do not control the desktop. GitHub Actions runs the same script.
 
-## 連接 Claude Code 與 Codex
+## Connect Claude Code and Codex
 
-Claude Code 的 `.mcp.json` 和 Codex 的 `.codex/config.toml` 含有本機絕對路徑，所以不放進 repo（已列在 `.gitignore`）。clone 之後請在專案根目錄自行建立，把路徑換成你的 clone 位置。兩者都啟動 `scripts/run-server.sh`，這個腳本會在程式缺少或源碼更新時重新編譯。
+Claude Code's `.mcp.json` and Codex's `.codex/config.toml` contain local absolute paths, so they are not in the repository (they are listed in `.gitignore`). After cloning, create them in the project root and replace the path with the absolute path of your clone. Both start `scripts/run-server.sh`, which rebuilds the server when the binary is missing or a source file has changed.
 
-`.mcp.json`：
+`.mcp.json`:
 
 ```json
 {
@@ -50,7 +54,7 @@ Claude Code 的 `.mcp.json` 和 Codex 的 `.codex/config.toml` 含有本機絕�
 }
 ```
 
-`.codex/config.toml`：
+`.codex/config.toml`:
 
 ```toml
 [mcp_servers.mac_control]
@@ -61,32 +65,32 @@ startup_timeout_sec = 30
 tool_timeout_sec = 30
 ```
 
-如果要讓代理預設使用 mac-control，可以另外在本機建立 `CLAUDE.md` 或 `AGENTS.md` 說明，這兩個檔案同樣不進 repo。
+To have an agent use mac-control by default, you can also create a local `CLAUDE.md` or `AGENTS.md` with instructions. These files are not tracked either.
 
-1. 在本專案目錄開始一個**新的本機** Claude Code 或 Codex 工作階段。
-2. Claude Code 首次載入專案 MCP 時，請在它自己的介面中檢查並核准。Codex 需要信任此專案，才會載入 `.codex/config.toml`。
-3. 在代理的 MCP 清單中確認 `mac-control` / `mac_control` 已連線，先呼叫 `mac_status`。
-4. 對代理說明任務，例如：「用 mac-control 讀取目前畫面，點開 Finder，然後錄製 10 秒操作影片。」
+1. Start a **new local** Claude Code or Codex session in the project directory.
+2. The first time Claude Code loads the project MCP server, review and approve it in Claude Code. Codex loads `.codex/config.toml` only after you trust the project.
+3. Check that `mac-control` / `mac_control` is connected in the agent's MCP list, then call `mac_status` first.
+4. Describe the task to the agent, for example: "Use mac-control to read the current screen, open Finder, then record a 10-second video of it."
 
-這份設定只作用於此專案。若要在所有專案使用，可以把相同的本機 stdio 啟動命令加入使用者層級的 MCP 設定；不要同時保留相同名稱的重複設定。
+This configuration applies only to this project. To use the server in every project, add the same local stdio command to your user-level MCP configuration, and do not keep a duplicate entry with the same name.
 
-若你想在其他專案也使用，在那些專案中自行執行以下命令即可。這會變更各工具的使用者層級設定，本專案的設定檔不會自動幫你變更：
+To use it in other projects, run these commands yourself, replacing the path with the location of your clone. They change each tool's user-level configuration; the project files are not changed for you:
 
 ```sh
 codex mcp add mac_control -- /bin/sh /path/to/mac-control-mcp/scripts/run-server.sh
 claude mcp add --scope user --transport stdio mac-control -- /bin/sh /path/to/mac-control-mcp/scripts/run-server.sh
 ```
 
-本專案的建置程序不會執行 Claude CLI；上方第二行只供你自行選用。
+The project build never runs the Claude CLI; the second command is only there if you want it.
 
-## macOS 權限
+## macOS permissions
 
-`mac_status` 會顯示 `screen_recording` 和 `accessibility`。若螢幕錄製未授權，請呼叫 `mac_request_screen_recording`，並在 macOS 的提示或「系統設定 → 隱私權與安全性 → 螢幕與系統音訊錄製」中授權。鍵盤、滑鼠和輔助使用元素需要「系統設定 → 隱私權與安全性 → 輔助使用」權限。macOS 可能要求重啟 Claude Code、Codex 或其宿主程式後權限才生效。
+`mac_status` shows `screen_recording` and `accessibility`. If Screen Recording is not granted, call `mac_request_screen_recording` and allow it in the macOS prompt or in System Settings > Privacy & Security > Screen & System Audio Recording. Keyboard, mouse, and Accessibility elements need System Settings > Privacy & Security > Accessibility. macOS may require restarting Claude Code, Codex, or their host app before the permission takes effect.
 
-伺服器需要在**已登入的 Mac 桌面工作階段**執行。CI 和某些沙盒環境沒有圖形顯示器，因此測試只驗證 MCP 協定和輸入檢查，不會實際點擊或錄影。螢幕截圖及錄影會把畫面內容交給代理；請先關閉你不想分享的私人視窗。
+The server must run in a **logged-in Mac desktop session**. CI and some sandboxes have no graphical display, so the tests check only the MCP protocol and input validation and never click or record. Screenshots and recordings hand screen contents to the agent, so close private windows you do not want to share first.
 
-## 操作方式
+## Usage
 
-先呼叫 `mac_status`，然後 `mac_screenshot`。需要點擊時，使用截圖顯示的像素位置呼叫 `mac_mouse`。輸入文字使用 `mac_type_text`，快捷鍵使用 `mac_key`，例如 `{"key":"c","modifiers":["cmd"]}`。
+Call `mac_status` first, then `mac_screenshot`. To click, call `mac_mouse` with pixel positions from the screenshot. Type text with `mac_type_text` and press shortcuts with `mac_key`, for example `{"key":"c","modifiers":["cmd"]}`.
 
-錄影範例：呼叫 `mac_record_start` 並傳入 `{"duration_seconds":10}`，保存回傳的 `recording_id`；之後用 `mac_record_status` 查詢。狀態為 `ready` 時會回傳 MOV 檔絕對路徑。要提前結束可呼叫 `mac_record_stop`。若 macOS 尚未授權，錄影工具會回報缺少權限。
+Recording example: call `mac_record_start` with `{"duration_seconds":10}` and keep the returned `recording_id`, then check it with `mac_record_status`. When the state is `ready`, it returns the absolute path of the MOV file. Call `mac_record_stop` to stop early. If macOS has not granted permission, the recording tools report the missing permission.
