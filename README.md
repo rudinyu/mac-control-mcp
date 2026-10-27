@@ -2,6 +2,8 @@
 
 English | [繁體中文](README.zh-TW.md)
 
+**Guides:** [Installation](docs/INSTALL.md) · [Usage and tool reference](docs/USAGE.md)
+
 An MCP server that runs on your own Mac and lets a local Claude Code or Codex session use macOS screenshots, Accessibility, keyboard, mouse, and screen recording. It talks to the MCP host only over standard input and output. It opens no network port and does not offer arbitrary shell commands.
 
 ## Tools
