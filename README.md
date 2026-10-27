@@ -22,9 +22,9 @@ Mouse coordinates are **pixel coordinates in the most recent `mac_screenshot` im
 
 `mac_type_text`, `mac_key`, and `mac_ui_tree` accept an `app` parameter: the name or bundle ID of a running app with a Dock icon, such as `TextEdit` or `com.apple.TextEdit`. If a name matches several apps, the one in front is chosen; if none of them is in front, the tool reports an error that lists the candidates, and you should use a bundle ID instead. The input tools bring the app to the front first and check again just before sending. If another app has taken focus by then, no input is sent and the tool reports an error. With `app`, `mac_ui_tree` only reads and does not change which app is in front. When the agent runs in a terminal, focus often returns to the terminal between tool calls, so always pass `app` when sending input.
 
-Terminals such as iTerm2 use NUL in Accessibility text both to pad wide characters and to mark blank cells. Padding after a wide character is removed, other NULs become spaces, and blanks at the end of each line are trimmed.
+In `mac_ui_tree` output, terminals such as iTerm2 use NUL in Accessibility text both to pad wide characters and to mark blank cells. Padding after a wide character is removed, other NULs become spaces, and blanks at the end of each line are trimmed.
 
-`mac_type_text` uses the system clipboard briefly and then restores what was there. If another program changes the clipboard during the paste, that change is not overwritten. Clipboard contents larger than 40 MB, or contents that cannot be fully preserved, cancel the input. Pasting works better than sending Unicode key events with input methods such as Zhuyin and with app text fields.
+`mac_type_text` uses the system clipboard briefly and then restores what was there. If another program changes the clipboard during the paste, that change is not overwritten. Clipboard contents larger than 40 MB, or contents that cannot be fully preserved, cancel the input. Pasting is more reliable than sending Unicode key events, both with input methods such as Zhuyin (Bopomofo) and in app text fields.
 
 ## Build and test
 
