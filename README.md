@@ -46,34 +46,22 @@ The hook needs nothing beyond the tools above. If `codex-precommit-check` and th
 
 ## Connect Claude Code and Codex
 
-Claude Code's `.mcp.json` and Codex's `.codex/config.toml` contain local absolute paths, so they are not in the repository (they are listed in `.gitignore`). After cloning, create them in the project root and replace the path with the absolute path of your clone. Both start `scripts/run-server.sh`, which rebuilds the server when the binary is missing or a source file has changed.
+The agent configuration contains this clone's absolute path, so it is not tracked (see `.gitignore`). Generate it after cloning:
 
-`.mcp.json`:
-
-```json
-{
-  "mcpServers": {
-    "mac-control": {
-      "type": "stdio",
-      "command": "/bin/sh",
-      "args": ["/path/to/mac-control-mcp/scripts/run-server.sh"]
-    }
-  }
-}
+```sh
+sh scripts/init-agents.sh
 ```
 
-`.codex/config.toml`:
+This creates the following files in the project root from the templates in [`examples/`](examples/), with your clone's path filled in. Existing files are kept unless you pass `--force`.
 
-```toml
-[mcp_servers.mac_control]
-command = "/bin/sh"
-args = ["/path/to/mac-control-mcp/scripts/run-server.sh"]
-default_tools_approval_mode = "prompt"
-startup_timeout_sec = 30
-tool_timeout_sec = 30
-```
+| File | Used by | Template |
+| --- | --- | --- |
+| `.mcp.json` | Claude Code: starts the MCP server for this project | [`examples/mcp.json`](examples/mcp.json) |
+| `CLAUDE.md` | Claude Code: tells it to use mac-control and how | [`examples/CLAUDE.md`](examples/CLAUDE.md) |
+| `.codex/config.toml` | Codex: starts the MCP server for this project | [`examples/codex/config.toml`](examples/codex/config.toml) |
+| `AGENTS.md` | Codex: tells it to use mac-control and how | [`examples/AGENTS.md`](examples/AGENTS.md) |
 
-To have an agent use mac-control by default, you can also create a local `CLAUDE.md` or `AGENTS.md` with instructions. These files are not tracked either.
+Only the two MCP configuration files are required; `CLAUDE.md` and `AGENTS.md` are optional instructions. Both MCP configuration files start `scripts/run-server.sh`, which rebuilds the server when the binary is missing or a source file has changed. The script also prints the entry for Claude Desktop (template: [`examples/claude_desktop_config.json`](examples/claude_desktop_config.json)). Add it to `mcpServers` in `~/Library/Application Support/Claude/claude_desktop_config.json` yourself, because that file also holds your other servers, then quit and reopen Claude.
 
 1. Start a **new local** Claude Code or Codex session in the project directory.
 2. The first time Claude Code loads the project MCP server, review and approve it in Claude Code. Codex loads `.codex/config.toml` only after you trust the project.

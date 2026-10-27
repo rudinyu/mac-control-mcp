@@ -5,7 +5,7 @@ __pycache__/
 CODEX_CLAUDE_REVIEW.md
 
 # Local agent configuration (contains machine-specific paths)
-CLAUDE.md
-AGENTS.md
-.mcp.json
-.codex/
+/CLAUDE.md
+/AGENTS.md
+/.mcp.json
+/.codex/

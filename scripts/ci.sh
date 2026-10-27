@@ -9,3 +9,4 @@ swiftc -module-cache-path "$project_dir/.build/module-cache" -parse-as-library \
   -o "$project_dir/.build/terminal-text-tests"
 "$project_dir/.build/terminal-text-tests"
 python3 "$project_dir/tests/test_protocol.py" "$project_dir/.build/mac-control-mcp"
+python3 "$project_dir/tests/test_init_agents.py"

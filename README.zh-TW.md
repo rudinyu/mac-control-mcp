@@ -44,34 +44,22 @@ git config core.hooksPath .githooks
 
 ## 連接 Claude Code 與 Codex
 
-Claude Code 的 `.mcp.json` 和 Codex 的 `.codex/config.toml` 含有本機絕對路徑，所以不放進 repo（已列在 `.gitignore`）。clone 之後請在專案根目錄自行建立，把路徑換成你的 clone 位置。兩者都啟動 `scripts/run-server.sh`，這個腳本會在程式缺少或源碼更新時重新編譯。
+代理設定含有這份 clone 的絕對路徑，所以不放進 repo（見 `.gitignore`）。clone 之後執行以下命令產生：
 
-`.mcp.json`：
-
-```json
-{
-  "mcpServers": {
-    "mac-control": {
-      "type": "stdio",
-      "command": "/bin/sh",
-      "args": ["/path/to/mac-control-mcp/scripts/run-server.sh"]
-    }
-  }
-}
+```sh
+sh scripts/init-agents.sh
 ```
 
-`.codex/config.toml`：
+它會依照 [`examples/`](examples/) 裡的範本，在專案根目錄產生下列檔案，並自動填入你的 clone 路徑。已存在的檔案會保留，加上 `--force` 才會覆蓋。
 
-```toml
-[mcp_servers.mac_control]
-command = "/bin/sh"
-args = ["/path/to/mac-control-mcp/scripts/run-server.sh"]
-default_tools_approval_mode = "prompt"
-startup_timeout_sec = 30
-tool_timeout_sec = 30
-```
+| 檔案 | 給誰用 | 範本 |
+| --- | --- | --- |
+| `.mcp.json` | Claude Code：為這個專案啟動 MCP 伺服器 | [`examples/mcp.json`](examples/mcp.json) |
+| `CLAUDE.md` | Claude Code：告訴它使用 mac-control 及使用方式 | [`examples/CLAUDE.md`](examples/CLAUDE.md) |
+| `.codex/config.toml` | Codex：為這個專案啟動 MCP 伺服器 | [`examples/codex/config.toml`](examples/codex/config.toml) |
+| `AGENTS.md` | Codex：告訴它使用 mac-control 及使用方式 | [`examples/AGENTS.md`](examples/AGENTS.md) |
 
-如果要讓代理預設使用 mac-control，可以另外在本機建立 `CLAUDE.md` 或 `AGENTS.md` 說明，這兩個檔案同樣不進 repo。
+只有兩個 MCP 設定檔是必要的；`CLAUDE.md` 和 `AGENTS.md` 是選用的說明。兩個 MCP 設定檔都會啟動 `scripts/run-server.sh`，這個腳本會在程式缺少或源碼更新時重新編譯。腳本也會印出 Claude Desktop 要用的設定（範本：[`examples/claude_desktop_config.json`](examples/claude_desktop_config.json)）。那個設定檔裡還有你其他的 server，所以請自行把它加進 `~/Library/Application Support/Claude/claude_desktop_config.json` 的 `mcpServers`，然後完全結束 Claude 再重開。
 
 1. 在本專案目錄開始一個**新的本機** Claude Code 或 Codex 工作階段。
 2. Claude Code 首次載入專案 MCP 時，請在它自己的介面中檢查並核准。Codex 需要信任此專案，才會載入 `.codex/config.toml`。

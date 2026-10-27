@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "mac-control": {
+      "type": "stdio",
+      "command": "/bin/sh",
+      "args": [
+        "/path/to/mac-control-mcp/scripts/run-server.sh"
+      ]
+    }
+  }
+}
