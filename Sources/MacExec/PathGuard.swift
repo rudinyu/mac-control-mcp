@@ -60,8 +60,8 @@ func mountRejection(_ folder: URL, home: URL, protected: [URL] = []) -> String? 
     if path.contains(",") || path.contains("\n") || path.contains("\r") {
         return "\(path) contains a comma or line break, which cannot be passed to Docker safely."
     }
-    for folder in protected {
-        let other = resolvedPath(folder)
+    for protectedFolder in protected {
+        let other = resolvedPath(protectedFolder)
         if isSame(path, orInside: other) || isSame(other, orInside: path) {
             return "\(path) overlaps \(other), which runs on the Mac and must not be changed from the sandbox."
         }

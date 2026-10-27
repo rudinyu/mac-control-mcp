@@ -33,9 +33,14 @@ private struct Settings {
             URL(fileURLWithPath: (path as NSString).expandingTildeInPath).standardizedFileURL
         }
         var problems: [String] = []
-        // The server runs from <project>/.build, and the project's scripts run on the Mac.
-        let project = URL(fileURLWithPath: CommandLine.arguments[0]).standardizedFileURL
-            .deletingLastPathComponent().deletingLastPathComponent()
+        // The server runs from <project>/.build, and the project's scripts run on the Mac. Use the real
+        // executable path, since the name the server was started with may be relative or a link.
+        let executable = Bundle.main.executableURL?.resolvingSymlinksInPath()
+            ?? URL(fileURLWithPath: CommandLine.arguments[0]).resolvingSymlinksInPath()
+        let project = executable.deletingLastPathComponent().deletingLastPathComponent()
+        if !FileManager.default.fileExists(atPath: project.appendingPathComponent("Sources/MacExec").path) {
+            problems.append("Could not find the mac-control-mcp project next to \(executable.path); run the server from its .build folder.")
+        }
         let workspace = expand(env["MAC_EXEC_WORKSPACE"] ?? "~/AgentWorkspace")
         if let reason = mountRejection(workspace, home: home, protected: [project]) {
             problems.append("MAC_EXEC_WORKSPACE cannot be used: \(reason)")
@@ -390,16 +395,19 @@ private final class MacExecServer {
         return resultJSON(result)
     }
 
+    // File tools go through WorkspaceFiles, which never follows a link the sandbox may have swapped in.
+    private var files: WorkspaceFiles { WorkspaceFiles(root: resolvedPath(settings.workspace)) }
+
     private func readFile(_ args: [String: Any]) throws -> String {
         try requireUsableWorkspace()
         let url = try workspacePath(args, "path")
         let limit = try integer(args, "max_bytes", default: 200_000, range: 1...maxFileBytes)
-        // The sandbox can create FIFOs and devices in the workspace; opening one would block the server.
-        guard isRegularFile(url) else { throw ToolFailure("\(displayPath(url)) is not a regular file.") }
-        let handle = try FileHandle(forReadingFrom: url)
-        defer { try? handle.close() }
+        let handle: FileHandle
+        do { handle = try files.openFile(url.path, flags: O_RDONLY) } catch {
+            throw ToolFailure("Cannot read \(displayPath(url)): \(error)")
+        }
         let data = try handle.read(upToCount: limit + 1) ?? Data()
-        guard let text = String(data: utf8Prefix(data, limit: limit), encoding: .utf8) else {
+        guard let text = utf8Text(data, limit: limit) else {
             throw ToolFailure("\(displayPath(url)) is not UTF-8 text. Use sandbox_exec, for example with base64 or xxd.")
         }
         return jsonString(["path": displayPath(url), "content": text, "truncated": data.count > limit])
@@ -412,25 +420,12 @@ private final class MacExecServer {
         let data = Data(content.utf8)
         guard data.count <= maxFileBytes else { throw ToolFailure("content is larger than \(maxFileBytes) bytes.") }
         let append = args["append"] as? Bool ?? false
-        var isDirectory: ObjCBool = false
-        if FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory), isDirectory.boolValue {
-            throw ToolFailure("\(displayPath(url)) is a folder.")
-        }
-        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-        // Creating folders can change what the path resolves to, so check it again before writing.
-        guard resolveInWorkspace(displayPath(url), workspace: settings.workspace) != nil else {
-            throw ToolFailure("path must stay inside the workspace.")
-        }
-        if FileManager.default.fileExists(atPath: url.path), !isRegularFile(url) {
-            throw ToolFailure("\(displayPath(url)) is not a regular file.")
-        }
-        if append, FileManager.default.fileExists(atPath: url.path) {
-            let handle = try FileHandle(forWritingTo: url)
-            defer { try? handle.close() }
-            try handle.seekToEnd()
+        let flags = O_WRONLY | O_CREAT | (append ? O_APPEND : O_TRUNC)
+        do {
+            let handle = try files.openFile(url.path, flags: flags, createFolders: true)
             try handle.write(contentsOf: data)
-        } else {
-            try data.write(to: url, options: .atomic)
+        } catch let error as WorkspaceFileError {
+            throw ToolFailure("Cannot write \(displayPath(url)): \(error)")
         }
         return jsonString(["path": displayPath(url), "bytes_written": data.count, "appended": append])
     }
@@ -438,41 +433,22 @@ private final class MacExecServer {
     private func list(_ args: [String: Any]) throws -> String {
         try requireUsableWorkspace()
         let url = try workspacePath(args, "path", default: ".")
-        let names = try FileManager.default.contentsOfDirectory(atPath: url.path).sorted()
-        var entries: [[String: Any]] = []
-        for name in names.prefix(maxListEntries) {
-            let child = url.appendingPathComponent(name)
-            let attributes = (try? FileManager.default.attributesOfItem(atPath: child.path)) ?? [:]
-            let type: String
-            switch attributes[.type] as? FileAttributeType {
-            case .typeDirectory?: type = "folder"
-            case .typeSymbolicLink?: type = "link"
-            case .typeRegular?: type = "file"
-            default: type = "other"
-            }
-            entries.append(["name": name, "type": type, "bytes": (attributes[.size] as? NSNumber)?.intValue ?? 0])
+        do {
+            let (entries, truncated) = try files.list(url.path, limit: maxListEntries)
+            return jsonString(["path": displayPath(url), "entries": entries, "truncated": truncated])
+        } catch {
+            throw ToolFailure("Cannot list \(displayPath(url)): \(error)")
         }
-        return jsonString(["path": displayPath(url), "entries": entries, "truncated": names.count > maxListEntries])
     }
 
-    private func isRegularFile(_ url: URL) -> Bool {
-        (try? FileManager.default.attributesOfItem(atPath: url.path)[.type] as? FileAttributeType) == .typeRegular
-    }
-
-    // Cuts data to at most `limit` bytes without ending inside a UTF-8 character.
-    private func utf8Prefix(_ data: Data, limit: Int) -> Data {
-        guard data.count > limit else { return data }
-        var end = limit
-        // Step back over continuation bytes (10xxxxxx) to the start of the character, then drop it
-        // if the whole character does not fit.
-        var start = end
-        while start > 0, data[data.startIndex + start - 1] & 0xC0 == 0x80, end - start < 3 { start -= 1 }
-        if start > 0 {
-            let lead = data[data.startIndex + start - 1]
-            let length = lead >= 0xF0 ? 4 : lead >= 0xE0 ? 3 : lead >= 0xC0 ? 2 : 1
-            if length > 1, end - (start - 1) < length { end = start - 1 }
+    // Decodes at most `limit` bytes as UTF-8. When the limit cuts through a character, the 1 to 3
+    // bytes of it that fit are dropped instead of making the whole text invalid.
+    private func utf8Text(_ data: Data, limit: Int) -> String? {
+        let cut = data.prefix(limit)
+        for drop in 0...(data.count > limit ? min(3, cut.count) : 0) {
+            if let text = String(data: cut.dropLast(drop), encoding: .utf8) { return text }
         }
-        return data.prefix(end)
+        return nil
     }
 
     // MARK: Output

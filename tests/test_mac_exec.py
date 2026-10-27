@@ -1,10 +1,10 @@
 import json
 import os
-import time
 import shutil
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 
 SERVER = os.environ.get(
@@ -15,12 +15,19 @@ IMAGE = os.environ.get("MAC_EXEC_IMAGE", "mac-exec-sandbox:latest")
 PROJECT = os.path.realpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
 
 
-def alive(pid):
-    try:
-        os.kill(pid, 0)
-        return True
-    except ProcessLookupError:
-        return False
+def alive(pid, wait=3):
+    # A killed process can stay a zombie for a moment until it is reaped, so poll before deciding.
+    deadline = time.monotonic() + wait
+    while True:
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            return False
+        except PermissionError:
+            pass  # it exists but belongs to someone else
+        if time.monotonic() >= deadline:
+            return True
+        time.sleep(0.1)
 
 
 def docker_ready():
@@ -146,6 +153,21 @@ class ProtocolAndFileTests(unittest.TestCase):
                 result = self.server.ok("sandbox_read_file", path="zh.txt", max_bytes=limit)
                 self.assertEqual(result["content"], expected)
                 self.assertEqual(result["truncated"], limit < 9)
+
+    def test_symlinked_folders_are_not_followed_for_writes(self):
+        outside = os.path.join(self.server.temp, "outside")
+        os.makedirs(outside)
+        os.symlink(outside, os.path.join(self.server.workspace, "link"))
+        for path in ("link/new.txt", "link"):
+            with self.subTest(path=path):
+                self.assertTrue(self.server.call("sandbox_write_file", path=path, content="x")[0])
+        self.assertEqual(os.listdir(outside), [])
+
+    def test_links_are_listed_as_links(self):
+        os.symlink("/etc", os.path.join(self.server.workspace, "etc-link"))
+        entries = self.server.ok("sandbox_list")["entries"]
+        self.assertEqual([(e["name"], e["type"]) for e in entries], [("etc-link", "link")])
+        self.assertTrue(self.server.call("sandbox_list", path="etc-link")[0])
 
     def test_fifos_are_refused_without_blocking(self):
         os.mkfifo(os.path.join(self.server.workspace, "pipe"))
