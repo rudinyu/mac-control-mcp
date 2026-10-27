@@ -29,7 +29,7 @@ private enum ContainerRuntimeTests {
         let apple = ContainerRuntime(kind: .apple, program: "/usr/local/bin/container", environment: [:])
 
         for (label, runtime) in [("docker", docker), ("apple", apple)] {
-            let arguments = runtime.runArguments(run)
+            let arguments = (try? runtime.runArguments(run)) ?? []
             check("\(label): starts with run --rm --init", Array(arguments.prefix(3)) == ["run", "--rm", "--init"], "\(arguments)")
             check("\(label): non-root user", value(after: "--user", in: arguments) == ["1000:1000"])
             check("\(label): read-only system", arguments.contains("--read-only"))
@@ -45,18 +45,26 @@ private enum ContainerRuntimeTests {
             check("\(label): image comes right after the options", arguments.firstIndex(of: run.image).map { arguments[$0 + 1] } == "bash")
         }
 
-        let dockerArgs = docker.runArguments(run)
+        let dockerArgs = (try? docker.runArguments(run)) ?? []
         check("docker: no-new-privileges", value(after: "--security-opt", in: dockerArgs) == ["no-new-privileges"])
         check("docker: process limit", value(after: "--pids-limit", in: dockerArgs) == ["256"])
         check("docker: home folder tmpfs owned by the agent user", dockerArgs.contains("/home/agent:rw,nosuid,nodev,size=256m,uid=1000,gid=1000"))
         check("docker: bash -c command", Array(dockerArgs.suffix(3)) == ["bash", "-c", run.command])
 
-        let appleArgs = apple.runArguments(run)
+        let appleArgs = (try? apple.runArguments(run)) ?? []
         check("apple: no Docker-only options", !appleArgs.contains("--security-opt") && !appleArgs.contains("--pids-limit") && !appleArgs.contains("--network"))
         check("apple: plain tmpfs path", value(after: "--tmpfs", in: appleArgs) == ["/tmp"])
         check("apple: home under /tmp", value(after: "--env", in: appleArgs).contains("HOME=/tmp/home"))
         check("apple: command passed as an argument to a fixed script",
               Array(appleArgs.suffix(5)) == ["bash", "-c", #"mkdir -p "$HOME" && eval "$1""#, "bash", run.command], "\(appleArgs.suffix(5))")
+
+        for bad in ["/Users/me/a,readonly=false", "/Users/me/a\nb"] {
+            let injected = SandboxRun(name: "n", image: "i", workspace: bad, readOnly: [], workdir: "/workspace", command: "true")
+            check("refuses mount path \(bad.debugDescription)", (try? docker.runArguments(injected)) == nil && (try? apple.runArguments(injected)) == nil)
+        }
+        let injectedTarget = SandboxRun(name: "n", image: "i", workspace: "/ok", readOnly: [("/ok2", "/mnt/readonly/x,source=/etc")], workdir: "/workspace", command: "true")
+        check("refuses mount target with a comma", (try? docker.runArguments(injectedTarget)) == nil)
+        check("unknown MAC_EXEC_RUNTIME is not replaced by Docker", ContainerRuntime.find(["MAC_EXEC_RUNTIME": "podman", "MAC_EXEC_DOCKER": "/bin/sh"]) == nil)
 
         check("kill", docker.killArguments("n") == ["kill", "n"] && apple.killArguments("n") == ["kill", "n"])
         check("docker build", docker.buildArguments(image: "i", context: "/c") == ["build", "--pull", "-t", "i", "/c"])

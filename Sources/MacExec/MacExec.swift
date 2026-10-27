@@ -69,6 +69,9 @@ private struct Settings {
                 readOnly.append(folder)
             }
         }
+        if ContainerRuntime.requestedKind(env) == nil {
+            problems.append("MAC_EXEC_RUNTIME is \"\(env["MAC_EXEC_RUNTIME"] ?? "")\"; use docker or apple.")
+        }
         return Settings(
             home: home, workspace: workspace, readOnlyDirs: readOnly,
             allowHost: env["MAC_EXEC_ALLOW_HOST"] == "1",
@@ -286,7 +289,7 @@ private final class MacExecServer {
             "image": settings.image,
             "audit_log": settings.auditLog.path,
             "problems": settings.problems,
-            "runtime": (ProcessInfo.processInfo.environment["MAC_EXEC_RUNTIME"] ?? "docker"),
+            "runtime": settings.runtime?.kind.rawValue ?? NSNull(),
             "runtime_program": settings.runtime?.program ?? NSNull(),
         ]
         var ready = false
@@ -334,7 +337,7 @@ private final class MacExecServer {
             used.insert(target)
             readOnly.append((resolvedPath(folder), "/mnt/readonly/\(target)"))
         }
-        let arguments = runtime.runArguments(SandboxRun(name: name, image: settings.image, workspace: root,
+        let arguments = try runtime.runArguments(SandboxRun(name: name, image: settings.image, workspace: root,
                                                         readOnly: readOnly, workdir: containerCwd, command: command))
 
         try audit(["tool": "sandbox_exec", "event": "start", "command": command, "cwd": containerCwd, "container": name,

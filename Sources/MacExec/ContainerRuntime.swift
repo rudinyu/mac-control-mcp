@@ -17,6 +17,10 @@ struct SandboxRun {
     let command: String
 }
 
+struct RuntimeFailure: Error, CustomStringConvertible {
+    let description: String
+}
+
 struct ContainerRuntime {
     let kind: RuntimeKind
     let program: String
@@ -24,7 +28,14 @@ struct ContainerRuntime {
 
     // Arguments for `run`. Both runtimes get a non-root user, a read-only system, no capabilities,
     // memory and CPU limits, and only the workspace mounted read-write.
-    func runArguments(_ run: SandboxRun) -> [String] {
+    func runArguments(_ run: SandboxRun) throws -> [String] {
+        // --mount is a comma-separated list of key=value options, so a comma or line break in a path would
+        // add options. mountRejection refuses such folders earlier; this check keeps that true here too.
+        for path in [run.workspace, run.workdir] + run.readOnly.flatMap({ [$0.source, $0.target] }) {
+            if path.contains(",") || path.contains("\n") || path.contains("\r") {
+                throw RuntimeFailure(description: "\(path) contains a comma or line break, which cannot be passed to the container runtime safely.")
+            }
+        }
         var arguments = ["run", "--rm", "--init", "--name", run.name, "--label", "mac-exec=1",
                          "--user", "1000:1000", "--read-only"]
         switch kind {
@@ -99,9 +110,15 @@ struct ContainerRuntime {
         }
     }
 
+    // The runtime named by MAC_EXEC_RUNTIME, or nil for a value that is not a known runtime, so a typo
+    // is reported instead of silently using Docker.
+    static func requestedKind(_ env: [String: String]) -> RuntimeKind? {
+        RuntimeKind(rawValue: env["MAC_EXEC_RUNTIME"] ?? RuntimeKind.docker.rawValue)
+    }
+
     // MCP clients such as Claude Desktop start servers with a short PATH, so look in the usual places too.
     static func find(_ env: [String: String]) -> ContainerRuntime? {
-        let kind = RuntimeKind(rawValue: env["MAC_EXEC_RUNTIME"] ?? "docker") ?? .docker
+        guard let kind = requestedKind(env) else { return nil }
         let name = kind == .docker ? "docker" : "container"
         let explicit = env[kind == .docker ? "MAC_EXEC_DOCKER" : "MAC_EXEC_CONTAINER"]
         let candidates = (explicit.map { [$0] } ?? []) + (env["PATH"] ?? "").split(separator: ":").map { "\($0)/\(name)" } + (kind == .docker

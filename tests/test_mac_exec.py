@@ -235,6 +235,15 @@ class SettingsTests(unittest.TestCase):
     def test_workspace_containing_the_project_is_refused(self):
         self.check_refused("overlaps", MAC_EXEC_WORKSPACE=os.path.dirname(PROJECT))
 
+    def test_unknown_runtime_is_reported(self):
+        server = Server(MAC_EXEC_RUNTIME="podman")
+        try:
+            status = server.ok("exec_status")
+            self.assertTrue(any("MAC_EXEC_RUNTIME" in problem for problem in status["problems"]), status["problems"])
+            self.assertIsNone(status["runtime"])
+        finally:
+            server.close()
+
     def test_sensitive_read_only_folders_are_refused(self):
         for folder in ("~", "~/.ssh", "~/Library", "~/.claude"):
             with self.subTest(folder=folder):
