@@ -351,13 +351,14 @@ private final class MacControlServer {
     }
 
     // Asks the window server rather than NSWorkspace, whose frontmostApplication can be stale without a run loop.
+    // Returns nil when focus is unknown, so focus checks before input fail closed.
     private func focusedApp() -> NSRunningApplication? {
         guard let element = elementAttribute(AXUIElementCreateSystemWide(), kAXFocusedApplicationAttribute as CFString) else {
-            return NSWorkspace.shared.frontmostApplication
+            return nil
         }
         var pid: pid_t = 0
-        guard AXUIElementGetPid(element, &pid) == .success else { return NSWorkspace.shared.frontmostApplication }
-        return NSRunningApplication(processIdentifier: pid) ?? NSWorkspace.shared.frontmostApplication
+        guard AXUIElementGetPid(element, &pid) == .success else { return nil }
+        return NSRunningApplication(processIdentifier: pid)
     }
 
     private func waitUntilFocused(_ app: NSRunningApplication, seconds: Double) -> Bool {
@@ -371,8 +372,10 @@ private final class MacControlServer {
 
     private func bringToFront(_ app: NSRunningApplication) throws {
         if focusedApp()?.processIdentifier == app.processIdentifier { return }
-        guard app.activate(), waitUntilFocused(app, seconds: 2) else {
-            let current = focusedApp()?.localizedName ?? "another app"
+        // activate() can return false yet still take effect, so always wait for the result.
+        app.activate()
+        guard waitUntilFocused(app, seconds: 2) else {
+            let current = focusedApp()?.localizedName ?? "an unknown app"
             throw ToolFailure("Could not bring \(app.localizedName ?? "the app") to the front (\(current) kept focus); no input was sent.")
         }
     }
@@ -385,7 +388,7 @@ private final class MacControlServer {
             try bringToFront(target)
             current = focusedApp()
             guard current?.processIdentifier == target.processIdentifier else {
-                throw ToolFailure("\(current?.localizedName ?? "Another app") took focus from \(target.localizedName ?? "the app"); no input was sent.")
+                throw ToolFailure("\(current?.localizedName ?? "An unknown app") took focus from \(target.localizedName ?? "the app"); no input was sent.")
             }
         }
         return current?.localizedName ?? "the frontmost app"
@@ -584,8 +587,35 @@ private final class MacControlServer {
         if let plain = value as? String { string = plain }
         else if let number = value as? NSNumber { string = number.stringValue }
         else { return nil }
-        // Some apps, such as iTerm2, pad wide characters with NUL in Accessibility values.
-        return String(string.replacingOccurrences(of: "\u{0}", with: "").prefix(limit))
+        return String(stripNUL(string).prefix(limit))
+    }
+
+    // iTerm2 and similar terminals report each cell: NUL pads the second cell of a wide character
+    // and also stands for a blank cell. Drop the padding and keep blanks as spaces.
+    private func stripNUL(_ string: String) -> String {
+        guard string.unicodeScalars.contains("\u{0}") else { return string }
+        var scalars = String.UnicodeScalarView()
+        var previousIsWide = false
+        for scalar in string.unicodeScalars {
+            if scalar == "\u{0}" {
+                if !previousIsWide { scalars.append(" ") }
+                previousIsWide = false
+                continue
+            }
+            scalars.append(scalar)
+            previousIsWide = isWide(scalar)
+        }
+        return String(scalars)
+    }
+
+    private func isWide(_ scalar: Unicode.Scalar) -> Bool {
+        switch scalar.value {
+        case 0x1100...0x115F, 0x2E80...0xA4CF, 0xAC00...0xD7A3, 0xF900...0xFAFF, 0xFE30...0xFE4F,
+             0xFF00...0xFF60, 0xFFE0...0xFFE6, 0x1F300...0x1F64F, 0x1F900...0x1F9FF, 0x20000...0x3FFFD:
+            return true
+        default:
+            return false
+        }
     }
 
     private func uiTree(_ args: [String: Any]) throws -> String {
@@ -593,7 +623,9 @@ private final class MacControlServer {
         guard depth.rounded() == depth, depth >= 0, depth <= 8 else { throw ToolFailure("max_depth must be 0 to 8.") }
         let target = try targetApp(args)
         try requireAccessibility()
-        guard let app = target ?? focusedApp() else { throw ToolFailure("No frontmost app found.") }
+        guard let app = target ?? focusedApp() ?? NSWorkspace.shared.frontmostApplication else {
+            throw ToolFailure("No frontmost app found.")
+        }
         let appElement = AXUIElementCreateApplication(app.processIdentifier)
         let root = elementAttribute(appElement, kAXFocusedWindowAttribute as CFString)
             ?? elementAttribute(appElement, kAXMainWindowAttribute as CFString)
