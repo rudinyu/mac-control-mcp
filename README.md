@@ -9,7 +9,7 @@
 | `mac_status` | 查看顯示器、前景 App 和權限狀態 |
 | `mac_request_screen_recording` | 觸發 macOS 螢幕錄製權限提示 |
 | `mac_screenshot` | 擷取主螢幕，回傳 JPEG 給模型 |
-| `mac_ui_tree` | 讀取前景 App 的輔助使用元素，遮蔽密碼欄位內容 |
+| `mac_ui_tree` | 讀取前景 App（或用 `app` 指定的 App）的輔助使用元素，遮蔽密碼欄位內容 |
 | `mac_mouse` | 移動、點擊、雙擊、右鍵點擊、拖曳 |
 | `mac_scroll` | 垂直或水平捲動 |
 | `mac_type_text` | 暫時放入文字並模擬 Command-V，輸入 Unicode 文字後還原剪貼簿 |
@@ -17,6 +17,8 @@
 | `mac_record_start` / `mac_record_status` / `mac_record_stop` | 錄製主螢幕影片到本機 MOV 檔，單次最長 120 秒 |
 
 滑鼠座標使用**最近一次 `mac_screenshot` 影像的像素座標**。螢幕解析度變動後，請先重新截圖。錄影檔存於 `.build/recordings/`，此目錄不會進入 Git；錄影工具回傳的檔案路徑可供本機查看或後續處理。影片沒有額外錄製麥克風或系統音訊。
+
+`mac_type_text`、`mac_key` 和 `mac_ui_tree` 可以加上 `app` 參數，填執行中 App 的名稱或 bundle ID（例如 `TextEdit` 或 `com.apple.TextEdit`）。輸入工具會先把該 App 切到前景，送出前再確認一次；如果焦點已經被其他 App 搶走，就不會送出任何輸入，並回報錯誤。`mac_ui_tree` 指定 `app` 時只讀取，不會切換前景 App。代理在終端機裡執行時，焦點常在兩次工具呼叫之間回到終端機，所以建議輸入時一律指定 `app`。輔助使用文字裡的 NUL 字元（例如 iTerm2 用來補寬字元的）會被移除。
 
 `mac_type_text` 會短暫使用系統剪貼簿，再還原原有內容；如果在貼上期間其他程式更新了剪貼簿，它不會覆寫該更新。超過 40 MB 或無法完整保存的剪貼簿內容會讓輸入取消。這比直接送 Unicode 鍵盤事件更能配合目前的注音輸入法與各 App 文字欄位。
 

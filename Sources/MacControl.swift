@@ -3,7 +3,7 @@ import ApplicationServices
 import CoreGraphics
 import Foundation
 
-private let serverVersion = "0.1.0"
+private let serverVersion = "0.2.0"
 private let supportedProtocolVersions: Set<String> = [
     "2024-11-05", "2025-03-26", "2025-06-18", "2025-11-25"
 ]
@@ -18,6 +18,11 @@ private struct CaptureSize {
     let height: Int
     let displayBounds: CGRect
 }
+
+private let appProperty: [String: Any] = [
+    "type": "string",
+    "description": "Name or bundle ID of a running app, such as TextEdit or com.apple.TextEdit."
+]
 
 private struct Recording {
     let process: Process
@@ -50,10 +55,10 @@ private final class MacControlServer {
         ],
         [
             "name": "mac_ui_tree",
-            "description": "Read a limited Accessibility tree for the frontmost window and focused element. Password field values are excluded. Requires Accessibility permission.",
+            "description": "Read a limited Accessibility tree for the focused window and focused element of an app: the named app if app is given, otherwise the frontmost app. Does not change which app is in front. Password field values are excluded. Requires Accessibility permission.",
             "inputSchema": [
                 "type": "object",
-                "properties": ["max_depth": ["type": "integer", "minimum": 0, "maximum": 8]],
+                "properties": ["max_depth": ["type": "integer", "minimum": 0, "maximum": 8], "app": appProperty],
                 "additionalProperties": false
             ],
             "annotations": ["readOnlyHint": true]
@@ -114,21 +119,22 @@ private final class MacControlServer {
         ],
         [
             "name": "mac_type_text",
-            "description": "Insert Unicode text into the focused field by temporarily placing it on the clipboard and pressing Command-V. Restores the prior clipboard when possible. Maximum 2000 characters. Requires Accessibility permission.",
+            "description": "Insert Unicode text into the focused field by temporarily placing it on the clipboard and pressing Command-V. If app is given, that running app is brought to the front first and nothing is pasted unless it is still in front. Restores the prior clipboard when possible. Maximum 2000 characters. Requires Accessibility permission.",
             "inputSchema": [
                 "type": "object",
-                "properties": ["text": ["type": "string", "maxLength": 2000]],
+                "properties": ["text": ["type": "string", "maxLength": 2000], "app": appProperty],
                 "required": ["text"], "additionalProperties": false
             ]
         ],
         [
             "name": "mac_key",
-            "description": "Press a key, optionally with modifiers cmd, shift, alt, or ctrl. Examples: key='enter'; key='c', modifiers=['cmd']. Requires Accessibility permission.",
+            "description": "Press a key, optionally with modifiers cmd, shift, alt, or ctrl. Examples: key='enter'; key='c', modifiers=['cmd']. If app is given, that running app is brought to the front first and no key is sent unless it is still in front. Requires Accessibility permission.",
             "inputSchema": [
                 "type": "object",
                 "properties": [
                     "key": ["type": "string"],
-                    "modifiers": ["type": "array", "items": ["type": "string", "enum": ["cmd", "shift", "alt", "ctrl"]], "uniqueItems": true]
+                    "modifiers": ["type": "array", "items": ["type": "string", "enum": ["cmd", "shift", "alt", "ctrl"]], "uniqueItems": true],
+                    "app": appProperty
                 ],
                 "required": ["key"], "additionalProperties": false
             ]
@@ -331,6 +337,65 @@ private final class MacControlServer {
         }
     }
 
+    private func targetApp(_ args: [String: Any]) throws -> NSRunningApplication? {
+        guard let raw = args["app"] else { return nil }
+        guard let query = (raw as? String)?.trimmingCharacters(in: .whitespacesAndNewlines), !query.isEmpty else {
+            throw ToolFailure("app must be a non-empty app name or bundle ID.")
+        }
+        let apps = NSWorkspace.shared.runningApplications.filter { $0.activationPolicy == .regular && !$0.isTerminated }
+        if let match = apps.first(where: { $0.bundleIdentifier?.caseInsensitiveCompare(query) == .orderedSame })
+            ?? apps.first(where: { $0.localizedName?.caseInsensitiveCompare(query) == .orderedSame }) {
+            return match
+        }
+        throw ToolFailure("No running app matches \"\(query)\". Launch it first.")
+    }
+
+    // Asks the window server rather than NSWorkspace, whose frontmostApplication can be stale without a run loop.
+    private func focusedApp() -> NSRunningApplication? {
+        guard let element = elementAttribute(AXUIElementCreateSystemWide(), kAXFocusedApplicationAttribute as CFString) else {
+            return NSWorkspace.shared.frontmostApplication
+        }
+        var pid: pid_t = 0
+        guard AXUIElementGetPid(element, &pid) == .success else { return NSWorkspace.shared.frontmostApplication }
+        return NSRunningApplication(processIdentifier: pid)
+    }
+
+    private func waitUntilFocused(_ app: NSRunningApplication, seconds: Double) -> Bool {
+        let deadline = Date().addingTimeInterval(seconds)
+        while Date() < deadline {
+            if focusedApp()?.processIdentifier == app.processIdentifier { return true }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.05))
+        }
+        return focusedApp()?.processIdentifier == app.processIdentifier
+    }
+
+    private func bringToFront(_ app: NSRunningApplication) throws {
+        if focusedApp()?.processIdentifier == app.processIdentifier { return }
+        app.activate()
+        if waitUntilFocused(app, seconds: 1) { return }
+        // macOS may refuse activation requested by a background process; LaunchServices still honors it.
+        if let url = app.bundleURL {
+            let process = Process()
+            process.executableURL = URL(fileURLWithPath: "/usr/bin/open")
+            process.arguments = [url.path]
+            process.standardOutput = FileHandle.nullDevice
+            process.standardError = FileHandle.nullDevice
+            try? process.run()
+            process.waitUntilExit()
+            if waitUntilFocused(app, seconds: 2) { return }
+        }
+        throw ToolFailure("Could not bring \(app.localizedName ?? "the app") to the front; no input was sent.")
+    }
+
+    // Re-checks focus immediately before posting input, since another app can take focus between tool calls.
+    private func confirmFocus(_ target: NSRunningApplication?) throws -> String {
+        let current = focusedApp()
+        if let target, current?.processIdentifier != target.processIdentifier {
+            throw ToolFailure("\(current?.localizedName ?? "Another app") took focus from \(target.localizedName ?? "the app"); no input was sent.")
+        }
+        return current?.localizedName ?? "the frontmost app"
+    }
+
     private func number(_ args: [String: Any], _ key: String) throws -> Double {
         guard let value = args[key] as? NSNumber else { throw ToolFailure("Missing or invalid \(key)") }
         let n = value.doubleValue
@@ -417,7 +482,9 @@ private final class MacControlServer {
         guard let value = args["text"] as? String, !value.isEmpty, value.count <= 2000 else {
             throw ToolFailure("text must contain 1 to 2000 characters.")
         }
+        let target = try targetApp(args)
         try requireAccessibility()
+        if let target { try bringToFront(target) }
         let pasteboard = NSPasteboard.general
         var savedItems: [NSPasteboardItem] = []
         var totalBytes = 0
@@ -453,12 +520,13 @@ private final class MacControlServer {
               let up = CGEvent(keyboardEventSource: nil, virtualKey: 9, keyDown: false) else {
             throw ToolFailure("Could not create a paste keyboard event.")
         }
+        let receiver = try confirmFocus(target)
         down.flags = .maskCommand
         up.flags = .maskCommand
         down.post(tap: .cghidEventTap)
         up.post(tap: .cghidEventTap)
         usleep(500_000)
-        return "Inserted \(value.count) characters via Command-V."
+        return "Inserted \(value.count) characters into \(receiver) via Command-V."
     }
 
     private let keyCodes: [String: CGKeyCode] = [
@@ -482,7 +550,9 @@ private final class MacControlServer {
               names.allSatisfy({ ["cmd", "shift", "alt", "ctrl"].contains($0) }) else {
             throw ToolFailure("Invalid modifiers")
         }
+        let target = try targetApp(args)
         try requireAccessibility()
+        if let target { try bringToFront(target) }
         var flags: CGEventFlags = []
         if names.contains("cmd") { flags.insert(.maskCommand) }
         if names.contains("shift") { flags.insert(.maskShift) }
@@ -492,11 +562,12 @@ private final class MacControlServer {
               let up = CGEvent(keyboardEventSource: nil, virtualKey: code, keyDown: false) else {
             throw ToolFailure("Could not create a keyboard event.")
         }
+        let receiver = try confirmFocus(target)
         down.flags = flags
         up.flags = flags
         down.post(tap: .cghidEventTap)
         up.post(tap: .cghidEventTap)
-        return "Pressed \((names + [keyName]).joined(separator: "+"))."
+        return "Pressed \((names + [keyName]).joined(separator: "+")) in \(receiver)."
     }
 
     private func attribute(_ element: AXUIElement, _ name: CFString) -> CFTypeRef? {
@@ -518,14 +589,16 @@ private final class MacControlServer {
         if let plain = value as? String { string = plain }
         else if let number = value as? NSNumber { string = number.stringValue }
         else { return nil }
-        return String(string.prefix(limit))
+        // Some apps, such as iTerm2, pad wide characters with NUL in Accessibility values.
+        return String(string.replacingOccurrences(of: "\u{0}", with: "").prefix(limit))
     }
 
     private func uiTree(_ args: [String: Any]) throws -> String {
         let depth = try args["max_depth"].map { _ in try number(args, "max_depth") } ?? 5
         guard depth.rounded() == depth, depth >= 0, depth <= 8 else { throw ToolFailure("max_depth must be 0 to 8.") }
+        let target = try targetApp(args)
         try requireAccessibility()
-        guard let app = NSWorkspace.shared.frontmostApplication else { throw ToolFailure("No frontmost app found.") }
+        guard let app = target ?? focusedApp() else { throw ToolFailure("No frontmost app found.") }
         let appElement = AXUIElementCreateApplication(app.processIdentifier)
         let root = elementAttribute(appElement, kAXFocusedWindowAttribute as CFString)
             ?? elementAttribute(appElement, kAXMainWindowAttribute as CFString)

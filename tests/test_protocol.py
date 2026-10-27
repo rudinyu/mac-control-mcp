@@ -75,13 +75,24 @@ class MCPProtocolTests(unittest.TestCase):
             ("mac_record_start", {"duration_seconds": 121}),
             ("mac_record_status", {"recording_id": "missing"}),
             ("mac_ui_tree", {"max_depth": 9}),
+            ("mac_type_text", {"text": "x", "app": ""}),
+            ("mac_type_text", {"text": "x", "app": "No Such App 7f3c"}),
+            ("mac_key", {"key": "a", "app": "No Such App 7f3c"}),
+            ("mac_ui_tree", {"app": 42}),
+            ("mac_ui_tree", {"app": "No Such App 7f3c"}),
         ]
         for name, arguments in calls:
             with self.subTest(name=name):
                 response = self.request("tools/call", {"name": name, "arguments": arguments})
                 self.assertTrue(response["result"]["isError"])
 
-    def test_04_unknown_method_is_json_rpc_error(self):
+    def test_04_input_tools_accept_target_app(self):
+        listed = {tool["name"]: tool for tool in self.request("tools/list")["result"]["tools"]}
+        for name in ("mac_type_text", "mac_key", "mac_ui_tree"):
+            with self.subTest(name=name):
+                self.assertEqual(listed[name]["inputSchema"]["properties"]["app"]["type"], "string")
+
+    def test_05_unknown_method_is_json_rpc_error(self):
         response = self.request("unknown/method")
         self.assertEqual(response["error"]["code"], -32601)
 
