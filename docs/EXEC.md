@@ -22,7 +22,7 @@ The container has normal internet access, so it can download packages and call w
 
 ## Setup
 
-1. Install and start [Docker Desktop](https://www.docker.com/products/docker-desktop/), or another Docker-compatible runtime that provides the `docker` command, such as Colima or OrbStack.
+1. Install and start [Docker Desktop](https://www.docker.com/products/docker-desktop/), or another Docker-compatible runtime that provides the `docker` command, such as [Colima](https://github.com/abiosoft/colima) or OrbStack. With Colima (`brew install colima docker`, then `colima start`), keep the workspace and any read-only folders inside your home folder: Colima shares the home folder with its VM by default, but not other locations such as the system temporary folder. To share another folder, add it with `colima start --mount <folder>:w`.
 2. Build the sandbox image once:
 
    ```sh
@@ -93,6 +93,7 @@ The sandbox is Linux. It cannot run macOS programs such as `open`, `osascript`, 
 | `Docker was not found` | Install Docker Desktop, or set `MAC_EXEC_DOCKER`. |
 | `exec_status` shows `docker_running: false` | Start Docker Desktop and wait until it is ready. |
 | `The sandbox image … is missing` | Run `sh scripts/build-sandbox.sh`. |
+| `sandbox_exec` fails with a mount or `invalid mount config` error | The Docker VM cannot see the workspace. With Colima, keep it inside your home folder or add it with `colima start --mount`. |
 | `MAC_EXEC_WORKSPACE cannot be used` | The workspace is, contains, or sits inside a sensitive folder. Choose another folder. |
 | `… must stay inside the workspace` | The path points outside the workspace. Use a relative path or one under `/workspace/`. |
 | `Could not write the audit log` | Check that `~/Library/Logs/mac-exec` is writable, or set `MAC_EXEC_AUDIT_LOG`. |

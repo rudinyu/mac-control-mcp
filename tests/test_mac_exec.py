@@ -13,6 +13,16 @@ SERVER = os.environ.get(
 )
 IMAGE = os.environ.get("MAC_EXEC_IMAGE", "mac-exec-sandbox:latest")
 PROJECT = os.path.realpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
+# Docker runtimes that run in a VM, such as Colima, share only some Mac folders with it; Colima shares
+# the home folder but not the system temporary folder, so test folders live under the home folder.
+# Set MAC_EXEC_TEST_TMPDIR to use another folder that the Docker VM can see.
+TEST_ROOT = os.path.realpath(os.path.expanduser(os.environ.get("MAC_EXEC_TEST_TMPDIR", "~/.cache/mac-exec-tests")))
+
+
+def make_temp(prefix):
+    # Each test removes its own folder; the parent stays so concurrent runs can share it.
+    os.makedirs(TEST_ROOT, mode=0o700, exist_ok=True)
+    return tempfile.mkdtemp(prefix=prefix, dir=TEST_ROOT)
 
 
 def alive(pid, wait=3):
@@ -40,7 +50,7 @@ def docker_ready():
 
 class Server:
     def __init__(self, **env):
-        self.temp = tempfile.mkdtemp(prefix="mac-exec-test-")
+        self.temp = make_temp("mac-exec-test-")
         self.workspace = os.path.join(self.temp, "workspace")
         self.audit = os.path.join(self.temp, "audit", "audit.log")
         environment = dict(os.environ, MAC_EXEC_WORKSPACE=self.workspace, MAC_EXEC_AUDIT_LOG=self.audit)
@@ -329,7 +339,7 @@ class SandboxTests(unittest.TestCase):
         self.assertEqual(running.strip(), "")
 
     def test_read_only_folders_are_mounted_read_only(self):
-        shared = tempfile.mkdtemp(prefix="mac-exec-ro-")
+        shared = make_temp("mac-exec-ro-")
         try:
             with open(os.path.join(shared, "data.txt"), "w", encoding="utf-8") as f:
                 f.write("shared")

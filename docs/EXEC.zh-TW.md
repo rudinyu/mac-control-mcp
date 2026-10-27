@@ -22,7 +22,7 @@
 
 ## 設定步驟
 
-1. 安裝並啟動 [Docker Desktop](https://www.docker.com/products/docker-desktop/)，或其他提供 `docker` 命令的相容工具，例如 Colima 或 OrbStack。
+1. 安裝並啟動 [Docker Desktop](https://www.docker.com/products/docker-desktop/)，或其他提供 `docker` 命令的相容工具，例如 [Colima](https://github.com/abiosoft/colima) 或 OrbStack。使用 Colima 時（`brew install colima docker`，再 `colima start`），工作資料夾和唯讀資料夾請放在家目錄底下：Colima 預設只把家目錄分享給它的 VM，系統暫存資料夾等其他位置都不會分享。要分享其他資料夾，用 `colima start --mount <資料夾>:w` 加入。
 2. 建置一次 sandbox 映像檔：
 
    ```sh
@@ -93,6 +93,7 @@ sandbox 是 Linux，不能執行 `open`、`osascript`、`defaults` 或 Xcode 工
 | `Docker was not found` | 安裝 Docker Desktop，或設定 `MAC_EXEC_DOCKER`。 |
 | `exec_status` 顯示 `docker_running: false` | 啟動 Docker Desktop，等它準備好。 |
 | `The sandbox image … is missing` | 執行 `sh scripts/build-sandbox.sh`。 |
+| `sandbox_exec` 出現掛載或 `invalid mount config` 錯誤 | Docker 的 VM 看不到工作資料夾。使用 Colima 時，請把它放在家目錄底下，或用 `colima start --mount` 加入。 |
 | `MAC_EXEC_WORKSPACE cannot be used` | 工作資料夾是、包含或位於敏感資料夾之內。請換一個資料夾。 |
 | `… must stay inside the workspace` | 路徑指到工作資料夾外面。請用相對路徑，或以 `/workspace/` 開頭的路徑。 |
 | `Could not write the audit log` | 確認 `~/Library/Logs/mac-exec` 可以寫入，或設定 `MAC_EXEC_AUDIT_LOG`。 |
