@@ -1,0 +1,5 @@
+.build/
+.DS_Store
+__pycache__/
+.pytest_cache/
+CODEX_CLAUDE_REVIEW.md
