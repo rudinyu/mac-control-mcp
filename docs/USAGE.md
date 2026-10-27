@@ -23,7 +23,7 @@ Example requests:
 
 ## Two rules that prevent most mistakes
 
-**Mouse coordinates come from the latest screenshot.** `mac_mouse` uses pixel positions in the most recent `mac_screenshot` image. On a Retina display the image has twice the pixels of the screen size that `mac_status` reports, for example 3840 × 2160 for a 1920 × 1080 display, and the server converts for you. Take a new screenshot after anything moves, and after the resolution changes.
+**Mouse coordinates come from the latest screenshot.** `mac_mouse` uses pixel positions in the most recent `mac_screenshot` image. On a Retina display the image usually has twice the pixels of the screen size that `mac_status` reports, for example 3840 × 2160 for a 1920 × 1080 display, and the server converts for you. Always go by the size the screenshot reports. Take a new screenshot after anything moves, and after the resolution changes.
 
 **Always name the target app when typing.** When the agent runs in a terminal or in Claude Desktop, focus often returns to that window between two tool calls. Text sent without a target then lands in the agent's own window. Pass `app` to `mac_type_text` and `mac_key`. The server brings that app to the front, checks again just before sending, and sends nothing if another app has taken focus. Add a line like this to your request:
 
@@ -141,5 +141,7 @@ Only one recording runs at a time. Files are QuickTime MOV, saved in `.build/rec
 ## Privacy and safety
 
 - Screenshots, recordings, and UI tree values send what is on your screen to the agent's model. Close private windows first.
-- The server only reads and acts on your desktop. It opens no network port, runs no shell commands, and talks only to the client that started it.
+- `mac_type_text` briefly puts the text on the system clipboard, where clipboard history tools and Universal Clipboard on your other devices can capture it. Do not have the agent type passwords or other secrets.
+- Recordings stay in `.build/recordings/` inside the clone until you delete them. Delete the ones you no longer need.
+- The server only reads and acts on your desktop. It opens no network port, does not run arbitrary shell commands, and talks only to the client that started it.
 - The agent can click and type anything you could. Keep your client's approval prompts on, and do not let it confirm purchases, deletions, or messages without checking.

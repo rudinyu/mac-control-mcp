@@ -14,7 +14,7 @@
 ## 2. 取得程式碼並建置
 
 ```sh
-git clone git@github.com:rudinyu/mac-control-mcp.git
+git clone https://github.com/rudinyu/mac-control-mcp.git
 cd mac-control-mcp
 sh scripts/ci.sh
 ```
@@ -40,7 +40,7 @@ sh scripts/init-agents.sh
 
 這些檔案含有本機專屬的路徑，所以列在 `.gitignore`，不會被 commit。它們的範本在 [`examples/`](../examples/)，也可以手動複製。
 
-腳本也會印出 Claude Desktop 的設定。Claude Desktop 的設定檔裡還有你其他的 server，所以腳本不會去改它。第 4 節說明怎麼加進去。
+腳本也會印出 Claude Desktop 的設定。Claude Desktop 的設定檔裡還有你其他的伺服器，所以腳本不會去改它。第 4 節說明怎麼加進去。
 
 ## 4. 連接客戶端
 
@@ -50,7 +50,7 @@ sh scripts/init-agents.sh
 2. 第一次載入時，Claude Code 會問你是否信任這個專案的 MCP 伺服器，請核准 `mac-control`。
 3. 執行 `/mcp`，確認 `mac-control` 顯示為已連線。
 
-如果想在所有專案都能用，而不只是這個專案，改成註冊到使用者層級：
+如果想在所有專案都能用，而不只是這個專案，改成註冊到使用者層級。命令用到 `$PWD`，請在 clone 的根目錄執行：
 
 ```sh
 claude mcp add --scope user --transport stdio mac-control -- /bin/sh "$PWD/scripts/run-server.sh"
@@ -61,7 +61,7 @@ claude mcp add --scope user --transport stdio mac-control -- /bin/sh "$PWD/scrip
 ### Claude Desktop
 
 1. 打開 `~/Library/Application Support/Claude/claude_desktop_config.json`。檔案不存在的話，先建立並寫入 `{"mcpServers": {}}`。
-2. 把 `init-agents.sh` 印出的 `mac-control` 設定加進 `mcpServers` 裡，跟原本的 server 放在一起：
+2. 把 `init-agents.sh` 印出的 `mac-control` 設定加進 `mcpServers` 裡，跟原本的伺服器放在一起：
 
    ```json
    "mac-control": {
@@ -79,7 +79,7 @@ Claude Desktop 不會讀 `CLAUDE.md`。想給它同樣的規則，可以把 [`ex
 1. 在專案目錄啟動 Codex，被詢問時選擇信任這個專案。Codex 只會為已信任的專案讀取 `.codex/config.toml`。
 2. 確認 `mac_control` 出現在 Codex 的 MCP 伺服器清單中。
 
-如果想在所有專案都能用：
+如果想在所有專案都能用，請在 clone 的根目錄執行：
 
 ```sh
 codex mcp add mac_control -- /bin/sh "$PWD/scripts/run-server.sh"
@@ -132,7 +132,7 @@ hook 會在每次 commit 前執行 `scripts/ci.sh`。如果有安裝 `codex-prec
 git pull
 ```
 
-下次客戶端啟動伺服器時，`run-server.sh` 會自動重新編譯。請重開客戶端，或在 Claude Code 用 `/mcp` 重新連線，才會載入新版。如果範本有更新，再執行 `sh scripts/init-agents.sh --force`。這會覆蓋你本機的 `CLAUDE.md` 和 `AGENTS.md`，有改過的話請先備份。
+下次客戶端啟動伺服器時，`run-server.sh` 會自動重新編譯。請重開客戶端，或在 Claude Code 用 `/mcp` 重新連線，才會載入新版。如果範本有更新，再執行 `sh scripts/init-agents.sh --force`。這會覆蓋產生的全部四個檔案，包括你對 `CLAUDE.md` 和 `AGENTS.md` 做的修改，請先跟 `examples/` 比對並備份你的修改。
 
 ## 移除
 

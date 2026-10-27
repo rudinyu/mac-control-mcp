@@ -14,7 +14,7 @@ This guide sets up mac-control-mcp on your Mac and connects it to Claude Code, C
 ## 2. Get the code and build it
 
 ```sh
-git clone git@github.com:rudinyu/mac-control-mcp.git
+git clone https://github.com/rudinyu/mac-control-mcp.git
 cd mac-control-mcp
 sh scripts/ci.sh
 ```
@@ -50,7 +50,7 @@ The script also prints a Claude Desktop entry. Claude Desktop's configuration ho
 2. Claude Code asks whether to trust the project's MCP server the first time. Approve `mac-control`.
 3. Run `/mcp` and check that `mac-control` shows as connected.
 
-To use mac-control from every project instead of only this one, register it at user scope:
+To use mac-control from every project instead of only this one, register it at user scope. Run this from the clone's root directory, because it uses `$PWD`:
 
 ```sh
 claude mcp add --scope user --transport stdio mac-control -- /bin/sh "$PWD/scripts/run-server.sh"
@@ -79,7 +79,7 @@ Claude Desktop does not read `CLAUDE.md`. To give it the same instructions, past
 1. Start Codex in the project directory and trust the project when asked. Codex reads `.codex/config.toml` only for trusted projects.
 2. Check that `mac_control` appears in Codex's MCP server list.
 
-To use it from every project instead:
+To use it from every project instead, run this from the clone's root directory:
 
 ```sh
 codex mcp add mac_control -- /bin/sh "$PWD/scripts/run-server.sh"
@@ -132,7 +132,7 @@ The hook runs `scripts/ci.sh` before each commit. If `codex-precommit-check` and
 git pull
 ```
 
-The next time a client starts the server, `run-server.sh` rebuilds it. Restart the client, or reconnect the server with `/mcp` in Claude Code, to pick up the new version. If the examples changed, rerun `sh scripts/init-agents.sh --force`. This replaces your local `CLAUDE.md` and `AGENTS.md`, so copy any edits you made to them first.
+The next time a client starts the server, `run-server.sh` rebuilds it. Restart the client, or reconnect the server with `/mcp` in Claude Code, to pick up the new version. If the examples changed, rerun `sh scripts/init-agents.sh --force`. This replaces all four generated files, including any edits you made to `CLAUDE.md` and `AGENTS.md`, so compare them with `examples/` and copy your edits first.
 
 ## Uninstall
 
