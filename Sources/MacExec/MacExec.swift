@@ -22,7 +22,7 @@ private struct Settings {
     let readOnlyDirs: [URL]
     let allowHost: Bool
     let image: String
-    let docker: String?
+    let runtime: ContainerRuntime?
     let auditLog: URL
     let problems: [String]
 
@@ -33,13 +33,19 @@ private struct Settings {
             URL(fileURLWithPath: (path as NSString).expandingTildeInPath).standardizedFileURL
         }
         var problems: [String] = []
-        // The server runs from <project>/.build, and the project's scripts run on the Mac. Use the real
-        // executable path, since the name the server was started with may be relative or a link.
+        // The code that runs this server on the Mac must not be changeable from the sandbox: the app bundle
+        // when the server ships inside MacControl.app, or the project when it runs from <project>/.build.
+        // Use the real executable path, since the name the server was started with may be relative or a link.
         let executable = Bundle.main.executableURL?.resolvingSymlinksInPath()
             ?? URL(fileURLWithPath: CommandLine.arguments[0]).resolvingSymlinksInPath()
-        let project = executable.deletingLastPathComponent().deletingLastPathComponent()
-        if !FileManager.default.fileExists(atPath: project.appendingPathComponent("Sources/MacExec").path) {
-            problems.append("Could not find the mac-control-mcp project next to \(executable.path); run the server from its .build folder.")
+        let project: URL
+        if let range = executable.path.range(of: ".app/Contents/") {
+            project = URL(fileURLWithPath: String(executable.path[..<range.lowerBound]) + ".app")
+        } else {
+            project = executable.deletingLastPathComponent().deletingLastPathComponent()
+            if !FileManager.default.fileExists(atPath: project.appendingPathComponent("Sources/MacExec").path) {
+                problems.append("Could not find the mac-control-mcp project next to \(executable.path); run the server from its .build folder.")
+            }
         }
         let workspace = expand(env["MAC_EXEC_WORKSPACE"] ?? "~/AgentWorkspace")
         if let reason = mountRejection(workspace, home: home, protected: [project]) {
@@ -67,21 +73,12 @@ private struct Settings {
             home: home, workspace: workspace, readOnlyDirs: readOnly,
             allowHost: env["MAC_EXEC_ALLOW_HOST"] == "1",
             image: env["MAC_EXEC_IMAGE"] ?? defaultImage,
-            docker: findDocker(env),
+            runtime: ContainerRuntime.find(env),
             auditLog: expand(env["MAC_EXEC_AUDIT_LOG"] ?? "~/Library/Logs/mac-exec/audit.log"),
             problems: problems
         )
     }
 
-    // MCP clients such as Claude Desktop start servers with a short PATH, so look in the usual places too.
-    private static func findDocker(_ env: [String: String]) -> String? {
-        if let explicit = env["MAC_EXEC_DOCKER"] { return explicit }
-        let candidates = (env["PATH"] ?? "").split(separator: ":").map { "\($0)/docker" } + [
-            "/usr/local/bin/docker", "/opt/homebrew/bin/docker",
-            "/Applications/Docker.app/Contents/Resources/bin/docker",
-        ]
-        return candidates.first { FileManager.default.isExecutableFile(atPath: $0) }
-    }
 }
 
 private final class MacExecServer {
@@ -95,7 +92,7 @@ private final class MacExecServer {
         var list: [[String: Any]] = [
             [
                 "name": "exec_status",
-                "description": "Report whether Docker and the sandbox image are available, the workspace folder, read-only folders, and whether host_exec is enabled. Call this first.",
+                "description": "Report the sandbox runtime (Docker or Apple container) and whether it is ready, whether the sandbox image is built, the workspace folder, read-only folders, and whether host_exec is enabled. Call this first.",
                 "inputSchema": ["type": "object", "properties": [:], "additionalProperties": false],
                 "annotations": ["readOnlyHint": true]
             ],
@@ -289,31 +286,29 @@ private final class MacExecServer {
             "image": settings.image,
             "audit_log": settings.auditLog.path,
             "problems": settings.problems,
-            "docker": settings.docker ?? NSNull(),
+            "runtime": (ProcessInfo.processInfo.environment["MAC_EXEC_RUNTIME"] ?? "docker"),
+            "runtime_program": settings.runtime?.program ?? NSNull(),
         ]
-        if let docker = settings.docker {
-            let daemon = try? runProcess(docker, ["info", "--format", "{{.ServerVersion}}"], environment: dockerEnvironment(docker),
-                                         timeout: 15, outputLimit: 1000)
-            info["docker_running"] = daemon?.exitCode == 0
-            info["docker_version"] = daemon?.exitCode == 0 ? daemon!.stdout.trimmingCharacters(in: .whitespacesAndNewlines) : NSNull()
-            let image = try? runProcess(docker, ["image", "inspect", "--format", "{{.Id}}", settings.image],
-                                        environment: dockerEnvironment(docker), timeout: 15, outputLimit: 1000)
+        var ready = false
+        if let runtime = settings.runtime {
+            let check = try? runProcess(runtime.program, runtime.readyArguments(), environment: runtime.environment,
+                                        timeout: 15, outputLimit: 1000)
+            ready = check?.exitCode == 0
+            if runtime.kind == .docker, ready {
+                info["docker_version"] = check!.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
+            }
+            let image = try? runProcess(runtime.program, runtime.imageExistsArguments(settings.image),
+                                        environment: runtime.environment, timeout: 15, outputLimit: 1000)
             info["image_present"] = image?.exitCode == 0
         } else {
-            info["docker_running"] = false
             info["image_present"] = false
         }
+        info["runtime_ready"] = ready
+        info["docker_running"] = ready // kept for clients that read the earlier field name
         if info["image_present"] as? Bool != true {
-            info["next_step"] = "Start Docker Desktop, then run sh scripts/build-sandbox.sh in the mac-control-mcp folder."
+            info["next_step"] = "Open MacControl.app to install the sandbox runtime and build the image, or run sh scripts/build-sandbox.sh in the mac-control-mcp folder."
         }
         return jsonString(info)
-    }
-
-    private func dockerEnvironment(_ docker: String) -> [String: String] {
-        var env = ProcessInfo.processInfo.environment
-        let dockerDir = (docker as NSString).deletingLastPathComponent
-        env["PATH"] = [dockerDir, env["PATH"] ?? "", "/usr/local/bin", "/usr/bin", "/bin"].filter { !$0.isEmpty }.joined(separator: ":")
-        return env
     }
 
     private func sandboxExec(_ args: [String: Any]) throws -> String {
@@ -325,42 +320,34 @@ private final class MacExecServer {
         guard FileManager.default.fileExists(atPath: cwd.path, isDirectory: &isDirectory), isDirectory.boolValue else {
             throw ToolFailure("cwd is not a folder in the workspace.")
         }
-        guard let docker = settings.docker else {
-            throw ToolFailure("Docker was not found. Install and start Docker Desktop, or set MAC_EXEC_DOCKER to the docker program.")
+        guard let runtime = settings.runtime else {
+            throw ToolFailure("No sandbox runtime was found. Open MacControl.app to install one, or install Docker and set MAC_EXEC_DOCKER.")
         }
         let root = resolvedPath(settings.workspace)
         let containerCwd = "/workspace" + String(cwd.path.dropFirst(root.count))
         let name = "mac-exec-\(UUID().uuidString.lowercased())"
-        var arguments = [
-            "run", "--rm", "--init", "--name", name, "--label", "mac-exec=1",
-            "--user", "1000:1000", "--read-only",
-            "--tmpfs", "/tmp:rw,nosuid,nodev,size=512m",
-            "--tmpfs", "/home/agent:rw,nosuid,nodev,size=256m,uid=1000,gid=1000",
-            "--cap-drop", "ALL", "--security-opt", "no-new-privileges",
-            "--pids-limit", "256", "--memory", "2g", "--memory-swap", "2g", "--cpus", "2",
-            "--network", "bridge",
-            "--mount", "type=bind,source=\(root),target=/workspace",
-            "--workdir", containerCwd,
-        ]
+        var readOnly: [(source: String, target: String)] = []
         var used: Set<String> = []
         for folder in settings.readOnlyDirs {
             var target = folder.lastPathComponent, suffix = 2
             while used.contains(target) { target = "\(folder.lastPathComponent)-\(suffix)"; suffix += 1 }
             used.insert(target)
-            arguments += ["--mount", "type=bind,source=\(resolvedPath(folder)),target=/mnt/readonly/\(target),readonly"]
+            readOnly.append((resolvedPath(folder), "/mnt/readonly/\(target)"))
         }
-        arguments += [settings.image, "bash", "-c", command]
+        let arguments = runtime.runArguments(SandboxRun(name: name, image: settings.image, workspace: root,
+                                                        readOnly: readOnly, workdir: containerCwd, command: command))
 
-        try audit(["tool": "sandbox_exec", "event": "start", "command": command, "cwd": containerCwd, "container": name])
-        let env = dockerEnvironment(docker)
-        let result = try runProcess(docker, arguments, environment: env, timeout: TimeInterval(timeout), outputLimit: outputLimit) {
-            _ = try? runProcess(docker, ["kill", name], environment: env, timeout: 15, outputLimit: 1000)
+        try audit(["tool": "sandbox_exec", "event": "start", "command": command, "cwd": containerCwd, "container": name,
+                   "runtime": runtime.kind.rawValue])
+        let result = try runProcess(runtime.program, arguments, environment: runtime.environment,
+                                    timeout: TimeInterval(timeout), outputLimit: outputLimit) {
+            _ = try? runProcess(runtime.program, runtime.killArguments(name), environment: runtime.environment,
+                                timeout: 15, outputLimit: 1000)
         }
         try? audit(["tool": "sandbox_exec", "event": "end", "container": name, "exit_code": result.exitCode,
                     "timed_out": result.timedOut, "duration_ms": result.durationMs])
-        // docker run exits with 125 when it cannot start the container at all.
-        if result.exitCode == 125, result.stderr.contains("Unable to find image") || result.stderr.contains("No such image") {
-            throw ToolFailure("The sandbox image \(settings.image) is missing. Run sh scripts/build-sandbox.sh in the mac-control-mcp folder.")
+        if runtime.isMissingImage(result, image: settings.image) {
+            throw ToolFailure("The sandbox image \(settings.image) is missing. Open MacControl.app to build it, or run sh scripts/build-sandbox.sh in the mac-control-mcp folder.")
         }
         return resultJSON(result)
     }
