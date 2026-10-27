@@ -1,5 +1,6 @@
 import json
 import os
+import time
 import shutil
 import subprocess
 import sys
@@ -10,7 +11,16 @@ SERVER = os.environ.get(
     "MAC_EXEC_SERVER",
     os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".build", "mac-exec-mcp"),
 )
-IMAGE = "mac-exec-sandbox:latest"
+IMAGE = os.environ.get("MAC_EXEC_IMAGE", "mac-exec-sandbox:latest")
+PROJECT = os.path.realpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
+
+
+def alive(pid):
+    try:
+        os.kill(pid, 0)
+        return True
+    except ProcessLookupError:
+        return False
 
 
 def docker_ready():
@@ -129,6 +139,25 @@ class ProtocolAndFileTests(unittest.TestCase):
             with self.subTest(name=name, arguments=str(arguments)[:60]):
                 self.assertTrue(self.server.call(name, **arguments)[0])
 
+    def test_utf8_is_not_split_at_the_limit(self):
+        self.server.ok("sandbox_write_file", path="zh.txt", content="中文字")  # 3 bytes per character
+        for limit, expected in ((1, ""), (3, "中"), (4, "中"), (5, "中"), (6, "中文"), (9, "中文字")):
+            with self.subTest(limit=limit):
+                result = self.server.ok("sandbox_read_file", path="zh.txt", max_bytes=limit)
+                self.assertEqual(result["content"], expected)
+                self.assertEqual(result["truncated"], limit < 9)
+
+    def test_fifos_are_refused_without_blocking(self):
+        os.mkfifo(os.path.join(self.server.workspace, "pipe"))
+        started = time.monotonic()
+        for tool, extra in (("sandbox_read_file", {}), ("sandbox_write_file", {"content": "x", "append": True}),
+                            ("sandbox_write_file", {"content": "x"})):
+            with self.subTest(tool=tool, extra=extra):
+                is_error, text = self.server.call(tool, path="pipe", **extra)
+                self.assertTrue(is_error, text)
+                self.assertIn("not a regular file", text)
+        self.assertLess(time.monotonic() - started, 5)
+
     def test_sensitive_workspace_is_refused(self):
         server = Server(MAC_EXEC_WORKSPACE="~/.ssh")
         try:
@@ -139,6 +168,31 @@ class ProtocolAndFileTests(unittest.TestCase):
             self.assertIn("cannot be used", text)
         finally:
             server.close()
+
+
+class SettingsTests(unittest.TestCase):
+    def check_refused(self, expected, **env):
+        server = Server(**env)
+        try:
+            problems = server.ok("exec_status")["problems"]
+            self.assertTrue(any(expected in problem for problem in problems), problems)
+            self.assertTrue(server.call("sandbox_list")[0])
+        finally:
+            server.close()
+
+    def test_workspace_with_a_comma_is_refused(self):
+        self.check_refused("comma", MAC_EXEC_WORKSPACE=os.path.join(tempfile.gettempdir(), "a,readonly"))
+
+    def test_workspace_inside_the_project_is_refused(self):
+        self.check_refused("overlaps", MAC_EXEC_WORKSPACE=os.path.join(PROJECT, "tests"))
+
+    def test_workspace_containing_the_project_is_refused(self):
+        self.check_refused("overlaps", MAC_EXEC_WORKSPACE=os.path.dirname(PROJECT))
+
+    def test_sensitive_read_only_folders_are_refused(self):
+        for folder in ("~", "~/.ssh", "~/Library", "~/.claude"):
+            with self.subTest(folder=folder):
+                self.check_refused("MAC_EXEC_READONLY_DIRS", MAC_EXEC_READONLY_DIRS=folder)
 
 
 class HostExecTests(unittest.TestCase):
@@ -165,10 +219,41 @@ class HostExecTests(unittest.TestCase):
                 self.assertTrue(self.server.call("host_exec", **arguments)[0])
         self.assertFalse(os.path.exists(self.server.audit))
 
-    def test_host_exec_timeout(self):
-        result = self.server.ok("host_exec", command="sleep 30", reason="testing the timeout", timeout_seconds=1)
+    def test_host_exec_timeout_kills_every_process(self):
+        pid_file = os.path.join(self.server.temp, "child.pid")
+        result = self.server.ok("host_exec", command=f"sleep 300 & echo $! > '{pid_file}'; sleep 30",
+                                reason="testing the timeout", timeout_seconds=1)
         self.assertTrue(result["timed_out"])
         self.assertLess(result["duration_ms"], 10_000)
+        with open(pid_file) as f:
+            self.assertFalse(alive(int(f.read())), "a child of the timed-out command is still running")
+
+    def test_host_exec_cwd_and_quoting(self):
+        folder = os.path.join(self.server.temp, "dir with 'quote\" and space")
+        os.makedirs(folder)
+        result = self.server.ok("host_exec", command='pwd -P; printf "%s\\n" "a  b"', cwd=folder, reason="testing the working folder")
+        self.assertEqual(result["stdout"].split("\n")[:2], [os.path.realpath(folder), "a  b"])
+
+    def test_background_processes_do_not_outlive_the_command(self):
+        result = self.server.ok("host_exec", command="sleep 300 & echo $!", reason="testing leftover processes")
+        self.assertEqual(result["exit_code"], 0)
+        self.assertFalse(alive(int(result["stdout"].strip())))
+
+    def test_output_is_capped(self):
+        result = self.server.ok("host_exec", command="head -c 300000 /dev/zero | tr '\\0' a", reason="testing the output limit")
+        self.assertTrue(result["output_truncated"])
+        self.assertEqual(len(result["stdout"]), 100_000)
+
+    def test_nothing_runs_when_the_audit_log_cannot_be_written(self):
+        marker = os.path.join(self.server.temp, "ran")
+        server = Server(MAC_EXEC_ALLOW_HOST="1", MAC_EXEC_AUDIT_LOG="/dev/null/audit.log")
+        try:
+            is_error, text = server.call("host_exec", command=f"touch '{marker}'", reason="testing audit failures")
+            self.assertTrue(is_error)
+            self.assertIn("audit log", text)
+            self.assertFalse(os.path.exists(marker))
+        finally:
+            server.close()
 
 
 @unittest.skipUnless(docker_ready(), "Docker or the mac-exec-sandbox image is not available")
@@ -206,6 +291,24 @@ class SandboxTests(unittest.TestCase):
         docker = shutil.which("docker") or "/usr/local/bin/docker"
         running = subprocess.run([docker, "ps", "-q", "--filter", "label=mac-exec=1"], capture_output=True, text=True).stdout
         self.assertEqual(running.strip(), "")
+
+    def test_read_only_folders_are_mounted_read_only(self):
+        shared = tempfile.mkdtemp(prefix="mac-exec-ro-")
+        try:
+            with open(os.path.join(shared, "data.txt"), "w", encoding="utf-8") as f:
+                f.write("shared")
+            server = Server(MAC_EXEC_READONLY_DIRS=shared)
+            try:
+                name = os.path.basename(shared)
+                result = server.ok("sandbox_exec", command=(
+                    f"cat /mnt/readonly/{name}/data.txt; echo; "
+                    f"touch /mnt/readonly/{name}/new 2>/dev/null && echo writable || echo read-only"))
+                self.assertEqual(result["stdout"].split(), ["shared", "read-only"])
+                self.assertFalse(os.path.exists(os.path.join(shared, "new")))
+            finally:
+                server.close()
+        finally:
+            shutil.rmtree(shared)
 
     def test_commands_are_audited(self):
         self.server.ok("sandbox_exec", command="echo audited")

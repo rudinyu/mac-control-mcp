@@ -4,9 +4,13 @@ import Foundation
 // Nothing at, inside, or above one of these may be mounted into the sandbox, and the workspace
 // may not be one of them.
 let sensitiveHomePaths = [
-    ".ssh", ".gnupg", ".aws", ".azure", ".kube", ".docker", ".config", ".local",
-    ".netrc", ".npmrc", ".pypirc", ".git-credentials", ".gitconfig",
-    ".zshrc", ".zprofile", ".zshenv", ".zlogin", ".bashrc", ".bash_profile", ".profile",
+    // Credentials and keys
+    ".ssh", ".gnupg", ".aws", ".azure", ".kube", ".docker", ".netrc", ".npmrc", ".pypirc",
+    ".git-credentials", ".terraform.d", ".cargo", ".gem", ".m2", ".gradle",
+    // Settings that run code: shells, editors, and agents, whose hooks and MCP servers run on the Mac
+    ".config", ".local", ".gitconfig", ".claude", ".claude.json", ".codex", ".vscode", ".oh-my-zsh",
+    ".zshrc", ".zprofile", ".zshenv", ".zlogin", ".zlogout", ".zsh_history",
+    ".bashrc", ".bash_profile", ".bash_login", ".bash_history", ".profile",
     "Library",
 ]
 
@@ -47,10 +51,21 @@ func resolveInWorkspace(_ path: String, workspace: URL) -> URL? {
 }
 
 // Explains why a folder may not be shared with the sandbox, or returns nil when it may.
-func mountRejection(_ folder: URL, home: URL) -> String? {
+// `protected` lists further folders, such as this project, that the sandbox must not reach.
+func mountRejection(_ folder: URL, home: URL, protected: [URL] = []) -> String? {
     let path = resolvedPath(folder)
     let homePath = resolvedPath(home)
     if path == "/" { return "\(path) is the whole disk." }
+    // Docker's --mount option is a comma-separated list, so a comma would add mount options.
+    if path.contains(",") || path.contains("\n") || path.contains("\r") {
+        return "\(path) contains a comma or line break, which cannot be passed to Docker safely."
+    }
+    for folder in protected {
+        let other = resolvedPath(folder)
+        if isSame(path, orInside: other) || isSame(other, orInside: path) {
+            return "\(path) overlaps \(other), which runs on the Mac and must not be changed from the sandbox."
+        }
+    }
     for name in sensitiveHomePaths {
         let sensitive = resolvedPath(URL(fileURLWithPath: homePath).appendingPathComponent(name))
         if isSame(path, orInside: sensitive) { return "\(path) is or is inside \(sensitive), which holds credentials or settings." }

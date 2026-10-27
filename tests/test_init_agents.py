@@ -58,10 +58,10 @@ class InitAgentsTests(unittest.TestCase):
         self.assertEqual(json.loads(self.read(".mcp.json"))["mcpServers"]["mac-exec"]["args"], [exec_server])
         if tomllib:
             self.assertEqual(tomllib.loads(self.read(".codex/config.toml"))["mcp_servers"]["mac_exec"]["args"], [exec_server])
-
             self.assertEqual(tomllib.loads(self.read(".codex/config.toml"))["mcp_servers"]["mac_control"]["args"], [server])
         else:
             self.assertIn(f'args = ["{server}"]', self.read(".codex/config.toml"))
+            self.assertIn(f'args = ["{exec_server}"]', self.read(".codex/config.toml"))
         # The Claude Desktop entry is printed as a complete JSON document after the instructions.
         start = result.stdout.index("\n{") + 1
         end = result.stdout.index("\n}", start) + 2

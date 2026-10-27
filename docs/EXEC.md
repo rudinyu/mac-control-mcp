@@ -10,12 +10,12 @@ English | [繁體中文](EXEC.zh-TW.md)
 | --- | --- |
 | Fresh container per command | Each `sandbox_exec` starts a new container and deletes it afterwards. Nothing carries over except files in the workspace. |
 | Only the workspace is shared | The workspace folder, `~/AgentWorkspace` by default, is the only Mac folder the container can write to. It appears at `/workspace`. Your home folder, SSH keys, keychains, and browser data are not visible. |
-| Sensitive folders are refused | The workspace and any read-only folders may not be, contain, or sit inside `~/.ssh`, `~/.gnupg`, `~/.aws`, `~/.config`, `~/Library`, shell startup files such as `~/.zshrc`, and similar locations. Sharing your whole home folder is refused for the same reason. |
+| Sensitive folders are refused | The workspace and any read-only folders may not be, contain, or sit inside `~/.ssh`, `~/.gnupg`, `~/.aws`, `~/.config`, `~/Library`, shell startup files such as `~/.zshrc`, agent settings such as `~/.claude` and `~/.codex`, and similar locations, or overlap this project, whose scripts run on the Mac. Sharing your whole home folder is refused for the same reason. |
 | No root, no privileges | Commands run as the user `agent` (uid 1000) with every Linux capability dropped and `no-new-privileges`, so they cannot become root. |
 | Read-only system | The container's system files are read-only. Only `/workspace`, `/tmp`, and the home folder `/home/agent` are writable, and the last two are erased when the command ends. |
-| Resource limits | 2 GB of memory, 2 CPUs, and 256 processes per command, and a timeout of 120 seconds by default, up to 600. A command that runs too long is killed with its container. |
+| Resource limits | 2 GB of memory, 2 CPUs, and 256 processes per command, and a timeout of 120 seconds by default, up to 600. A command that runs too long is killed with its container, and `host_exec` kills every process the command started. |
 | Audit log | Every command is written to `~/Library/Logs/mac-exec/audit.log` before it runs, with its result afterwards. If the log cannot be written, the command does not run. |
-| Approval prompts | Command tools are marked as destructive, so Claude Code and Codex ask before each one when approval prompts are on. |
+| Approval prompts | Command and write tools are marked as destructive. Whether the client asks you before each call depends on its permission settings: keep Claude Code's prompts on, and keep `default_tools_approval_mode = "prompt"` in Codex. `sandbox_write_file` can overwrite files in the workspace. |
 | Running on the Mac is off by default | `host_exec`, which runs a command directly on the Mac, exists only when you turn it on. Each call must give a reason, and `sudo`, `su`, and `doas` are refused. |
 
 The container has normal internet access, so it can download packages and call web APIs. It can also reach your Mac and your local network through Docker's network, for example `host.docker.internal` or your router. If that matters to you, do not run services on your Mac or network that trust connections without a password.
@@ -29,7 +29,7 @@ The container has normal internet access, so it can download packages and call w
    sh scripts/build-sandbox.sh
    ```
 
-   Run it again after `sandbox/Dockerfile` changes. The image is based on Debian and includes bash, Python 3, Node.js, git, curl, and jq.
+   Run it again after `sandbox/Dockerfile` changes. The image is based on Debian and includes bash, Python 3, Node.js, git, curl, and jq. Install Python packages with `pip install --user`, or in a virtual environment under `/workspace`; both last only as long as their location does.
 3. Run `sh scripts/init-agents.sh`. The generated `.mcp.json`, `.codex/config.toml`, and Claude Desktop entry include `mac-exec` next to `mac-control`. If you created those files before, merge the `mac-exec` entry from [`examples/`](../examples/) by hand, or rerun with `--force`.
 4. Restart the client and ask it to call `exec_status`. It should report `"docker_running": true` and `"image_present": true`.
 

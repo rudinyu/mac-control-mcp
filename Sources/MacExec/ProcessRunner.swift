@@ -9,6 +9,10 @@ struct RunResult {
     let durationMs: Int
 }
 
+struct SpawnFailure: Error, CustomStringConvertible {
+    let description: String
+}
+
 // Collects up to `limit` bytes of a pipe and drains the rest, so a chatty command can neither
 // fill memory nor block on a full pipe.
 private final class CappedBuffer {
@@ -32,46 +36,86 @@ private final class CappedBuffer {
     }
 }
 
-// Runs a program without a terminal or standard input. When the timeout passes, `onTimeout` runs
-// (for example to kill a container) and the process is terminated.
-func runProcess(_ executable: String, _ arguments: [String], cwd: URL? = nil, environment: [String: String]? = nil,
-                timeout: TimeInterval, outputLimit: Int, onTimeout: (() -> Void)? = nil) throws -> RunResult {
-    let process = Process()
-    process.executableURL = URL(fileURLWithPath: executable)
-    process.arguments = arguments
-    if let cwd { process.currentDirectoryURL = cwd }
-    if let environment { process.environment = environment }
-    process.standardInput = FileHandle.nullDevice
-    let out = Pipe(), err = Pipe()
-    process.standardOutput = out
-    process.standardError = err
-    let stdout = CappedBuffer(limit: outputLimit), stderr = CappedBuffer(limit: outputLimit)
-    out.fileHandleForReading.readabilityHandler = { stdout.append($0.availableData) }
-    err.fileHandleForReading.readabilityHandler = { stderr.append($0.availableData) }
+private func readPipe(_ fd: Int32, into buffer: CappedBuffer) -> FileHandle {
+    let handle = FileHandle(fileDescriptor: fd, closeOnDealloc: true)
+    handle.readabilityHandler = { handle in
+        let chunk = handle.availableData
+        // An empty read means end of file; stop, or the handler would fire again forever.
+        if chunk.isEmpty { handle.readabilityHandler = nil } else { buffer.append(chunk) }
+    }
+    return handle
+}
 
+// Runs a program without a terminal or standard input, in a new process group. There is no working
+// folder option, because the spawn call for one differs between macOS SDKs; change folders in the command.
+// When the program ends, or when the timeout passes, the whole group is killed, so nothing it started keeps running.
+// `onTimeout` runs first on a timeout, for example to kill a container.
+func runProcess(_ executable: String, _ arguments: [String], environment: [String: String]? = nil,
+                timeout: TimeInterval, outputLimit: Int, onTimeout: (() -> Void)? = nil) throws -> RunResult {
+    var outPipe: [Int32] = [0, 0], errPipe: [Int32] = [0, 0]
+    guard pipe(&outPipe) == 0, pipe(&errPipe) == 0 else { throw SpawnFailure(description: "Could not create pipes.") }
+
+    var actions: posix_spawn_file_actions_t?
+    posix_spawn_file_actions_init(&actions)
+    defer { posix_spawn_file_actions_destroy(&actions) }
+    posix_spawn_file_actions_addopen(&actions, 0, "/dev/null", O_RDONLY, 0)
+    posix_spawn_file_actions_adddup2(&actions, outPipe[1], 1)
+    posix_spawn_file_actions_adddup2(&actions, errPipe[1], 2)
+
+    var attributes: posix_spawnattr_t?
+    posix_spawnattr_init(&attributes)
+    defer { posix_spawnattr_destroy(&attributes) }
+    // A new process group lets a timeout signal every process the command starts. Closing every
+    // other descriptor by default keeps the server's own pipes out of the command.
+    posix_spawnattr_setflags(&attributes, Int16(POSIX_SPAWN_SETPGROUP | POSIX_SPAWN_CLOEXEC_DEFAULT))
+    posix_spawnattr_setpgroup(&attributes, 0)
+
+    let env = (environment ?? ProcessInfo.processInfo.environment).map { "\($0.key)=\($0.value)" }
+    var argv = ([executable] + arguments).map { strdup($0) } + [nil]
+    var envp = env.map { strdup($0) } + [nil]
+    defer { (argv + envp).forEach { free($0) } }
+
+    var pid: pid_t = 0
+    let spawned = posix_spawn(&pid, executable, &actions, &attributes, &argv, &envp)
+    close(outPipe[1]); close(errPipe[1])
+    guard spawned == 0 else {
+        close(outPipe[0]); close(errPipe[0])
+        throw SpawnFailure(description: "Could not start \(executable): \(String(cString: strerror(spawned))).")
+    }
+
+    let stdout = CappedBuffer(limit: outputLimit), stderr = CappedBuffer(limit: outputLimit)
+    let outHandle = readPipe(outPipe[0], into: stdout), errHandle = readPipe(errPipe[0], into: stderr)
     let started = Date()
-    try process.run()
     let deadline = started.addingTimeInterval(timeout)
+    var status: Int32 = 0
     var timedOut = false
-    while process.isRunning {
+    var exited = false
+    while !exited {
+        if waitpid(pid, &status, WNOHANG) == pid { exited = true; break }
         if Date() >= deadline {
             timedOut = true
             onTimeout?()
-            process.terminate()
+            kill(-pid, SIGTERM)
             let grace = Date().addingTimeInterval(2)
-            while process.isRunning, Date() < grace { usleep(50_000) }
-            if process.isRunning { kill(process.processIdentifier, SIGKILL) }
+            while Date() < grace, waitpid(pid, &status, WNOHANG) != pid { usleep(50_000) }
+            kill(-pid, SIGKILL)
+            waitpid(pid, &status, 0)
+            exited = true
             break
         }
         usleep(20_000)
     }
-    process.waitUntilExit()
-    // Let the handlers take the last output. Reading to end of file instead would hang if the command
-    // left a background child holding the pipe open.
+    // Background processes the command left behind still belong to its group.
+    kill(-pid, SIGKILL)
+    // Let the handlers take the last output, then stop reading.
     usleep(100_000)
-    out.fileHandleForReading.readabilityHandler = nil
-    err.fileHandleForReading.readabilityHandler = nil
-    return RunResult(exitCode: process.terminationStatus, stdout: stdout.text, stderr: stderr.text,
+    outHandle.readabilityHandler = nil
+    errHandle.readabilityHandler = nil
+
+    let exitCode: Int32
+    if status & 0x7f == 0 { exitCode = (status >> 8) & 0xff } // exited normally
+    else { exitCode = 128 + (status & 0x7f) }                 // ended by a signal
+    return RunResult(exitCode: exitCode, stdout: stdout.text, stderr: stderr.text,
                      timedOut: timedOut, truncated: stdout.truncated || stderr.truncated,
                      durationMs: Int(Date().timeIntervalSince(started) * 1000))
 }

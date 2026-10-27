@@ -33,8 +33,11 @@ private struct Settings {
             URL(fileURLWithPath: (path as NSString).expandingTildeInPath).standardizedFileURL
         }
         var problems: [String] = []
+        // The server runs from <project>/.build, and the project's scripts run on the Mac.
+        let project = URL(fileURLWithPath: CommandLine.arguments[0]).standardizedFileURL
+            .deletingLastPathComponent().deletingLastPathComponent()
         let workspace = expand(env["MAC_EXEC_WORKSPACE"] ?? "~/AgentWorkspace")
-        if let reason = mountRejection(workspace, home: home) {
+        if let reason = mountRejection(workspace, home: home, protected: [project]) {
             problems.append("MAC_EXEC_WORKSPACE cannot be used: \(reason)")
         } else if !FileManager.default.fileExists(atPath: workspace.path) {
             do {
@@ -47,7 +50,7 @@ private struct Settings {
         for entry in (env["MAC_EXEC_READONLY_DIRS"] ?? "").split(separator: ":") where !entry.isEmpty {
             let folder = expand(String(entry))
             var isDirectory: ObjCBool = false
-            if let reason = mountRejection(folder, home: home) {
+            if let reason = mountRejection(folder, home: home, protected: [project]) {
                 problems.append("MAC_EXEC_READONLY_DIRS entry \(folder.path) cannot be shared: \(reason)")
             } else if !FileManager.default.fileExists(atPath: folder.path, isDirectory: &isDirectory) || !isDirectory.boolValue {
                 problems.append("MAC_EXEC_READONLY_DIRS entry \(folder.path) is not a folder.")
@@ -230,7 +233,8 @@ private final class MacExecServer {
     private func integer(_ args: [String: Any], _ key: String, default value: Int, range: ClosedRange<Int>) throws -> Int {
         guard let raw = args[key] else { return value }
         guard let number = raw as? NSNumber, CFGetTypeID(number) != CFBooleanGetTypeID(),
-              number.doubleValue.rounded() == number.doubleValue, range.contains(number.intValue) else {
+              number.doubleValue.rounded() == number.doubleValue,
+              number.doubleValue >= Double(range.lowerBound), number.doubleValue <= Double(range.upperBound) else {
             throw ToolFailure("\(key) must be an integer from \(range.lowerBound) to \(range.upperBound).")
         }
         return number.intValue
@@ -377,7 +381,10 @@ private final class MacExecServer {
             throw ToolFailure("cwd \(cwd.path) is not a folder.")
         }
         try audit(["tool": "host_exec", "event": "start", "command": command, "reason": reason, "cwd": cwd.path])
-        let result = try runProcess("/bin/zsh", ["-lc", command], cwd: cwd, timeout: TimeInterval(timeout), outputLimit: outputLimit)
+        // The folder and command are passed as arguments, never pasted into the script, so neither is reinterpreted.
+        let script = #"cd -- "$1" || exit 125; eval "$2""#
+        let result = try runProcess("/bin/zsh", ["-lc", script, "zsh", cwd.path, command],
+                                    timeout: TimeInterval(timeout), outputLimit: outputLimit)
         try? audit(["tool": "host_exec", "event": "end", "exit_code": result.exitCode,
                     "timed_out": result.timedOut, "duration_ms": result.durationMs])
         return resultJSON(result)
@@ -387,14 +394,12 @@ private final class MacExecServer {
         try requireUsableWorkspace()
         let url = try workspacePath(args, "path")
         let limit = try integer(args, "max_bytes", default: 200_000, range: 1...maxFileBytes)
-        var isDirectory: ObjCBool = false
-        guard FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory), !isDirectory.boolValue else {
-            throw ToolFailure("\(displayPath(url)) is not a file.")
-        }
+        // The sandbox can create FIFOs and devices in the workspace; opening one would block the server.
+        guard isRegularFile(url) else { throw ToolFailure("\(displayPath(url)) is not a regular file.") }
         let handle = try FileHandle(forReadingFrom: url)
         defer { try? handle.close() }
         let data = try handle.read(upToCount: limit + 1) ?? Data()
-        guard let text = String(data: data.prefix(limit), encoding: .utf8) else {
+        guard let text = String(data: utf8Prefix(data, limit: limit), encoding: .utf8) else {
             throw ToolFailure("\(displayPath(url)) is not UTF-8 text. Use sandbox_exec, for example with base64 or xxd.")
         }
         return jsonString(["path": displayPath(url), "content": text, "truncated": data.count > limit])
@@ -415,6 +420,9 @@ private final class MacExecServer {
         // Creating folders can change what the path resolves to, so check it again before writing.
         guard resolveInWorkspace(displayPath(url), workspace: settings.workspace) != nil else {
             throw ToolFailure("path must stay inside the workspace.")
+        }
+        if FileManager.default.fileExists(atPath: url.path), !isRegularFile(url) {
+            throw ToolFailure("\(displayPath(url)) is not a regular file.")
         }
         if append, FileManager.default.fileExists(atPath: url.path) {
             let handle = try FileHandle(forWritingTo: url)
@@ -445,6 +453,26 @@ private final class MacExecServer {
             entries.append(["name": name, "type": type, "bytes": (attributes[.size] as? NSNumber)?.intValue ?? 0])
         }
         return jsonString(["path": displayPath(url), "entries": entries, "truncated": names.count > maxListEntries])
+    }
+
+    private func isRegularFile(_ url: URL) -> Bool {
+        (try? FileManager.default.attributesOfItem(atPath: url.path)[.type] as? FileAttributeType) == .typeRegular
+    }
+
+    // Cuts data to at most `limit` bytes without ending inside a UTF-8 character.
+    private func utf8Prefix(_ data: Data, limit: Int) -> Data {
+        guard data.count > limit else { return data }
+        var end = limit
+        // Step back over continuation bytes (10xxxxxx) to the start of the character, then drop it
+        // if the whole character does not fit.
+        var start = end
+        while start > 0, data[data.startIndex + start - 1] & 0xC0 == 0x80, end - start < 3 { start -= 1 }
+        if start > 0 {
+            let lead = data[data.startIndex + start - 1]
+            let length = lead >= 0xF0 ? 4 : lead >= 0xE0 ? 3 : lead >= 0xC0 ? 2 : 1
+            if length > 1, end - (start - 1) < length { end = start - 1 }
+        }
+        return data.prefix(end)
     }
 
     // MARK: Output

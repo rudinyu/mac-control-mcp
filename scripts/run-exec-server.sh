@@ -10,7 +10,7 @@ for source_file in "$project_dir"/Sources/MacExec/*.swift; do
 done
 
 if [ "$stale" = 1 ]; then
-  "$project_dir/scripts/build.sh" >&2
+  "$project_dir/scripts/build.sh" mac-exec >&2
 fi
 
 exec "$binary"

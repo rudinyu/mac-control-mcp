@@ -10,12 +10,12 @@
 | --- | --- |
 | 每個指令一個新容器 | 每次 `sandbox_exec` 都會開一個新容器，跑完就刪掉。除了工作資料夾裡的檔案，什麼都不會留下。 |
 | 只共用工作資料夾 | 工作資料夾（預設 `~/AgentWorkspace`）是容器唯一能寫入的 Mac 資料夾，在容器裡是 `/workspace`。你的家目錄、SSH key、鑰匙圈和瀏覽器資料都看不到。 |
-| 拒絕敏感資料夾 | 工作資料夾和唯讀資料夾不能是、不能包含，也不能位於 `~/.ssh`、`~/.gnupg`、`~/.aws`、`~/.config`、`~/Library`、`~/.zshrc` 這類 shell 啟動檔等位置之內。同樣的理由，也不能共用整個家目錄。 |
+| 拒絕敏感資料夾 | 工作資料夾和唯讀資料夾不能是、不能包含，也不能位於 `~/.ssh`、`~/.gnupg`、`~/.aws`、`~/.config`、`~/Library`、`~/.zshrc` 這類 shell 啟動檔、`~/.claude` 和 `~/.codex` 這類代理設定等位置之內，也不能跟這個專案重疊，因為專案裡的腳本會在 Mac 上執行。同樣的理由，也不能共用整個家目錄。 |
 | 不是 root、沒有特權 | 指令以使用者 `agent`（uid 1000）執行，拿掉所有 Linux capability，並開啟 `no-new-privileges`，所以無法變成 root。 |
 | 系統唯讀 | 容器的系統檔案是唯讀的。只有 `/workspace`、`/tmp` 和家目錄 `/home/agent` 可以寫入，後兩者在指令結束後就會清掉。 |
-| 資源限制 | 每個指令最多 2 GB 記憶體、2 顆 CPU、256 個程序；逾時預設 120 秒，最多 600 秒。跑太久的指令會連同容器一起被終止。 |
+| 資源限制 | 每個指令最多 2 GB 記憶體、2 顆 CPU、256 個程序；逾時預設 120 秒，最多 600 秒。跑太久的指令會連同容器一起被終止；`host_exec` 則會終止指令啟動的所有程序。 |
 | 稽核紀錄 | 每個指令在執行前都會寫進 `~/Library/Logs/mac-exec/audit.log`，執行完再記下結果。紀錄寫不進去，指令就不會執行。 |
-| 核准提示 | 執行指令的工具都標記為破壞性，只要開著核准提示，Claude Code 和 Codex 每次執行前都會先問你。 |
+| 核准提示 | 執行指令和寫入檔案的工具都標記為破壞性。客戶端會不會每次都先問你，取決於它的權限設定：請保持 Claude Code 的核准提示開啟，Codex 則保留 `default_tools_approval_mode = "prompt"`。`sandbox_write_file` 會覆蓋工作資料夾裡的檔案。 |
 | 預設不能直接在 Mac 上執行 | 直接在 Mac 上執行指令的 `host_exec`，只有在你開啟後才會出現。每次呼叫都要寫理由，並拒絕 `sudo`、`su` 和 `doas`。 |
 
 容器可以正常上網，所以能下載套件、呼叫網路 API。它也能透過 Docker 的網路連到你的 Mac 和區網，例如 `host.docker.internal` 或你的路由器。如果這對你很重要，就不要在 Mac 或區網上開著不需要密碼就能連的服務。
@@ -29,7 +29,7 @@
    sh scripts/build-sandbox.sh
    ```
 
-   `sandbox/Dockerfile` 有修改時要再跑一次。映像檔以 Debian 為基礎，內含 bash、Python 3、Node.js、git、curl 和 jq。
+   `sandbox/Dockerfile` 有修改時要再跑一次。映像檔以 Debian 為基礎，內含 bash、Python 3、Node.js、git、curl 和 jq。安裝 Python 套件請用 `pip install --user`，或在 `/workspace` 底下建立虛擬環境；裝在哪裡，就只保留到那個位置被清掉為止。
 3. 執行 `sh scripts/init-agents.sh`。產生的 `.mcp.json`、`.codex/config.toml` 和 Claude Desktop 設定，都會在 `mac-control` 旁邊加上 `mac-exec`。如果之前已經產生過這些檔案，請從 [`examples/`](../examples/) 手動合併 `mac-exec` 的設定，或加上 `--force` 重新產生。
 4. 重開客戶端，請它呼叫 `exec_status`，應該會看到 `"docker_running": true` 和 `"image_present": true`。
 

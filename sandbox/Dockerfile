@@ -8,9 +8,10 @@ RUN apt-get update \
  && rm -rf /var/lib/apt/lists/* \
  && useradd --uid 1000 --create-home --shell /bin/bash agent
 
-# pip and npm install into the user's home folder, which is a temporary file system at run time.
+# `pip install --user` and npm install into the user's home folder, a temporary file system at run time.
+# PIP_USER is not set, because it breaks pip inside virtual environments.
 ENV HOME=/home/agent \
-    PIP_USER=1 PIP_BREAK_SYSTEM_PACKAGES=1 PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    PIP_BREAK_SYSTEM_PACKAGES=1 PIP_DISABLE_PIP_VERSION_CHECK=1 \
     NPM_CONFIG_PREFIX=/home/agent/.npm-global \
     PATH=/home/agent/.local/bin:/home/agent/.npm-global/bin:/usr/local/bin:/usr/bin:/bin
 
