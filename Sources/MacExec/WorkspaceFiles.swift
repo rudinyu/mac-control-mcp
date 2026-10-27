@@ -74,9 +74,10 @@ struct WorkspaceFiles {
         var names: [String] = []
         var scannedAll = true
         while let entry = readdir(directory) {
-            if names.count >= scanLimit { scannedAll = false; break }
             let name = withUnsafeBytes(of: entry.pointee.d_name) { String(decoding: $0.prefix(Int(entry.pointee.d_namlen)), as: UTF8.self) }
-            if name != ".", name != ".." { names.append(name) }
+            if name == "." || name == ".." { continue }
+            if names.count >= scanLimit { scannedAll = false; break }
+            names.append(name)
         }
         names.sort()
         let entries: [[String: Any]] = names.prefix(limit).map { name in
