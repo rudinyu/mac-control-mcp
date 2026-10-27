@@ -33,7 +33,7 @@ Example requests:
 
 ### `mac_status`
 
-Reports Accessibility and Screen Recording permission, the frontmost app, the display size, the cursor position, and the size of the last screenshot. It takes no parameters and changes nothing. Call it first in every session.
+Reports Accessibility and Screen Recording permission, whether the screen is locked (`screen_locked` and `screen_locked_reason`), the frontmost app, the display size, the cursor position, and the size of the last screenshot. It takes no parameters and changes nothing. Call it first in every session.
 
 ### `mac_screenshot`
 
@@ -132,6 +132,7 @@ Only one recording runs at a time. Files are QuickTime MOV, saved in `.build/rec
 | `No running app with a Dock icon matches "…"` | Open the app first. Only apps with a Dock icon can be targeted, and names must match exactly, ignoring case. |
 | `"…" matches N running apps` | Several apps share the name. Use the bundle ID shown in the message. |
 | `… has focus instead of …; no input was sent` | Another app took focus right before sending. Nothing was typed. Ask the agent to try again. |
+| `The screen is locked` | Input is refused while the Mac is locked or another user is on the display, because it would go to the login window. Unlock the Mac, then ask the agent to continue. Screenshots still work but show the lock screen. |
 | `Could not determine which app has focus` | Accessibility could not report the focused app. Check the Accessibility permission. |
 | `Call mac_screenshot before mac_mouse` or coordinates rejected | Take a screenshot first, and use coordinates from that image. |
 | Clicks land in the wrong place | The screen changed after the screenshot. Take a new one. |

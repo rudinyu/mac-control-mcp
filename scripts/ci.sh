@@ -7,6 +7,14 @@ project_dir=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 swiftc -module-cache-path "$project_dir/.build/module-cache" -parse-as-library \
   "$project_dir/Sources/TerminalText.swift" "$project_dir/tests/TerminalTextTests.swift" \
   -o "$project_dir/.build/terminal-text-tests"
+swiftc -module-cache-path "$project_dir/.build/module-cache" -parse-as-library \
+  "$project_dir/Sources/SessionLock.swift" "$project_dir/tests/SessionLockTests.swift" \
+  -o "$project_dir/.build/session-lock-tests"
+"$project_dir/.build/session-lock-tests"
 "$project_dir/.build/terminal-text-tests"
+swiftc -module-cache-path "$project_dir/.build/module-cache" -parse-as-library \
+  "$project_dir/Sources/SessionLock.swift" "$project_dir/tests/SessionLockTests.swift" \
+  -o "$project_dir/.build/session-lock-tests"
+"$project_dir/.build/session-lock-tests"
 python3 "$project_dir/tests/test_protocol.py" "$project_dir/.build/mac-control-mcp"
 python3 "$project_dir/tests/test_init_agents.py"

@@ -43,7 +43,7 @@ private final class MacControlServer {
     private let tools: [[String: Any]] = [
         [
             "name": "mac_status",
-            "description": "Report macOS Screen Recording and Accessibility permission, the frontmost app, and main display geometry. Call this before controlling the Mac.",
+            "description": "Report macOS Screen Recording and Accessibility permission, whether the screen is locked, the frontmost app, and main display geometry. Call this before controlling the Mac. While screen_locked is true, mouse and keyboard tools refuse to send input.",
             "inputSchema": ["type": "object", "properties": [:], "additionalProperties": false],
             "annotations": ["readOnlyHint": true]
         ],
@@ -233,6 +233,9 @@ private final class MacControlServer {
             "main_display": ["x": bounds.origin.x, "y": bounds.origin.y, "width": bounds.width, "height": bounds.height],
             "last_screenshot": lastCapture.map { ["width": $0.width, "height": $0.height] } ?? NSNull()
         ]
+        let blockReason = sessionInputBlockReason(CGSessionCopyCurrentDictionary() as? [String: Any])
+        info["screen_locked"] = blockReason != nil
+        info["screen_locked_reason"] = blockReason ?? NSNull()
         if let cursor = CGEvent(source: nil)?.location {
             info["cursor_display"] = ["x": cursor.x, "y": cursor.y]
             if let capture = lastCapture, capture.displayBounds.width > 0, capture.displayBounds.height > 0 {
@@ -336,6 +339,12 @@ private final class MacControlServer {
         return try recordStatus(args)
     }
 
+    private func requireUnlocked() throws {
+        if let reason = sessionInputBlockReason(CGSessionCopyCurrentDictionary() as? [String: Any]) {
+            throw ToolFailure(reason)
+        }
+    }
+
     private func requireAccessibility() throws {
         guard AXIsProcessTrusted() else {
             throw ToolFailure("Accessibility permission is missing. Grant it in System Settings > Privacy & Security > Accessibility, then restart the host app.")
@@ -403,6 +412,8 @@ private final class MacControlServer {
     // A terminal hosting the agent may grab focus back right after activation, so re-activate once.
     // This is best effort: focus can still change in the moment between this check and the posted event.
     private func confirmFocus(_ target: NSRunningApplication?) throws -> String {
+        // The screen can lock while the target app is being brought to the front.
+        try requireUnlocked()
         var current = focusedApp()
         if let target, current?.processIdentifier != target.processIdentifier {
             try bringToFront(target)
@@ -448,6 +459,7 @@ private final class MacControlServer {
         let start = try point(args)
         let end = action == "drag" ? try point(args, xKey: "to_x", yKey: "to_y") : nil
         try requireAccessibility()
+        try requireUnlocked()
         switch action {
         case "move":
             try postMouse(.mouseMoved, at: start)
@@ -486,6 +498,7 @@ private final class MacControlServer {
             throw ToolFailure("Scroll values must be nonzero integers from -20 to 20.")
         }
         try requireAccessibility()
+        try requireUnlocked()
         guard let event = CGEvent(scrollWheelEvent2Source: nil, units: .line, wheelCount: 2,
                                   wheel1: Int32(vertical), wheel2: Int32(horizontal), wheel3: 0) else {
             throw ToolFailure("Could not create a scroll event.")
@@ -500,6 +513,7 @@ private final class MacControlServer {
         }
         let target = try targetApp(args)
         try requireAccessibility()
+        try requireUnlocked()
         if let target { try bringToFront(target) }
         let pasteboard = NSPasteboard.general
         var savedItems: [NSPasteboardItem] = []
@@ -568,6 +582,7 @@ private final class MacControlServer {
         }
         let target = try targetApp(args)
         try requireAccessibility()
+        try requireUnlocked()
         if let target { try bringToFront(target) }
         var flags: CGEventFlags = []
         if names.contains("cmd") { flags.insert(.maskCommand) }

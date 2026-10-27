@@ -33,7 +33,7 @@
 
 ### `mac_status`
 
-回報輔助使用和螢幕錄製權限、前景 App、螢幕尺寸、游標位置，以及上一張截圖的尺寸。沒有參數，也不會改變任何東西。每個工作階段都先呼叫它。
+回報輔助使用和螢幕錄製權限、螢幕是否鎖定（`screen_locked` 和 `screen_locked_reason`）、前景 App、螢幕尺寸、游標位置，以及上一張截圖的尺寸。沒有參數，也不會改變任何東西。每個工作階段都先呼叫它。
 
 ### `mac_screenshot`
 
@@ -132,6 +132,7 @@
 | `No running app with a Dock icon matches "…"` | 先打開那個 App。只有有 Dock 圖示的 App 可以指定，名稱要完全相同（不分大小寫）。 |
 | `"…" matches N running apps` | 有好幾個 App 同名。改用訊息裡列出的 bundle ID。 |
 | `… has focus instead of …; no input was sent` | 送出前焦點被其他 App 搶走了，沒有輸入任何東西。請代理再試一次。 |
+| `The screen is locked` | Mac 鎖定，或其他使用者正在使用螢幕時，輸入會送到登入視窗，所以工具會拒絕送出。請先解鎖，再請代理繼續。截圖仍可使用，但只會拍到鎖定畫面。 |
 | `Could not determine which app has focus` | 輔助使用無法回報焦點所在的 App。請檢查輔助使用權限。 |
 | `Call mac_screenshot before mac_mouse` 或座標被拒絕 | 先截圖，並使用那張截圖的座標。 |
 | 點擊位置不對 | 截圖之後畫面變了。重新截圖。 |

@@ -64,6 +64,8 @@ class MCPProtocolTests(unittest.TestCase):
         self.assertIsInstance(info["screen_recording"], bool)
         self.assertIsInstance(info["accessibility"], bool)
         self.assertIsInstance(info["display_available"], bool)
+        self.assertIsInstance(info["screen_locked"], bool)
+        self.assertEqual(info["screen_locked"], info["screen_locked_reason"] is not None)
         self.assertIsInstance(info["main_display"]["width"], (int, float))
 
     def test_03_invalid_actions_cannot_send_input(self):
