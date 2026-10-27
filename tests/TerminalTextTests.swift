@@ -40,6 +40,11 @@ private enum TerminalTextTests {
         check("original iTerm2 sample",
               " \u{0}\u{0}\u{0}session：\u{0}「\u{0}mac_status\u{0}呼\u{0}叫\u{0}」\u{0}\n\u{0}\u{0}-\u{0}Tue Oct\u{0}27 11:41。\u{0}",
               "    session：「mac_status 呼叫」\n  - Tue Oct 27 11:41。")
+        check("CRLF trims trailing blanks", "ab\u{0} \r\ncd\u{0}", "ab\r\ncd")
+        check("zero limit", "ab\u{0}", limit: 0, "")
+        check("negative limit", "ab", limit: -1, "")
+        check("combining marks count as one character", "e\u{301}\u{0}e\u{301}\u{0}", limit: 2, "e\u{301} ")
+        check("large input stops early", String(repeating: "x\u{0}", count: 200_000), limit: 3, "x x")
         check("limit applies after cleaning", "中\u{0}文\u{0}字\u{0}", limit: 2, "中文")
 
         checkWide("a", false)

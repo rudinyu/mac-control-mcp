@@ -4,13 +4,15 @@
 // of each line are trimmed so they do not use up the character limit. Text without NUL is
 // returned unchanged apart from the limit.
 func cleanCellText(_ string: String, limit: Int) -> String {
+    guard limit > 0 else { return "" }
     guard string.unicodeScalars.contains("\u{0}") else { return String(string.prefix(limit)) }
     var output = String.UnicodeScalarView()
+    var outputCount = 0 // UnicodeScalarView.count is O(n), so track the length here.
     var pendingBlanks = 0
     var previousIsWide = false
     // Characters never outnumber scalars, so stopping at twice the limit leaves room for combining marks.
     for scalar in string.unicodeScalars {
-        if output.count >= limit * 2 { break }
+        if outputCount >= limit * 2 { break }
         switch scalar {
         case "\u{0}":
             if !previousIsWide { pendingBlanks += 1 }
@@ -18,21 +20,25 @@ func cleanCellText(_ string: String, limit: Int) -> String {
         case " ":
             pendingBlanks += 1
             previousIsWide = false
-        case "\n":
+        case "\n", "\r":
             pendingBlanks = 0
             output.append(scalar)
+            outputCount += 1
             previousIsWide = false
         default:
             output.append(contentsOf: repeatElement(" ", count: pendingBlanks))
-            pendingBlanks = 0
             output.append(scalar)
+            outputCount += pendingBlanks + 1
+            pendingBlanks = 0
             previousIsWide = isWide(scalar)
         }
     }
     return String(String(output).prefix(limit))
 }
 
-// Approximates Unicode East Asian Width W and F (Unicode 15), which terminals draw in two cells.
+// Approximates the Unicode East Asian Width W and F ranges, which terminals draw in two cells.
+// The emoji blocks are listed whole, so a few narrow symbols in them (such as U+1F321 🌡 without
+// an emoji variation selector) count as wide; a blank cell right after one of those is dropped.
 func isWide(_ scalar: Unicode.Scalar) -> Bool {
     switch scalar.value {
     case 0x1100...0x115F,                                   // Hangul Jamo initial consonants

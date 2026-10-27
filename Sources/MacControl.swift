@@ -353,18 +353,18 @@ private final class MacControlServer {
         let matches = byBundle.isEmpty
             ? apps.filter { $0.localizedName?.caseInsensitiveCompare(query) == .orderedSame }
             : byBundle
+        guard !matches.isEmpty else {
+            throw ToolFailure("No running app with a Dock icon matches \"\(query)\". Launch it first.")
+        }
         if matches.count == 1 { return matches[0] }
         if let focused = focusedApp(), let match = matches.first(where: { $0.processIdentifier == focused.processIdentifier }) {
             return match
-        }
-        guard !matches.isEmpty else {
-            throw ToolFailure("No running app with a Dock icon matches \"\(query)\". Launch it first.")
         }
         let listed = matches.map { "\($0.localizedName ?? "?") (\($0.bundleIdentifier ?? "no bundle ID"), pid \($0.processIdentifier))" }
         throw ToolFailure("\"\(query)\" matches \(matches.count) running apps: \(listed.joined(separator: ", ")). Use a bundle ID, or quit the extra copies.")
     }
 
-    // Asks the window server rather than NSWorkspace, whose frontmostApplication can be stale without a run loop.
+    // Asks Accessibility rather than NSWorkspace, whose frontmostApplication can be stale without a run loop.
     // Returns nil when focus is unknown, so focus checks before input fail closed.
     private func focusedApp() -> NSRunningApplication? {
         guard let element = elementAttribute(AXUIElementCreateSystemWide(), kAXFocusedApplicationAttribute as CFString) else {
