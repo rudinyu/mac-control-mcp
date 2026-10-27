@@ -2,7 +2,7 @@
 
 [English](INSTALL.md) | 繁體中文
 
-這份指南說明如何在你的 Mac 上安裝 mac-control-mcp，並連接 Claude Code、Claude Desktop 或 Codex。裝好之後請看[使用說明](USAGE.zh-TW.md)。
+大多數人建議直接使用 [MacControl.app](APP.zh-TW.md)，不需要編譯。這份指南說明如何從原始碼在你的 Mac 上安裝 mac-control-mcp，並連接 Claude Code、Claude Desktop 或 Codex。裝好之後請看[使用說明](USAGE.zh-TW.md)。
 
 ## 1. 需求
 

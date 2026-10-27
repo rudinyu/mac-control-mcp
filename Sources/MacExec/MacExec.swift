@@ -326,6 +326,7 @@ private final class MacExecServer {
         guard let runtime = settings.runtime else {
             throw ToolFailure("No sandbox runtime was found. Open MacControl.app to install one, or install Docker and set MAC_EXEC_DOCKER.")
         }
+        try ensureRuntimeRunning(runtime)
         let root = resolvedPath(settings.workspace)
         let containerCwd = "/workspace" + String(cwd.path.dropFirst(root.count))
         let name = "mac-exec-\(UUID().uuidString.lowercased())"
@@ -353,6 +354,35 @@ private final class MacExecServer {
             throw ToolFailure("The sandbox image \(settings.image) is missing. Open MacControl.app to build it, or run sh scripts/build-sandbox.sh in the mac-control-mcp folder.")
         }
         return resultJSON(result)
+    }
+
+    // MacControl.app tells the server how to start the runtime it installed, so the first sandbox command
+    // after a restart starts the VM instead of failing. Without that information, nothing is started.
+    private func ensureRuntimeRunning(_ runtime: ContainerRuntime) throws {
+        let ready = try? runProcess(runtime.program, runtime.readyArguments(), environment: runtime.environment,
+                                    timeout: 20, outputLimit: 1000)
+        if ready?.exitCode == 0 { return }
+        let env = ProcessInfo.processInfo.environment
+        let program: String, arguments: [String]
+        var startEnvironment = runtime.environment
+        switch runtime.kind {
+        case .docker:
+            guard let colima = env["MAC_EXEC_COLIMA"], let profile = env["MAC_EXEC_COLIMA_PROFILE"] else { return }
+            program = colima
+            arguments = ["start", "--profile", profile]
+            if let path = env["MAC_EXEC_COLIMA_PATH"] { startEnvironment["PATH"] = path }
+            // Colima's docker context changes go to the app's own Docker settings, not the user's.
+            if let config = env["MAC_EXEC_COLIMA_DOCKER_CONFIG"] { startEnvironment["DOCKER_CONFIG"] = config }
+            startEnvironment.removeValue(forKey: "DOCKER_HOST")
+        case .apple:
+            program = runtime.program
+            arguments = ["system", "start", "--enable-kernel-install"]
+        }
+        try audit(["tool": "sandbox_exec", "event": "start_runtime", "command": ([program] + arguments).joined(separator: " ")])
+        let started = try runProcess(program, arguments, environment: startEnvironment, timeout: 600, outputLimit: 20_000)
+        guard started.exitCode == 0 else {
+            throw ToolFailure("The sandbox runtime was not running and could not be started: \(started.stderr.suffix(500)) Open MacControl.app to check it.")
+        }
     }
 
     private func hostExec(_ args: [String: Any]) throws -> String {

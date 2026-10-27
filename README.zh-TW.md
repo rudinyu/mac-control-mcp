@@ -2,7 +2,9 @@
 
 [English](README.md) | 繁體中文
 
-**指南：**[安裝](docs/INSTALL.zh-TW.md) · [使用說明與工具參考](docs/USAGE.zh-TW.md) · [mac-exec：在 sandbox 裡執行指令和處理檔案](docs/EXEC.zh-TW.md)
+**最簡單的方式：**下載 [MacControl.app](docs/APP.zh-TW.md)，它會幫你安裝並連接所有東西。
+
+**指南：**[MacControl.app](docs/APP.zh-TW.md) · [從原始碼安裝](docs/INSTALL.zh-TW.md) · [使用說明與工具參考](docs/USAGE.zh-TW.md) · [mac-exec：在 sandbox 裡執行指令和處理檔案](docs/EXEC.zh-TW.md)
 
 這是一個在你自己的 Mac 上執行的 MCP 伺服器，讓本機 Claude Code 或 Codex 使用 macOS 的截圖、輔助使用、鍵盤、滑鼠與螢幕錄影功能。它只透過標準輸入／輸出與 MCP 主程式通信，mac-control 沒有網路監聽埠，也不提供任意 shell 指令。
 

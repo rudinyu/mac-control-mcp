@@ -9,3 +9,11 @@ CODEX_CLAUDE_REVIEW.md
 /AGENTS.md
 /.mcp.json
 /.codex/
+
+# Signing and notarization secrets: never commit these
+*.p8
+AuthKey_*
+*.p12
+*.cer
+*.certSigningRequest
+*.provisionprofile

@@ -9,5 +9,7 @@ jobs:
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Build and test MCP protocol
+      - name: Build and test (sandbox tests are skipped without Docker)
         run: sh scripts/ci.sh
+      - name: Build the app (ad-hoc signed)
+        run: sh scripts/build-app.sh

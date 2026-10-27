@@ -2,7 +2,7 @@
 
 English | [繁體中文](INSTALL.zh-TW.md)
 
-This guide sets up mac-control-mcp on your Mac and connects it to Claude Code, Claude Desktop, or Codex. When you are done, see the [usage guide](USAGE.md).
+Most people should use [MacControl.app](APP.md) instead, which needs no build. This guide sets up mac-control-mcp from source on your Mac and connects it to Claude Code, Claude Desktop, or Codex. When you are done, see the [usage guide](USAGE.md).
 
 ## 1. Requirements
 

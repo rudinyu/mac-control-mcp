@@ -16,10 +16,15 @@ swiftc -module-cache-path "$cache" -parse-as-library \
   "$project_dir/Sources/MacExec/ContainerRuntime.swift" "$project_dir/Sources/MacExec/ProcessRunner.swift" \
   "$project_dir/tests/ContainerRuntimeTests.swift" \
   -o "$project_dir/.build/container-runtime-tests"
+swiftc -module-cache-path "$cache" -parse-as-library \
+  "$project_dir/App/Sources/ClientConfig.swift" "$project_dir/App/Sources/RuntimePlan.swift" \
+  "$project_dir/tests/AppLogicTests.swift" \
+  -o "$project_dir/.build/app-logic-tests"
 
 "$project_dir/.build/terminal-text-tests"
 "$project_dir/.build/session-lock-tests"
 "$project_dir/.build/container-runtime-tests"
+"$project_dir/.build/app-logic-tests"
 python3 "$project_dir/tests/test_protocol.py" "$project_dir/.build/mac-control-mcp"
 python3 "$project_dir/tests/test_init_agents.py"
 # Sandbox tests are skipped when Docker or the sandbox image is not available, as on GitHub Actions.
