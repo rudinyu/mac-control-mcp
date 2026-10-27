@@ -2,19 +2,18 @@
 set -eu
 
 project_dir=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+cache="$project_dir/.build/module-cache"
 "$project_dir/scripts/build.sh"
+
 # Tests are built here, not in build.sh, so a broken test never blocks the server from starting.
-swiftc -module-cache-path "$project_dir/.build/module-cache" -parse-as-library \
+swiftc -module-cache-path "$cache" -parse-as-library \
   "$project_dir/Sources/TerminalText.swift" "$project_dir/tests/TerminalTextTests.swift" \
   -o "$project_dir/.build/terminal-text-tests"
-swiftc -module-cache-path "$project_dir/.build/module-cache" -parse-as-library \
+swiftc -module-cache-path "$cache" -parse-as-library \
   "$project_dir/Sources/SessionLock.swift" "$project_dir/tests/SessionLockTests.swift" \
   -o "$project_dir/.build/session-lock-tests"
-"$project_dir/.build/session-lock-tests"
+
 "$project_dir/.build/terminal-text-tests"
-swiftc -module-cache-path "$project_dir/.build/module-cache" -parse-as-library \
-  "$project_dir/Sources/SessionLock.swift" "$project_dir/tests/SessionLockTests.swift" \
-  -o "$project_dir/.build/session-lock-tests"
 "$project_dir/.build/session-lock-tests"
 python3 "$project_dir/tests/test_protocol.py" "$project_dir/.build/mac-control-mcp"
 python3 "$project_dir/tests/test_init_agents.py"

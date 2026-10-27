@@ -233,7 +233,7 @@ private final class MacControlServer {
             "main_display": ["x": bounds.origin.x, "y": bounds.origin.y, "width": bounds.width, "height": bounds.height],
             "last_screenshot": lastCapture.map { ["width": $0.width, "height": $0.height] } ?? NSNull()
         ]
-        let blockReason = sessionInputBlockReason(CGSessionCopyCurrentDictionary() as? [String: Any])
+        let blockReason = inputBlockReason()
         info["screen_locked"] = blockReason != nil
         info["screen_locked_reason"] = blockReason ?? NSNull()
         if let cursor = CGEvent(source: nil)?.location {
@@ -339,10 +339,13 @@ private final class MacControlServer {
         return try recordStatus(args)
     }
 
+    // CGSessionCopyCurrentDictionary() is nil for a process outside a GUI login session.
+    private func inputBlockReason() -> String? {
+        sessionInputBlockReason(CGSessionCopyCurrentDictionary() as? [String: Any])
+    }
+
     private func requireUnlocked() throws {
-        if let reason = sessionInputBlockReason(CGSessionCopyCurrentDictionary() as? [String: Any]) {
-            throw ToolFailure(reason)
-        }
+        if let reason = inputBlockReason() { throw ToolFailure(reason) }
     }
 
     private func requireAccessibility() throws {
