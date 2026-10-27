@@ -1,0 +1,16 @@
+#!/bin/sh
+# Runs the project checks before each commit. Needs only the tools listed in README.md, not Claude.
+# If the optional Claude review (codex-precommit-check and the claude CLI) is installed, it runs too;
+# set CODEX_SKIP_REVIEW=1 to skip it for one commit.
+set -eu
+
+project_dir=$(git rev-parse --show-toplevel)
+sh "$project_dir/scripts/ci.sh"
+
+if [ "${CODEX_SKIP_REVIEW:-0}" = 1 ]; then
+  echo "[info] CODEX_SKIP_REVIEW=1: skipping the Claude review." >&2
+elif command -v codex-precommit-check >/dev/null 2>&1 && command -v claude >/dev/null 2>&1; then
+  codex-precommit-check CODEX_CLAUDE_REVIEW.md
+else
+  echo "[info] codex-precommit-check or the claude CLI is not installed: skipping the Claude review." >&2
+fi

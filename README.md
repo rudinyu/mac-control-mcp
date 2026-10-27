@@ -36,6 +36,14 @@ sh scripts/ci.sh
 
 This builds `.build/mac-control-mcp` and `.build/terminal-text-tests`, runs the terminal text unit tests, and runs MCP protocol tests that do not control the desktop. GitHub Actions runs the same script.
 
+To run the same checks before every commit, enable the project's Git hook once after cloning:
+
+```sh
+git config core.hooksPath .githooks
+```
+
+The hook needs nothing beyond the tools above. If `codex-precommit-check` and the `claude` CLI are installed, it also runs a Claude code review; otherwise the review is skipped. Set `CODEX_SKIP_REVIEW=1` to skip the review for one commit.
+
 ## Connect Claude Code and Codex
 
 Claude Code's `.mcp.json` and Codex's `.codex/config.toml` contain local absolute paths, so they are not in the repository (they are listed in `.gitignore`). After cloning, create them in the project root and replace the path with the absolute path of your clone. Both start `scripts/run-server.sh`, which rebuilds the server when the binary is missing or a source file has changed.

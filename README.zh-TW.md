@@ -34,6 +34,14 @@ sh scripts/ci.sh
 
 這會編譯 `.build/mac-control-mcp` 和 `.build/terminal-text-tests`，執行終端機文字清理的單元測試，以及不操作桌面的 MCP 協定測試。GitHub Actions 使用同一份腳本。
 
+若要在每次 commit 前自動跑同樣的檢查，clone 之後執行一次以下命令，啟用專案的 Git hook：
+
+```sh
+git config core.hooksPath .githooks
+```
+
+這個 hook 只需要上面列的工具。如果有安裝 `codex-precommit-check` 和 `claude` CLI，它會另外執行 Claude code review；沒有安裝就略過。要在某次 commit 略過 review，可設定 `CODEX_SKIP_REVIEW=1`。
+
 ## 連接 Claude Code 與 Codex
 
 Claude Code 的 `.mcp.json` 和 Codex 的 `.codex/config.toml` 含有本機絕對路徑，所以不放進 repo（已列在 `.gitignore`）。clone 之後請在專案根目錄自行建立，把路徑換成你的 clone 位置。兩者都啟動 `scripts/run-server.sh`，這個腳本會在程式缺少或源碼更新時重新編譯。
