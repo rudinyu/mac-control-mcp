@@ -163,6 +163,20 @@ class ProtocolAndFileTests(unittest.TestCase):
                 self.assertTrue(self.server.call("sandbox_write_file", path=path, content="x")[0])
         self.assertEqual(os.listdir(outside), [])
 
+    def test_listing_is_capped(self):
+        folder = os.path.join(self.server.workspace, "many")
+        os.makedirs(folder)
+        for i in range(600):
+            open(os.path.join(folder, f"f{i:04}"), "w").close()
+        result = self.server.ok("sandbox_list", path="many")
+        self.assertEqual(len(result["entries"]), 500)
+        self.assertTrue(result["truncated"])
+
+    def test_append_and_nested_folders(self):
+        self.server.ok("sandbox_write_file", path="a/b/c/log.txt", content="one\n")
+        self.server.ok("sandbox_write_file", path="a/b/c/log.txt", content="two\n", append=True)
+        self.assertEqual(self.server.ok("sandbox_read_file", path="a/b/c/log.txt")["content"], "one\ntwo\n")
+
     def test_links_are_listed_as_links(self):
         os.symlink("/etc", os.path.join(self.server.workspace, "etc-link"))
         entries = self.server.ok("sandbox_list")["entries"]

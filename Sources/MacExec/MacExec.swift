@@ -424,7 +424,8 @@ private final class MacExecServer {
         do {
             let handle = try files.openFile(url.path, flags: flags, createFolders: true)
             try handle.write(contentsOf: data)
-        } catch let error as WorkspaceFileError {
+            try handle.close()
+        } catch {
             throw ToolFailure("Cannot write \(displayPath(url)): \(error)")
         }
         return jsonString(["path": displayPath(url), "bytes_written": data.count, "appended": append])

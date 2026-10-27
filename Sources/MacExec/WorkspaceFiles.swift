@@ -65,13 +65,16 @@ struct WorkspaceFiles {
     }
 
     // Lists a folder without following symbolic links. Returns at most `limit` entries, sorted by name,
-    // and whether there were more.
-    func list(_ resolved: String, limit: Int) throws -> (entries: [[String: Any]], truncated: Bool) {
+    // and whether there were more. The sandbox can fill a folder with any number of entries, so at most
+    // `scanLimit` names are read; past that the listing is a sorted sample of the first names found.
+    func list(_ resolved: String, limit: Int, scanLimit: Int = 10_000) throws -> (entries: [[String: Any]], truncated: Bool) {
         let fd = try openFolder(try components(resolved), create: false)
         guard let directory = fdopendir(fd) else { let code = errno; close(fd); throw failure(code) }
         defer { closedir(directory) }
         var names: [String] = []
+        var scannedAll = true
         while let entry = readdir(directory) {
+            if names.count >= scanLimit { scannedAll = false; break }
             let name = withUnsafeBytes(of: entry.pointee.d_name) { String(decoding: $0.prefix(Int(entry.pointee.d_namlen)), as: UTF8.self) }
             if name != ".", name != ".." { names.append(name) }
         }
@@ -90,6 +93,6 @@ struct WorkspaceFiles {
             }
             return ["name": name, "type": type, "bytes": Int(info.st_size)]
         }
-        return (entries, names.count > limit)
+        return (entries, !scannedAll || names.count > limit)
     }
 }
