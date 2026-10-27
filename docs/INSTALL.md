@@ -42,6 +42,8 @@ These files contain a machine-specific path, so they are listed in `.gitignore` 
 
 The script also prints a Claude Desktop entry. Claude Desktop's configuration holds your other servers too, so the script never edits it. Section 4 shows how to add the entry.
 
+To also run commands and work with files in a sandbox, set up mac-exec as described in [mac-exec: sandboxed commands and files](EXEC.md#setup). It needs Docker.
+
 ## 4. Connect a client
 
 ### Claude Code

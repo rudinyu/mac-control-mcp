@@ -42,6 +42,8 @@ sh scripts/init-agents.sh
 
 腳本也會印出 Claude Desktop 的設定。Claude Desktop 的設定檔裡還有你其他的伺服器，所以腳本不會去改它。第 4 節說明怎麼加進去。
 
+如果也想在 sandbox 裡執行指令和處理檔案，請依照 [mac-exec：在 sandbox 裡執行指令和處理檔案](EXEC.zh-TW.md#設定步驟) 設定 mac-exec。它需要 Docker。
+
 ## 4. 連接客戶端
 
 ### Claude Code

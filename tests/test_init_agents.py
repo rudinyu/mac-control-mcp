@@ -54,7 +54,11 @@ class InitAgentsTests(unittest.TestCase):
             with self.subTest(name=name):
                 self.assertNotIn(PLACEHOLDER, self.read(name))
         self.assertEqual(json.loads(self.read(".mcp.json"))["mcpServers"]["mac-control"]["args"], [server])
+        exec_server = os.path.join(self.clone, "scripts", "run-exec-server.sh")
+        self.assertEqual(json.loads(self.read(".mcp.json"))["mcpServers"]["mac-exec"]["args"], [exec_server])
         if tomllib:
+            self.assertEqual(tomllib.loads(self.read(".codex/config.toml"))["mcp_servers"]["mac_exec"]["args"], [exec_server])
+
             self.assertEqual(tomllib.loads(self.read(".codex/config.toml"))["mcp_servers"]["mac_control"]["args"], [server])
         else:
             self.assertIn(f'args = ["{server}"]', self.read(".codex/config.toml"))

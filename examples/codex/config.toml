@@ -4,3 +4,14 @@ args = ["/path/to/mac-control-mcp/scripts/run-server.sh"]
 default_tools_approval_mode = "prompt"
 startup_timeout_sec = 30
 tool_timeout_sec = 30
+
+[mcp_servers.mac_exec]
+command = "/bin/sh"
+args = ["/path/to/mac-control-mcp/scripts/run-exec-server.sh"]
+default_tools_approval_mode = "prompt"
+startup_timeout_sec = 30
+# sandbox_exec and host_exec allow commands to run for up to 600 seconds.
+tool_timeout_sec = 620
+
+[mcp_servers.mac_exec.env]
+MAC_EXEC_WORKSPACE = "~/AgentWorkspace"

@@ -5,6 +5,15 @@
       "args": [
         "/path/to/mac-control-mcp/scripts/run-server.sh"
       ]
+    },
+    "mac-exec": {
+      "command": "/bin/sh",
+      "args": [
+        "/path/to/mac-control-mcp/scripts/run-exec-server.sh"
+      ],
+      "env": {
+        "MAC_EXEC_WORKSPACE": "~/AgentWorkspace"
+      }
     }
   }
 }
