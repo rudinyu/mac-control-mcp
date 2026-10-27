@@ -34,7 +34,34 @@ sh scripts/ci.sh
 
 ## 連接 Claude Code 與 Codex
 
-專案內已提供 Claude Code 的 `.mcp.json` 和 Codex 的 `.codex/config.toml`，兩者都啟動 `scripts/run-server.sh`。這個腳本會在程式缺少或源碼更新時重新編譯。設定使用本機絕對路徑；如果移動專案，請同步修改兩個設定檔的路徑。
+Claude Code 的 `.mcp.json` 和 Codex 的 `.codex/config.toml` 含有本機絕對路徑，所以不放進 repo（已列在 `.gitignore`）。clone 之後請在專案根目錄自行建立，把路徑換成你的 clone 位置。兩者都啟動 `scripts/run-server.sh`，這個腳本會在程式缺少或源碼更新時重新編譯。
+
+`.mcp.json`：
+
+```json
+{
+  "mcpServers": {
+    "mac-control": {
+      "type": "stdio",
+      "command": "/bin/sh",
+      "args": ["/path/to/mac-control-mcp/scripts/run-server.sh"]
+    }
+  }
+}
+```
+
+`.codex/config.toml`：
+
+```toml
+[mcp_servers.mac_control]
+command = "/bin/sh"
+args = ["/path/to/mac-control-mcp/scripts/run-server.sh"]
+default_tools_approval_mode = "prompt"
+startup_timeout_sec = 30
+tool_timeout_sec = 30
+```
+
+如果要讓代理預設使用 mac-control，可以另外在本機建立 `CLAUDE.md` 或 `AGENTS.md` 說明，這兩個檔案同樣不進 repo。
 
 1. 在本專案目錄開始一個**新的本機** Claude Code 或 Codex 工作階段。
 2. Claude Code 首次載入專案 MCP 時，請在它自己的介面中檢查並核准。Codex 需要信任此專案，才會載入 `.codex/config.toml`。
