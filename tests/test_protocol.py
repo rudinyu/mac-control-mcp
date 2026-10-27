@@ -76,6 +76,7 @@ class MCPProtocolTests(unittest.TestCase):
             ("mac_record_status", {"recording_id": "missing"}),
             ("mac_ui_tree", {"max_depth": 9}),
             ("mac_type_text", {"text": "x", "app": ""}),
+            ("mac_type_text", {"text": "x", "app": "   "}),
             ("mac_type_text", {"text": "x", "app": "No Such App 7f3c"}),
             ("mac_key", {"key": "a", "app": "No Such App 7f3c"}),
             ("mac_ui_tree", {"app": 42}),

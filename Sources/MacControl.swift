@@ -21,8 +21,13 @@ private struct CaptureSize {
 
 private let appProperty: [String: Any] = [
     "type": "string",
-    "description": "Name or bundle ID of a running app, such as TextEdit or com.apple.TextEdit."
+    "description": "Name or bundle ID of a running app with a Dock icon, such as TextEdit or com.apple.TextEdit."
 ]
+
+private let activationTimeout: TimeInterval = 2
+private let focusPollInterval: TimeInterval = 0.05
+// Gives the target app time to read the clipboard before the previous contents are restored.
+private let pasteSettleMicroseconds: useconds_t = 500_000
 
 private struct Recording {
     let process: Process
@@ -342,12 +347,21 @@ private final class MacControlServer {
         guard let query = (raw as? String)?.trimmingCharacters(in: .whitespacesAndNewlines), !query.isEmpty else {
             throw ToolFailure("app must be a non-empty app name or bundle ID.")
         }
+        // Only regular apps (those with a Dock icon) can be brought to the front and take keyboard input.
         let apps = NSWorkspace.shared.runningApplications.filter { $0.activationPolicy == .regular && !$0.isTerminated }
-        if let match = apps.first(where: { $0.bundleIdentifier?.caseInsensitiveCompare(query) == .orderedSame })
-            ?? apps.first(where: { $0.localizedName?.caseInsensitiveCompare(query) == .orderedSame }) {
+        let byBundle = apps.filter { $0.bundleIdentifier?.caseInsensitiveCompare(query) == .orderedSame }
+        let matches = byBundle.isEmpty
+            ? apps.filter { $0.localizedName?.caseInsensitiveCompare(query) == .orderedSame }
+            : byBundle
+        if matches.count == 1 { return matches[0] }
+        if let focused = focusedApp(), let match = matches.first(where: { $0.processIdentifier == focused.processIdentifier }) {
             return match
         }
-        throw ToolFailure("No running app matches \"\(query)\". Launch it first.")
+        guard !matches.isEmpty else {
+            throw ToolFailure("No running app with a Dock icon matches \"\(query)\". Launch it first.")
+        }
+        let listed = matches.map { "\($0.localizedName ?? "?") (\($0.bundleIdentifier ?? "no bundle ID"), pid \($0.processIdentifier))" }
+        throw ToolFailure("\"\(query)\" matches \(matches.count) running apps: \(listed.joined(separator: ", ")). Use a bundle ID, or quit the extra copies.")
     }
 
     // Asks the window server rather than NSWorkspace, whose frontmostApplication can be stale without a run loop.
@@ -361,35 +375,39 @@ private final class MacControlServer {
         return NSRunningApplication(processIdentifier: pid)
     }
 
-    private func waitUntilFocused(_ app: NSRunningApplication, seconds: Double) -> Bool {
-        let deadline = Date().addingTimeInterval(seconds)
+    private func waitUntilFocused(_ app: NSRunningApplication) -> Bool {
+        let deadline = Date().addingTimeInterval(activationTimeout)
         while Date() < deadline {
             if focusedApp()?.processIdentifier == app.processIdentifier { return true }
-            RunLoop.current.run(until: Date().addingTimeInterval(0.05))
+            RunLoop.current.run(until: Date().addingTimeInterval(focusPollInterval))
         }
         return focusedApp()?.processIdentifier == app.processIdentifier
     }
 
+    private func focusFailure(_ target: NSRunningApplication, _ current: NSRunningApplication?) -> ToolFailure {
+        let name = target.localizedName ?? "the app"
+        guard let current else {
+            return ToolFailure("Could not determine which app has focus, so \(name) could not be confirmed in front; no input was sent. Check Accessibility permission.")
+        }
+        return ToolFailure("\(current.localizedName ?? "Another app") has focus instead of \(name); no input was sent.")
+    }
+
     private func bringToFront(_ app: NSRunningApplication) throws {
         if focusedApp()?.processIdentifier == app.processIdentifier { return }
-        // activate() can return false yet still take effect, so always wait for the result.
-        app.activate()
-        guard waitUntilFocused(app, seconds: 2) else {
-            let current = focusedApp()?.localizedName ?? "an unknown app"
-            throw ToolFailure("Could not bring \(app.localizedName ?? "the app") to the front (\(current) kept focus); no input was sent.")
-        }
+        // activate() can return false yet still take effect, so waitUntilFocused is the real check.
+        _ = app.activate()
+        guard waitUntilFocused(app) else { throw focusFailure(app, focusedApp()) }
     }
 
     // Re-checks focus immediately before posting input, since another app can take focus between tool calls.
     // A terminal hosting the agent may grab focus back right after activation, so re-activate once.
+    // This is best effort: focus can still change in the moment between this check and the posted event.
     private func confirmFocus(_ target: NSRunningApplication?) throws -> String {
         var current = focusedApp()
         if let target, current?.processIdentifier != target.processIdentifier {
             try bringToFront(target)
             current = focusedApp()
-            guard current?.processIdentifier == target.processIdentifier else {
-                throw ToolFailure("\(current?.localizedName ?? "An unknown app") took focus from \(target.localizedName ?? "the app"); no input was sent.")
-            }
+            guard current?.processIdentifier == target.processIdentifier else { throw focusFailure(target, current) }
         }
         return current?.localizedName ?? "the frontmost app"
     }
@@ -523,7 +541,7 @@ private final class MacControlServer {
         up.flags = .maskCommand
         down.post(tap: .cghidEventTap)
         up.post(tap: .cghidEventTap)
-        usleep(500_000)
+        usleep(pasteSettleMicroseconds)
         return "Inserted \(value.count) characters into \(receiver) via Command-V."
     }
 
@@ -587,35 +605,7 @@ private final class MacControlServer {
         if let plain = value as? String { string = plain }
         else if let number = value as? NSNumber { string = number.stringValue }
         else { return nil }
-        return String(stripNUL(string).prefix(limit))
-    }
-
-    // iTerm2 and similar terminals report each cell: NUL pads the second cell of a wide character
-    // and also stands for a blank cell. Drop the padding and keep blanks as spaces.
-    private func stripNUL(_ string: String) -> String {
-        guard string.unicodeScalars.contains("\u{0}") else { return string }
-        var scalars = String.UnicodeScalarView()
-        var previousIsWide = false
-        for scalar in string.unicodeScalars {
-            if scalar == "\u{0}" {
-                if !previousIsWide { scalars.append(" ") }
-                previousIsWide = false
-                continue
-            }
-            scalars.append(scalar)
-            previousIsWide = isWide(scalar)
-        }
-        return String(scalars)
-    }
-
-    private func isWide(_ scalar: Unicode.Scalar) -> Bool {
-        switch scalar.value {
-        case 0x1100...0x115F, 0x2E80...0xA4CF, 0xAC00...0xD7A3, 0xF900...0xFAFF, 0xFE30...0xFE4F,
-             0xFF00...0xFF60, 0xFFE0...0xFFE6, 0x1F300...0x1F64F, 0x1F900...0x1F9FF, 0x20000...0x3FFFD:
-            return true
-        default:
-            return false
-        }
+        return cleanCellText(string, limit: limit)
     }
 
     private func uiTree(_ args: [String: Any]) throws -> String {
@@ -623,6 +613,7 @@ private final class MacControlServer {
         guard depth.rounded() == depth, depth >= 0, depth <= 8 else { throw ToolFailure("max_depth must be 0 to 8.") }
         let target = try targetApp(args)
         try requireAccessibility()
+        // A stale NSWorkspace answer is acceptable here because reading the tree sends no input.
         guard let app = target ?? focusedApp() ?? NSWorkspace.shared.frontmostApplication else {
             throw ToolFailure("No frontmost app found.")
         }
@@ -681,4 +672,7 @@ private final class MacControlServer {
     }
 }
 
-MacControlServer().serve()
+@main
+private enum Main {
+    static func main() { MacControlServer().serve() }
+}

@@ -18,7 +18,7 @@
 
 滑鼠座標使用**最近一次 `mac_screenshot` 影像的像素座標**。螢幕解析度變動後，請先重新截圖。錄影檔存於 `.build/recordings/`，此目錄不會進入 Git；錄影工具回傳的檔案路徑可供本機查看或後續處理。影片沒有額外錄製麥克風或系統音訊。
 
-`mac_type_text`、`mac_key` 和 `mac_ui_tree` 可以加上 `app` 參數，填執行中 App 的名稱或 bundle ID（例如 `TextEdit` 或 `com.apple.TextEdit`）。輸入工具會先把該 App 切到前景，送出前再確認一次；如果焦點已經被其他 App 搶走，就不會送出任何輸入，並回報錯誤。`mac_ui_tree` 指定 `app` 時只讀取，不會切換前景 App。代理在終端機裡執行時，焦點常在兩次工具呼叫之間回到終端機，所以建議輸入時一律指定 `app`。輔助使用文字裡的 NUL 字元（例如 iTerm2 用來補寬字元的）會被移除。
+`mac_type_text`、`mac_key` 和 `mac_ui_tree` 可以加上 `app` 參數，填執行中、有 Dock 圖示的 App 名稱或 bundle ID（例如 `TextEdit` 或 `com.apple.TextEdit`）。名稱同時符合多個 App 時，會選目前在前景的那個；都不在前景就回報錯誤並列出候選，請改用 bundle ID。輸入工具會先把該 App 切到前景，送出前再確認一次；如果焦點已經被其他 App 搶走，就不會送出任何輸入，並回報錯誤。`mac_ui_tree` 指定 `app` 時只讀取，不會切換前景 App。代理在終端機裡執行時，焦點常在兩次工具呼叫之間回到終端機，所以建議輸入時一律指定 `app`。iTerm2 等終端機在輔助使用文字裡用 NUL 代表寬字元的補位和空白格：寬字元後的補位會移除，其他 NUL 轉成空格，每行結尾的空白會去掉。
 
 `mac_type_text` 會短暫使用系統剪貼簿，再還原原有內容；如果在貼上期間其他程式更新了剪貼簿，它不會覆寫該更新。超過 40 MB 或無法完整保存的剪貼簿內容會讓輸入取消。這比直接送 Unicode 鍵盤事件更能配合目前的注音輸入法與各 App 文字欄位。
 
@@ -30,7 +30,7 @@
 sh scripts/ci.sh
 ```
 
-這會編譯 `.build/mac-control-mcp` 並執行不操作桌面的 MCP 協定測試。GitHub Actions 使用同一份腳本。
+這會編譯 `.build/mac-control-mcp` 和 `.build/terminal-text-tests`，執行終端機文字清理的單元測試，以及不操作桌面的 MCP 協定測試。GitHub Actions 使用同一份腳本。
 
 ## 連接 Claude Code 與 Codex
 

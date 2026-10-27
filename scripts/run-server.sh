@@ -3,9 +3,13 @@ set -eu
 
 project_dir=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 binary="$project_dir/.build/mac-control-mcp"
-source_file="$project_dir/Sources/MacControl.swift"
+stale=0
+[ -x "$binary" ] || stale=1
+for source_file in "$project_dir"/Sources/*.swift; do
+  if [ "$source_file" -nt "$binary" ]; then stale=1; fi
+done
 
-if [ ! -x "$binary" ] || [ "$source_file" -nt "$binary" ]; then
+if [ "$stale" = 1 ]; then
   "$project_dir/scripts/build.sh" >&2
 fi
 
