@@ -79,15 +79,20 @@ final class SetupModel: ObservableObject {
     // MARK: Checks
 
     func refresh() async {
+        guard !busy else { return }
         checkLocation()
-        await detectClients()
         await checkRuntime()
+        await detectClients()
     }
 
     func checkLocation() {
         location = paths.bundle.path.hasPrefix("/Applications/")
             ? .done("Installed in \(paths.bundle.deletingLastPathComponent().path)")
             : .needsAction("Move MacControl to the Applications folder, so clients keep finding it.")
+    }
+
+    private func requireUsableWorkspace() throws {
+        if let problem = workspaceProblem { throw InstallFailure(description: "The workspace cannot be used: \(problem)") }
     }
 
     // The servers as clients should run them, with this app's current settings.
@@ -197,7 +202,7 @@ final class SetupModel: ObservableObject {
             runtime = .done("Using the Docker that is already running (\(docker))")
         case .managedColima:
             if !Installer.managedColimaInstalled {
-                runtime = .needsAction("Colima needs to be downloaded (about 80 MB)")
+                runtime = .needsAction("No running Docker was found, so Colima will be downloaded (about 80 MB). If you use Docker Desktop or OrbStack, start it and reopen this window instead.")
             } else {
                 runtime = await Installer.colimaRunning() ? .done("Colima is running") : .needsAction("Colima is installed but not running")
             }
@@ -261,6 +266,7 @@ final class SetupModel: ObservableObject {
         let runtime = Installer.runtime(for: choice)
         let progress: @Sendable (String) -> Void = { line in Task { @MainActor in self.note(line); self.image = .working(line) } }
         do {
+            try requireUsableWorkspace()
             if !(await Installer.imagePresent(runtime)) { try await Installer.buildImage(runtime, progress: progress) }
             progress("Testing the sandbox…")
             try await Installer.smokeTest(runtime, workspace: workspace)
@@ -275,6 +281,7 @@ final class SetupModel: ObservableObject {
     func connect(_ client: Client) async {
         clients[client] = .working("Connecting…")
         do {
+            if enableExec { try requireUsableWorkspace() }
             switch client {
             case .claudeDesktop:
                 try connectClaudeDesktop()
@@ -294,11 +301,11 @@ final class SetupModel: ObservableObject {
     private func connectClaudeDesktop() throws {
         let fm = FileManager.default
         try fm.createDirectory(at: claudeDesktopConfig.deletingLastPathComponent(), withIntermediateDirectories: true)
-        let existing = try? Data(contentsOf: claudeDesktopConfig)
+        // A file that exists but cannot be read is an error, never a reason to start a new file.
+        let existing: Data? = fm.fileExists(atPath: claudeDesktopConfig.path) ? try Data(contentsOf: claudeDesktopConfig) : nil
         let merged = try ClientConfig.mergeClaudeDesktop(existing, servers: servers)
-        if let existing, existing != merged {
-            try existing.write(to: claudeDesktopConfig.appendingPathExtension("bak"), options: .atomic)
-        }
+        guard existing != merged else { return }
+        if let existing { try keepOriginal(existing, of: claudeDesktopConfig) }
         try merged.write(to: claudeDesktopConfig, options: .atomic)
     }
 
@@ -328,19 +335,32 @@ final class SetupModel: ObservableObject {
         guard let toml = try? String(contentsOf: file, encoding: .utf8) else { return }
         let updated = ClientConfig.setCodexServerOption(toml, server: "mac_exec", key: "tool_timeout_sec", value: "620")
         guard updated != toml else { return }
-        try toml.write(to: file.appendingPathExtension("bak"), atomically: true, encoding: .utf8)
+        try keepOriginal(Data(toml.utf8), of: file)
         try updated.write(to: file, atomically: true, encoding: .utf8)
     }
 
+    // Saves the file as it was before MacControl first changed it, and keeps that copy on later changes.
+    private func keepOriginal(_ data: Data, of file: URL) throws {
+        let backup = file.appendingPathExtension("before-maccontrol")
+        if !FileManager.default.fileExists(atPath: backup.path) { try data.write(to: backup, options: .atomic) }
+    }
+
     func moveToApplications() {
+        let fm = FileManager.default
         let target = URL(fileURLWithPath: "/Applications").appendingPathComponent(paths.bundle.lastPathComponent)
+        let staging = URL(fileURLWithPath: "/Applications").appendingPathComponent(".MacControl-\(UUID().uuidString).app")
         do {
-            if FileManager.default.fileExists(atPath: target.path) { try FileManager.default.trashItem(at: target, resultingItemURL: nil) }
-            try FileManager.default.copyItem(at: paths.bundle, to: target)
+            try fm.copyItem(at: paths.bundle, to: staging)
+            if fm.fileExists(atPath: target.path) {
+                _ = try fm.replaceItemAt(target, withItemAt: staging)
+            } else {
+                try fm.moveItem(at: staging, to: target)
+            }
             NSWorkspace.shared.openApplication(at: target, configuration: NSWorkspace.OpenConfiguration()) { _, _ in
                 DispatchQueue.main.async { NSApp.terminate(nil) }
             }
         } catch {
+            try? fm.removeItem(at: staging)
             location = .failed("Could not copy MacControl to Applications: \(error.localizedDescription). Drag it there in Finder instead.")
         }
     }

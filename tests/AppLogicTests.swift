@@ -42,8 +42,6 @@ private enum AppLogicTests {
         check("merge creates a file from nothing", (json((try? ClientConfig.mergeClaudeDesktop(nil, servers: [control])) ?? Data())["mcpServers"] as? [String: Any])?["mac-control"] != nil)
         check("malformed JSON is refused", (try? ClientConfig.mergeClaudeDesktop(Data("{not json".utf8), servers: [control])) == nil)
         check("a non-object mcpServers is refused", (try? ClientConfig.mergeClaudeDesktop(Data(#"{"mcpServers":[1]}"#.utf8), servers: [control])) == nil)
-        let removed = json(try! ClientConfig.removeFromClaudeDesktop(merged))["mcpServers"] as? [String: Any] ?? [:]
-        check("removal keeps only other servers", Set(removed.keys) == ["other"])
 
         // CLI commands
         let claude = ClientConfig.claudeCodeCommands(exec)

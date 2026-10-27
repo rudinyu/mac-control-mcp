@@ -19,7 +19,7 @@ Requires macOS 14 or later, on Apple silicon or Intel. The app is signed with a 
 | Location | Checks that the app is in `/Applications`, so client settings keep pointing at it. |
 | Sandbox runtime | Only when "Run commands in a sandbox" is on. On **Apple silicon with macOS 26 or later**, it downloads Apple's signed `container` installer and opens it, and you confirm with your password. On other Macs it uses a Docker that already runs (Docker Desktop, OrbStack, Colima). If there is none, it downloads Colima, Lima, and the Docker CLI (about 80 MB) and starts a small VM named `maccontrol`. |
 | Sandbox image | Builds the Linux image that sandbox commands run in, then runs one test container. |
-| Clients | Adds `mac-control` and `mac-exec` to every client it finds: Claude Desktop's configuration (keeping your other servers and saving a `.bak` copy first), and Claude Code and Codex through their own `claude mcp add` and `codex mcp add` commands, for all projects. |
+| Clients | Adds `mac-control` and `mac-exec` to every client it finds: Claude Desktop's configuration (keeping your other servers; the file as it was before MacControl first changed it is kept as `claude_desktop_config.json.before-maccontrol`), and Claude Code and Codex through their own `claude mcp add` and `codex mcp add` commands, for all projects. |
 
 Every download has its version and SHA-256 checksum fixed inside the signed app. A file that does not match is refused, and Apple's installer must also be signed and notarized by Apple. The app never changes your own Docker settings: the Colima it installs uses a separate profile and its own Docker configuration.
 

@@ -15,8 +15,6 @@ struct ConfigFailure: Error, CustomStringConvertible {
 }
 
 enum ClientConfig {
-    static let managedNames: Set<String> = ["mac-control", "mac-exec"]
-
     // Adds or replaces this app's servers in Claude Desktop's configuration and keeps everything else,
     // including other servers and settings. Malformed JSON is refused rather than overwritten.
     static func mergeClaudeDesktop(_ existing: Data?, servers: [ServerSpec]) throws -> Data {
@@ -40,18 +38,6 @@ enum ClientConfig {
             mcpServers[server.name] = entry
         }
         root["mcpServers"] = mcpServers
-        return try JSONSerialization.data(withJSONObject: root, options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes])
-    }
-
-    // Removes this app's servers from Claude Desktop's configuration, keeping everything else.
-    static func removeFromClaudeDesktop(_ existing: Data) throws -> Data {
-        guard var root = try? JSONSerialization.jsonObject(with: existing) as? [String: Any] else {
-            throw ConfigFailure(description: "Claude Desktop's configuration is not valid JSON, so it was left unchanged.")
-        }
-        if var servers = root["mcpServers"] as? [String: Any] {
-            for name in managedNames { servers.removeValue(forKey: name) }
-            root["mcpServers"] = servers
-        }
         return try JSONSerialization.data(withJSONObject: root, options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes])
     }
 
@@ -79,9 +65,10 @@ enum ClientConfig {
         return [["mcp", "remove", server.codexName], add]
     }
 
-    // `codex mcp add` cannot set a tool timeout, and Codex stops tools after 60 seconds by default, while
+    // `codex mcp add` cannot set a tool timeout, and Codex may stop a tool sooner than a sandbox command, while
     // sandbox commands may run for up to 600. This sets `key = value` in the server's own table only,
-    // leaving every other line of the file as it was.
+    // leaving every other line of the file as it was. It handles the plain `[mcp_servers.<name>]` header
+    // that `codex mcp add` writes; a table written another way is left unchanged.
     static func setCodexServerOption(_ toml: String, server: String, key: String, value: String) -> String {
         var lines = toml.components(separatedBy: "\n")
         let header = "[mcp_servers.\(server)]"
