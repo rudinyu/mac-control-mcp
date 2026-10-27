@@ -59,7 +59,7 @@ sh scripts/init-agents.sh
 | `.codex/config.toml` | Codex：為這個專案啟動 MCP 伺服器 | [`examples/codex/config.toml`](examples/codex/config.toml) |
 | `AGENTS.md` | Codex：告訴它使用 mac-control 及使用方式 | [`examples/AGENTS.md`](examples/AGENTS.md) |
 
-只有兩個 MCP 設定檔是必要的；`CLAUDE.md` 和 `AGENTS.md` 是選用的說明。兩個 MCP 設定檔都會啟動 `scripts/run-server.sh`，這個腳本會在程式缺少或源碼更新時重新編譯。腳本也會印出 Claude Desktop 要用的設定（範本：[`examples/claude_desktop_config.json`](examples/claude_desktop_config.json)）。那個設定檔裡還有你其他的 server，所以請自行把它加進 `~/Library/Application Support/Claude/claude_desktop_config.json` 的 `mcpServers`，然後完全結束 Claude 再重開。
+只有兩個 MCP 設定檔是必要的；`CLAUDE.md` 和 `AGENTS.md` 是選用的說明。兩個 MCP 設定檔都會啟動 `scripts/run-server.sh`，這個腳本會在程式缺少或源碼更新時重新編譯。`init-agents.sh` 也會印出 Claude Desktop 要用的設定（範本：[`examples/claude_desktop_config.json`](examples/claude_desktop_config.json)）。那個設定檔裡還有你其他的 server，所以請自行把它加進 `~/Library/Application Support/Claude/claude_desktop_config.json` 的 `mcpServers`，然後完全結束 Claude 再重開。
 
 1. 在本專案目錄開始一個**新的本機** Claude Code 或 Codex 工作階段。
 2. Claude Code 首次載入專案 MCP 時，請在它自己的介面中檢查並核准。Codex 需要信任此專案，才會載入 `.codex/config.toml`。

@@ -20,8 +20,10 @@ done
 project_dir=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 placeholder="/path/to/mac-control-mcp"
 
+newline='
+'
 case "$project_dir" in
-  *'"'*|*'\'*|*'|'*|*'&'*)
+  *'"'*|*'\'*|*'|'*|*'&'*|*"$newline"*)
     echo "The project path contains a character this script cannot write safely: $project_dir" >&2
     echo "Move the clone, or copy the files in examples/ by hand." >&2
     exit 1 ;;
@@ -39,8 +41,11 @@ install_file() {
     return
   fi
   mkdir -p "$(dirname -- "$target")"
-  render "$source_name" > "$target.tmp"
-  mv "$target.tmp" "$target"
+  if ! render "$source_name" > "$target.tmp" || ! mv "$target.tmp" "$target"; then
+    rm -f "$target.tmp"
+    echo "Could not write $2" >&2
+    exit 1
+  fi
   echo "wrote    $2"
 }
 
@@ -51,11 +56,11 @@ install_file AGENTS.md AGENTS.md
 
 cat <<EOF
 
-For Claude Desktop, add this entry to "mcpServers" in
+For Claude Desktop, merge the "mac-control" entry below into "mcpServers" in
 ~/Library/Application Support/Claude/claude_desktop_config.json, then quit and reopen Claude:
 
 EOF
-render claude_desktop_config.json | sed -n '/"mac-control"/,/^    }/p'
+render claude_desktop_config.json
 cat <<EOF
 
 Then grant Accessibility and Screen & System Audio Recording, in System Settings > Privacy & Security,
