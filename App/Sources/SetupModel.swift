@@ -381,7 +381,7 @@ final class SetupModel: ObservableObject {
             if !location.isDone, isEnabled(client) {
                 // Whether the entry works cannot be told from here, so only say that one exists. The Location
                 // step keeps the summary from reporting Ready meanwhile.
-                found[client] = .notNeeded(hasEntry ? String(localized: "Set up before. Checked once MacControl runs from Applications.")
+                found[client] = .notNeeded(hasEntry ? String(localized: "Previously set up. Checked once MacControl runs from Applications.")
                                                     : String(localized: "Connects once MacControl runs from Applications."))
                 return
             }
