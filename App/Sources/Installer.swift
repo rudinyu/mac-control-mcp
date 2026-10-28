@@ -15,7 +15,9 @@ struct AppPaths {
     var dockerConfig: URL { support.appendingPathComponent("docker-config") }
     var downloads: URL { support.appendingPathComponent("downloads") }
     // Colima keeps profiles in ~/.colima; a short path keeps Lima's sockets under the macOS length limit.
-    var colimaSocket: URL { home.appendingPathComponent(".colima/\(Installer.colimaProfile)/docker.sock") }
+    // MacControl runs Colima without COLIMA_HOME, so its profile lives in Colima's default ~/.colima.
+    var colimaProfileFolder: URL { home.appendingPathComponent(".colima/\(Installer.colimaProfile)") }
+    var colimaSocket: URL { colimaProfileFolder.appendingPathComponent("docker.sock") }
     var marker: URL { runtime.appendingPathComponent("installed-versions") }
 
     var helpers: URL { bundle.appendingPathComponent("Contents/Helpers") }
@@ -128,6 +130,16 @@ enum Installer {
 
         try installedVersions.write(to: paths.marker, atomically: true, encoding: .utf8)
         progress(String(localized: "Installed \(installedVersions)."))
+    }
+
+    // Whether MacControl's VM exists, by either of two signals: Colima listing the profile, or the profile
+    // folder on disk. Using both means a moved or broken Colima never makes the VM look deleted.
+    static func colimaProfileExists() async -> Bool {
+        if FileManager.default.fileExists(atPath: paths.colimaProfileFolder.path) { return true }
+        guard managedColimaInstalled,
+              let listed = try? await run(paths.colima.path, ["list", "--profile", colimaProfile, "--json"],
+                                          environment: managedEnvironment, timeout: 30) else { return false }
+        return listed.exitCode == 0 && listed.stdout.contains("\"name\":\"\(colimaProfile)\"")
     }
 
     static func colimaRunning() async -> Bool {

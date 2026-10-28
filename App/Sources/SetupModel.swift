@@ -285,15 +285,16 @@ final class SetupModel: ObservableObject {
             await disconnect(client)
             if clients[client]?.isFailed == true { failures.append(client.rawValue) }
         }
-        // The VM's folder tells whether it still exists, so a retry after a partial removal does not fail
-        // on a VM that is already gone.
-        let profile = paths.home.appendingPathComponent(".colima/\(Installer.colimaProfile)")
-        if FileManager.default.fileExists(atPath: profile.path) {
+        // A VM that is already gone counts as removed, so a retry after a partial removal can finish. It is
+        // only gone when neither Colima nor the disk still shows it, and the tools that can delete it are
+        // kept until then.
+        if await Installer.colimaProfileExists() {
             let deleted = Installer.managedColimaInstalled
                 ? try? await Installer.run(paths.colima.path, ["delete", "--profile", Installer.colimaProfile, "--force"],
                                            environment: Installer.managedEnvironment, timeout: 300)
                 : nil
-            if deleted?.exitCode != 0 || FileManager.default.fileExists(atPath: profile.path) {
+            let stillThere = await Installer.colimaProfileExists()
+            if deleted?.exitCode != 0 || stillThere {
                 failures.append(String(localized: "the Linux VM"))
             }
         }
