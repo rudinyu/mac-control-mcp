@@ -81,8 +81,11 @@ private struct MenuContent: View {
         Divider()
         Button("Open MacControl…") { open() }
             .keyboardShortcut("o")
-        Button("Check Now") { Task { await model.refresh() } }
+        Button("Check Now") { Task { await model.refresh(); await model.checkForUpdate(force: true) } }
             .disabled(model.busy)
+        if let update = model.availableUpdate {
+            Button("Download Version \(update.version)…") { NSWorkspace.shared.open(update.page) }
+        }
         Toggle("Open at Login", isOn: Binding(get: { model.openAtLogin }, set: { model.setOpenAtLogin($0) }))
         Divider()
         Button("Quit MacControl") { NSApp.terminate(nil) }

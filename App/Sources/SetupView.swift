@@ -101,6 +101,11 @@ struct SetupView: View {
                                 Image(systemName: showPermissions ? "chevron.down" : "chevron.right")
                                     .font(.callout.weight(.semibold)).foregroundStyle(.secondary).frame(width: 12)
                                 SectionTitle(text: "Permissions")
+                                if !showPermissions {
+                                    // MacControl cannot check these, so "Ready" does not cover them.
+                                    Text("Set in System Settings. Confirm with mac_status.")
+                                        .font(.caption).foregroundStyle(.secondary).padding(.leading, 6)
+                                }
                             }
                         }
                         .buttonStyle(.plain)
@@ -191,6 +196,13 @@ struct SetupView: View {
                     Text(model.summary.text).font(.callout)
                 }
                 .accessibilityElement(children: .combine)
+                if let update = model.availableUpdate {
+                    HStack(spacing: 6) {
+                        Image(systemName: "arrow.down.circle.fill").foregroundStyle(.blue).accessibilityHidden(true)
+                        Text("Version \(update.version) is available.").font(.callout)
+                        Button("Download") { NSWorkspace.shared.open(update.page) }.controlSize(.small)
+                    }
+                }
             }
             Spacer()
             if model.summary.level == .ready {
@@ -336,9 +348,17 @@ struct SetupView: View {
                     .help("Every sandbox and host_exec command, with its result.")
                 Button("Setup Log") { model.openLog(SetupModel.setupLog) }
                 Spacer()
-                Button("Remove from This Mac…", role: .destructive) { confirmRemove = true }
-                    .foregroundStyle(.red)
-                    .disabled(model.busy)
+                Menu {
+                    Button("Remove from This Mac…", role: .destructive) { confirmRemove = true }
+                } label: {
+                    Image(systemName: "ellipsis.circle")
+                }
+                .menuStyle(.borderlessButton)
+                .menuIndicator(.hidden)
+                .fixedSize()
+                .disabled(model.busy)
+                .help("More")
+                .accessibilityLabel("More")
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -346,7 +366,13 @@ struct SetupView: View {
 
     private var settings: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Toggle("Run commands in a sandbox (mac-exec)", isOn: $model.enableExec)
+            Toggle(isOn: $model.enableExec) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Run commands in a sandbox (mac-exec)")
+                    Text("Gives agents a Linux sandbox for running commands and working with files.")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+            }
             HStack {
                 Text("Workspace:")
                 Text(model.workspacePath).font(.system(.body, design: .monospaced)).lineLimit(1).truncationMode(.middle)

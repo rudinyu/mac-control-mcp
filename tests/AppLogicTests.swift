@@ -98,6 +98,14 @@ private enum AppLogicTests {
         check("Intel reuses a working Docker", RuntimeSelection.choose(cpu: .intel, macOSMajor: 26, workingDocker: "/d") == .existingDocker("/d"))
         check("Intel without Docker installs Colima", RuntimeSelection.choose(cpu: .intel, macOSMajor: 26, workingDocker: nil) == .managedColima)
 
+        // Version comparison for the update check
+        check("newer patch", AppVersion.isNewer("v0.3.4", than: "0.3.3"))
+        check("same version is not newer", !AppVersion.isNewer("v0.3.3", than: "0.3.3"))
+        check("older is not newer", !AppVersion.isNewer("v0.3.2", than: "0.3.3"))
+        check("numeric, not text, order", AppVersion.isNewer("0.3.10", than: "0.3.9"))
+        check("missing parts count as zero", !AppVersion.isNewer("0.4", than: "0.4.0") && AppVersion.isNewer("0.4.1", than: "0.4"))
+        check("suffix ignored", !AppVersion.isNewer("v0.3.3-beta", than: "0.3.3"))
+
         // Manifest and checksums
         for download in [Manifest.colima(.intel), Manifest.colima(.appleSilicon), Manifest.lima(.intel), Manifest.lima(.appleSilicon),
                          Manifest.dockerCLI(.intel), Manifest.dockerCLI(.appleSilicon), Manifest.appleContainer] {

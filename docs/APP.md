@@ -39,6 +39,8 @@ When MacControl runs its own Linux VM, macOS may show a notification that "colim
 
 If MacControl says macOS is running a protected copy, it was opened straight from the DMG or from Downloads. Quit it, drag it into Applications in Finder, and open it from there.
 
+MacControl checks GitHub for a newer release when it starts and at most once a day. It only reads the public release list and sends nothing about your Mac; when a newer version exists, the window and the menu show **Download**.
+
 MacControl follows your Mac's language: it is in Traditional Chinese when that is your preferred language, and in English otherwise.
 
 ## Permissions

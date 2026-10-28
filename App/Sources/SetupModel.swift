@@ -202,8 +202,28 @@ final class SetupModel: ObservableObject {
     // MARK: Help, logs, and the sandbox VM
 
     var version: String {
-        let info = Bundle.main.infoDictionary
-        return "\(info?["CFBundleShortVersionString"] as? String ?? "?") (\(info?["CFBundleVersion"] as? String ?? "?"))"
+        Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "?"
+    }
+
+    // A newer release on GitHub, if any. Only the public release list is read; nothing is sent about this Mac.
+    @Published var availableUpdate: (version: String, page: URL)?
+    static let releasesAPI = URL(string: "https://api.github.com/repos/rudinyu/mac-control-mcp/releases/latest")!
+
+    func checkForUpdate(force: Bool = false) async {
+        let last = defaults.double(forKey: "lastUpdateCheck")
+        guard force || Date().timeIntervalSince1970 - last > 24 * 3600 || availableUpdate == nil && last == 0 else { return }
+        var request = URLRequest(url: Self.releasesAPI, timeoutInterval: 15)
+        request.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
+        guard let (data, response) = try? await URLSession.shared.data(for: request),
+              (response as? HTTPURLResponse)?.statusCode == 200,
+              let release = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let tag = release["tag_name"] as? String,
+              let page = (release["html_url"] as? String).flatMap(URL.init(string:)),
+              page.host == "github.com" else { return }
+        defaults.set(Date().timeIntervalSince1970, forKey: "lastUpdateCheck")
+        let current = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0"
+        availableUpdate = AppVersion.isNewer(tag, than: current)
+            ? (tag.trimmingCharacters(in: CharacterSet(charactersIn: "vV")), page) : nil
     }
 
     @Published var vmDetail: String?
@@ -326,6 +346,7 @@ final class SetupModel: ObservableObject {
         await checkRuntime()
         await detectClients()
         hasChecked = true
+        await checkForUpdate()
     }
 
     // macOS runs a quarantined app that was not moved into place by Finder from a random read-only copy.
