@@ -35,6 +35,10 @@ The header shows one line about the whole setup, such as "Ready: 3 clients conne
 
 The **Help** section shows the version and opens the release notes, this guide, the workspace, the command log (every sandbox and `host_exec` command), and MacControl's own setup log. When MacControl runs its own Linux VM, the Sandbox row shows its CPUs and memory, with **Stop VM** to free the memory; the VM starts again by itself when an agent needs it. If a step fails, **Copy Error** and **Show Log** give you the full message. **Remove from This Mac…** disconnects every client, deletes the VM and the downloaded tools, and resets the settings, keeping your workspace and logs.
 
+When MacControl runs its own Linux VM, macOS may show a notification that "colima" can run in the background; that is the VM, and it is expected.
+
+If MacControl says macOS is running a protected copy, it was opened straight from the DMG or from Downloads. Quit it, drag it into Applications in Finder, and open it from there.
+
 MacControl follows your Mac's language: it is in Traditional Chinese when that is your preferred language, and in English otherwise.
 
 ## Permissions

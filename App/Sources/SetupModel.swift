@@ -324,7 +324,14 @@ final class SetupModel: ObservableObject {
         hasChecked = true
     }
 
+    // macOS runs a quarantined app that was not moved into place by Finder from a random read-only copy.
+    var isTranslocated: Bool { paths.bundle.path.contains("/AppTranslocation/") }
+
     func checkLocation() {
+        if isTranslocated {
+            location = .needsAction(String(localized: "macOS is running a protected copy of MacControl. Quit it, drag MacControl into Applications in Finder, then open it from there."))
+            return
+        }
         location = paths.bundle.path.hasPrefix("/Applications/")
             ? .done(String(localized: "Installed in \(paths.bundle.deletingLastPathComponent().path)"))
             : .needsAction(String(localized: "Move MacControl to the Applications folder, so clients keep finding it."))
@@ -369,6 +376,13 @@ final class SetupModel: ObservableObject {
         var stale: Set<Client> = []
         var leftover: Set<Client> = []
         func record(_ client: Client, connected: Bool, hasEntry: Bool) {
+            // Until MacControl runs from Applications, its helper paths differ from what clients use, so a
+            // comparison would wrongly call every client outdated.
+            if !location.isDone, isEnabled(client) {
+                found[client] = .notNeeded(hasEntry ? String(localized: "Connected. Checked again once MacControl runs from Applications.")
+                                                    : String(localized: "Connects once MacControl runs from Applications."))
+                return
+            }
             if !isEnabled(client) {
                 if hasEntry { leftover.insert(client) }
                 found[client] = .notNeeded(hasEntry ? String(localized: "Turned off, but still connected") : String(localized: "Turned off"))

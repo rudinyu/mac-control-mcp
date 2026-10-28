@@ -78,6 +78,8 @@ struct SetupView: View {
     @State private var confirmHostExec = false
     @State private var clientToDisconnect: Client?
     @State private var confirmRemove = false
+    @State private var showPermissions = true
+    @State private var userToggledPermissions = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -91,8 +93,19 @@ struct SetupView: View {
                         GroupBox { steps.padding(6) }
                     }
                     VStack(alignment: .leading, spacing: 8) {
-                        SectionTitle(text: "Permissions")
-                        GroupBox { permissions.padding(6) }
+                        Button {
+                            userToggledPermissions = true
+                            withAnimation { showPermissions.toggle() }
+                        } label: {
+                            HStack(spacing: 6) {
+                                Image(systemName: showPermissions ? "chevron.down" : "chevron.right")
+                                    .font(.callout.weight(.semibold)).foregroundStyle(.secondary).frame(width: 12)
+                                SectionTitle(text: "Permissions")
+                            }
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityHint(showPermissions ? "Hides the permission steps" : "Shows the permission steps")
+                        if showPermissions { GroupBox { permissions.padding(6) } }
                     }
                     VStack(alignment: .leading, spacing: 8) {
                         SectionTitle(text: "Sandbox settings")
@@ -127,6 +140,10 @@ struct SetupView: View {
             }
         }
         .frame(minWidth: 640, minHeight: 640)
+        // Once everything works, the permission steps are no longer needed every time; the user can still open them.
+        .onChange(of: model.summary.level) { _, level in
+            if !userToggledPermissions { showPermissions = level != .ready }
+        }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
             Task { await model.refresh() }
         }
@@ -214,7 +231,11 @@ struct SetupView: View {
     private var steps: some View {
         VStack(alignment: .leading, spacing: 4) {
             StepRow(title: "Location", state: model.location) {
-                if case .needsAction = model.location { Button("Move to Applications") { model.moveToApplications() } }
+                if model.isTranslocated {
+                    Button("Quit MacControl") { NSApp.terminate(nil) }
+                } else if case .needsAction = model.location {
+                    Button("Move to Applications") { model.moveToApplications() }
+                }
             }
             Divider()
             if model.detectedClients.isEmpty && model.hasChecked {
@@ -253,8 +274,12 @@ struct SetupView: View {
             }
             if let choice = model.runtimeChoice, model.enableExec {
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(choice.label)
-                    if let detail = model.vmDetail { Text(detail) }
+                    if model.canControlVM {
+                        if let detail = model.vmDetail { Text(detail) }
+                        Text("macOS may say that “colima” can run in the background. That is this VM.")
+                    } else {
+                        Text(choice.label)
+                    }
                 }
                 .font(.caption).foregroundStyle(.secondary).padding(.leading, 28)
             }
@@ -347,7 +372,7 @@ struct SetupView: View {
                 }
             }
             .disabled(!model.enableExec)
-            Text("After changing these settings, click Apply in the banner above to update the clients.")
+            Text("After a change, an Apply button appears at the top to update the clients.")
                 .font(.caption).foregroundStyle(.secondary)
         }
         .frame(maxWidth: .infinity, alignment: .leading)

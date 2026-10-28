@@ -33,6 +33,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             // The menu bar menu is a window too; only the setup window controls the Dock icon.
             guard (notification.object as? NSWindow)?.identifier?.rawValue.contains("setup") == true else { return }
             NSApp.setActivationPolicy(.accessory)
+            // The first time, say where MacControl went; a full menu bar can hide its icon.
+            if !UserDefaults.standard.bool(forKey: "toldAboutMenuBar") {
+                UserDefaults.standard.set(true, forKey: "toldAboutMenuBar")
+                DispatchQueue.main.async {
+                    let alert = NSAlert()
+                    alert.messageText = String(localized: "MacControl keeps running in the menu bar")
+                    alert.informativeText = String(localized: "Its icon is in the menu bar at the top right. If your menu bar is full and you cannot find it, open MacControl again from Applications or Spotlight.")
+                    alert.runModal()
+                }
+            }
         }
         // Keep the menu bar status current while the window is closed.
         refreshTimer = Timer.scheduledTimer(withTimeInterval: 600, repeats: true) { _ in
