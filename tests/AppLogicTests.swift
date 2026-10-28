@@ -21,7 +21,7 @@ private func json(_ data: Data) -> [String: Any] {
 @main
 private enum AppLogicTests {
     static func main() {
-        let control = ServerSpec(name: "mac-control", command: "/Applications/MacControl.app/Contents/Helpers/mac-control-mcp", environment: [:])
+        let control = ServerSpec(name: "mac-control", command: "/Applications/MacControl.app/Contents/Helpers/MacControlHelper.app/Contents/MacOS/mac-control-mcp", environment: [:])
         let exec = ServerSpec(name: "mac-exec", command: "/Applications/MacControl.app/Contents/Helpers/mac-exec-mcp",
                               environment: ["MAC_EXEC_WORKSPACE": "/Users/me/Agent Workspace", "MAC_EXEC_ALLOW_HOST": "1"])
 
@@ -105,6 +105,10 @@ private enum AppLogicTests {
         check("numeric, not text, order", AppVersion.isNewer("0.3.10", than: "0.3.9"))
         check("missing parts count as zero", !AppVersion.isNewer("0.4", than: "0.4.0") && AppVersion.isNewer("0.4.1", than: "0.4"))
         check("suffix ignored", !AppVersion.isNewer("v0.3.3-beta", than: "0.3.3"))
+
+        // Privacy pane name
+        check("Accessibility keeps its name on macOS 26", !PrivacyPane.accessibilityRenamed(macOSMajor: 26))
+        check("Accessibility is renamed on macOS 27", PrivacyPane.accessibilityRenamed(macOSMajor: 27))
 
         // Manifest and checksums
         for download in [Manifest.colima(.intel), Manifest.colima(.appleSilicon), Manifest.lima(.intel), Manifest.lima(.appleSilicon),

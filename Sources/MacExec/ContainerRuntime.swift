@@ -83,6 +83,14 @@ struct ContainerRuntime {
         }
     }
 
+    // Sandbox containers run with --rm, so removing MacControl only needs to delete the image.
+    func removeImageArguments(_ image: String) -> [String] {
+        switch kind {
+        case .docker: return ["image", "rm", "--force", image]
+        case .apple: return ["image", "delete", image]
+        }
+    }
+
     func buildArguments(image: String, context: String) -> [String] {
         switch kind {
         case .docker: return ["build", "--pull", "-t", image, context]

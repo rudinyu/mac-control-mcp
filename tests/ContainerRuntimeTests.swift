@@ -67,6 +67,7 @@ private enum ContainerRuntimeTests {
         check("unknown MAC_EXEC_RUNTIME is not replaced by Docker", ContainerRuntime.find(["MAC_EXEC_RUNTIME": "podman", "MAC_EXEC_DOCKER": "/bin/sh"]) == nil)
 
         check("kill", docker.killArguments("n") == ["kill", "n"] && apple.killArguments("n") == ["kill", "n"])
+        check("remove image", docker.removeImageArguments("i") == ["image", "rm", "--force", "i"] && apple.removeImageArguments("i") == ["image", "delete", "i"])
         check("docker build", docker.buildArguments(image: "i", context: "/c") == ["build", "--pull", "-t", "i", "/c"])
         check("apple build", apple.buildArguments(image: "i", context: "/c") == ["build", "-t", "i", "/c"])
         check("docker ready", docker.readyArguments() == ["info", "--format", "{{.ServerVersion}}"])

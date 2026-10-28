@@ -128,7 +128,7 @@ Only one recording runs at a time. Files are QuickTime MOV, saved in `.build/rec
 
 | Message or symptom | What to do |
 | --- | --- |
-| `Accessibility permission is missing` or `Screen Recording permission is missing` | Grant the permission to the app that starts the server, then quit and reopen that app. See [installation, section 5](INSTALL.md#5-grant-macos-permissions). |
+| `Accessibility permission is missing` or `Screen Recording permission is missing` Grant the permission to the terminal app, or to MacControlHelper.app for Claude Desktop and the Codex app, then quit and reopen that app. See [installation, section 5](INSTALL.md#5-grant-macos-permissions). |
 | `No running app with a Dock icon matches "…"` | Open the app first. Only apps with a Dock icon can be targeted, and names must match exactly, ignoring case. |
 | `"…" matches N running apps` | Several apps share the name. Use the bundle ID shown in the message. |
 | `… has focus instead of …; no input was sent` | Another app took focus right before sending. Nothing was typed. Ask the agent to try again. |

@@ -120,3 +120,10 @@ enum AppVersion {
         return false
     }
 }
+
+enum PrivacyPane {
+    static let helperBundleID = "tw.com.eaman.MacControl.control"
+
+    // macOS 27 renamed Privacy & Security > Accessibility to Device Control and Data Access.
+    static func accessibilityRenamed(macOSMajor: Int) -> Bool { macOSMajor >= 27 }
+}

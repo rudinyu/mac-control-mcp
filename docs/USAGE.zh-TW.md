@@ -128,7 +128,7 @@
 
 | 訊息或現象 | 處理方式 |
 | --- | --- |
-| `Accessibility permission is missing` 或 `Screen Recording permission is missing` | 把權限給啟動伺服器的那個 App，然後完全結束再重開它。見[安裝指南第 5 節](INSTALL.zh-TW.md#5-授予-macos-權限)。 |
+| `Accessibility permission is missing` 或 `Screen Recording permission is missing` | 把權限給終端機 App；Claude Desktop 和 Codex App 則給 MacControlHelper.app。然後完全結束再重開那個 App。見[安裝指南第 5 節](INSTALL.zh-TW.md#5-授予-macos-權限)。 |
 | `No running app with a Dock icon matches "…"` | 先打開那個 App。只有有 Dock 圖示的 App 可以指定，名稱要完全相同（不分大小寫）。 |
 | `"…" matches N running apps` | 有好幾個 App 同名。改用訊息裡列出的 bundle ID。 |
 | `… has focus instead of …; no input was sent` | 送出前焦點被其他 App 搶走了，沒有輸入任何東西。請代理再試一次。 |

@@ -91,17 +91,16 @@ Codex 的伺服器名稱是底線 `mac_control`，Claude 客戶端用的是連�
 
 ## 5. 授予 macOS 權限
 
-macOS 的權限是給「啟動伺服器的那個 App」，不是給伺服器本身：
+macOS 的權限是給「負責伺服器的那個程序」。在終端機裡跑的程式由終端機 App 負責；Claude 等桌面 App 則以伺服器自己的名義啟動它，所以要給伺服器程式本身：
 
 | 你使用的是 | 要授權的 App |
 | --- | --- |
 | 在終端機裡跑 Claude Code 或 Codex | 那個終端機 App，例如「終端機」或 iTerm2 |
-| Claude Desktop | Claude |
-| Codex 桌面 App | Codex |
+| Claude Desktop 或 Codex 桌面 App | 伺服器本身：你 build 出來的 `mac-control-mcp`，或由 MacControl.app 設定時的 **MacControlHelper.app** |
 
 到 **系統設定 → 隱私權與安全性**，在下面兩個項目都把該 App 打開：
 
-- **輔助使用**：滑鼠、鍵盤、文字輸入和 UI 樹工具需要。
+- **輔助使用**（macOS 27 叫 **Device Control and Data Access**）：滑鼠、鍵盤、文字輸入和 UI 樹工具需要。
 - **螢幕與系統音訊錄製**：截圖和螢幕錄影需要。
 
 接著完全結束並重新打開那個 App。macOS 只會把權限套用到新啟動的程序。

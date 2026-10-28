@@ -147,7 +147,10 @@ struct SetupView: View {
         .frame(minWidth: 640, minHeight: 640)
         // Once everything works, the permission steps are no longer needed every time; the user can still open them.
         .onChange(of: model.summary.level) { _, level in
-            if !userToggledPermissions { showPermissions = level != .ready }
+            if !userToggledPermissions { showPermissions = level != .ready || model.helperPermissionsMissing }
+        }
+        .onChange(of: model.helperPermissions) { _, _ in
+            if !userToggledPermissions { showPermissions = model.summary.level != .ready || model.helperPermissionsMissing }
         }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
             Task { await model.refresh() }
@@ -165,7 +168,7 @@ struct SetupView: View {
             Button("Remove", role: .destructive) { Task { await model.removeEverything() } }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text("This disconnects every client, deletes the Linux VM and the tools MacControl downloaded, and resets its settings. Your workspace and logs are kept. Afterwards, move MacControl to the Trash.")
+            Text("This disconnects every client, deletes the sandbox (MacControl's Linux VM, or the sandbox image in your own Docker or in Apple container) and the tools MacControl downloaded, and resets its settings and permissions. Your workspace, your logs, your own Docker, and Apple container stay. Afterwards, move MacControl to the Trash.")
         }
         .alert("Allow commands outside the sandbox?", isPresented: $confirmHostExec) {
             Button("Allow host_exec", role: .destructive) { model.allowHost = true }
@@ -311,20 +314,51 @@ struct SetupView: View {
         }
     }
 
+    private var paneButtons: some View {
+        HStack {
+            Button(model.accessibilityPaneName) { model.openPrivacyPane("Privacy_Accessibility") }
+            Button("Screen Recording") { model.openPrivacyPane("Privacy_ScreenCapture") }
+        }
+    }
+
     private var permissions: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("macOS gives these permissions to the app that runs each client, and does not let MacControl check them. Turn on Accessibility and Screen & System Audio Recording for:")
+            Text("macOS asks you to turn these on yourself; no app can turn them on for you. Turn on \(model.accessibilityPaneName) and Screen & System Audio Recording for:")
                 .fixedSize(horizontal: false, vertical: true)
-            ForEach(model.enabledClients) { client in
+            if model.needsHelperPermissions {
+                let granted = model.helperPermissions?.complete == true
+                HStack(alignment: .firstTextBaseline) {
+                    Image(systemName: granted ? "checkmark.circle.fill" : "hand.raised.fill")
+                        .foregroundStyle(granted ? .green : .blue).accessibilityHidden(true)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("MacControlHelper").font(.headline)
+                        Text("Used when Claude Desktop or the Codex app runs mac-control.").font(.callout).foregroundStyle(.secondary)
+                        if let state = model.helperPermissions {
+                            HStack(spacing: 12) {
+                                Label(model.accessibilityPaneName, systemImage: state.accessibility ? "checkmark" : "xmark")
+                                Label("Screen Recording", systemImage: state.screenRecording ? "checkmark" : "xmark")
+                            }
+                            .font(.callout).foregroundStyle(.secondary)
+                        }
+                    }
+                    Spacer()
+                    if !granted {
+                        Button("Ask macOS") { Task { await model.requestHelperPermissions() } }.disabled(model.busy)
+                            .help("Shows the macOS prompts and adds MacControlHelper to both lists.")
+                    }
+                    paneButtons
+                }
+                .accessibilityElement(children: .contain)
+            }
+            ForEach(model.enabledClients.filter { $0 != .claudeDesktop }) { client in
                 HStack(alignment: .firstTextBaseline) {
                     Image(systemName: "hand.raised.fill").foregroundStyle(.blue).accessibilityHidden(true)
                     VStack(alignment: .leading, spacing: 2) {
-                        Text(client.rawValue).font(.headline)
-                        Text("Turn on: \(client.permissionHolder)").font(.callout).foregroundStyle(.secondary)
+                        Text("\(client.rawValue) in a terminal").font(.headline)
+                        Text("Turn on: \(String(localized: "your terminal app (Terminal, iTerm2, …)"))").font(.callout).foregroundStyle(.secondary)
                     }
                     Spacer()
-                    Button("Accessibility") { model.openPrivacyPane("Privacy_Accessibility") }
-                    Button("Screen Recording") { model.openPrivacyPane("Privacy_ScreenCapture") }
+                    paneButtons
                 }
                 .accessibilityElement(children: .contain)
             }

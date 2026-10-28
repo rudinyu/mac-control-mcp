@@ -85,7 +85,7 @@ claude mcp add --scope user --transport stdio mac-control -- /bin/sh /path/to/ma
 
 ## macOS 權限
 
-`mac_status` 會顯示 `screen_recording` 和 `accessibility`。若螢幕錄製未授權，請呼叫 `mac_request_screen_recording`，並在 macOS 的提示或「系統設定 → 隱私權與安全性 → 螢幕與系統音訊錄製」中授權。鍵盤、滑鼠和輔助使用元素需要「系統設定 → 隱私權與安全性 → 輔助使用」權限。macOS 可能要求重啟 Claude Code、Codex 或其宿主程式後權限才生效。
+`mac_status` 會顯示 `screen_recording` 和 `accessibility`。若螢幕錄製未授權，請呼叫 `mac_request_screen_recording`，並在 macOS 的提示或「系統設定 → 隱私權與安全性 → 螢幕與系統音訊錄製」中授權。鍵盤、滑鼠和輔助使用元素需要「系統設定 → 隱私權與安全性 → 輔助使用」權限（macOS 27 叫 Device Control and Data Access）。使用 Claude Desktop 或 Codex App 時，兩個權限都要給伺服器本身（由 MacControl.app 安裝時是 MacControlHelper.app）；在終端機裡使用時，則給終端機 App。macOS 可能要求重啟 Claude Code、Codex 或其宿主程式後權限才生效。
 
 伺服器需要在**已登入的 Mac 桌面工作階段**執行。CI 和某些沙盒環境沒有圖形顯示器，因此測試只驗證 MCP 協定和輸入檢查，不會實際點擊或錄影。螢幕截圖及錄影會把畫面內容交給代理；請先關閉你不想分享的私人視窗。
 

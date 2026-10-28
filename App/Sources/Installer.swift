@@ -21,7 +21,9 @@ struct AppPaths {
     var marker: URL { runtime.appendingPathComponent("installed-versions") }
 
     var helpers: URL { bundle.appendingPathComponent("Contents/Helpers") }
-    var controlServer: URL { helpers.appendingPathComponent("mac-control-mcp") }
+    // mac-control lives in its own app so macOS lists it by name for its permissions.
+    var controlHelperApp: URL { helpers.appendingPathComponent("MacControlHelper.app") }
+    var controlServer: URL { controlHelperApp.appendingPathComponent("Contents/MacOS/mac-control-mcp") }
     var execServer: URL { helpers.appendingPathComponent("mac-exec-mcp") }
     var sandboxContext: URL { bundle.appendingPathComponent("Contents/Resources/sandbox") }
     var appleContainer: URL { URL(fileURLWithPath: "/usr/local/bin/container") }

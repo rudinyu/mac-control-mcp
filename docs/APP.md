@@ -33,7 +33,7 @@ After Set Up finishes, the window closes and MacControl stays in the **menu bar*
 
 The header shows one line about the whole setup, such as "Ready: 3 clients connected, sandbox running." Each client has a switch: turning it on connects it, and turning it off asks first, then removes `mac-control` and `mac-exec` from that client. When you change a setting, a banner lists the clients that still use the old settings, and **Apply** updates them. Clients can only be connected once MacControl is in Applications, so they never point at a copy in Downloads.
 
-The **Help** section shows the version and opens the release notes, this guide, the workspace, the command log (every sandbox and `host_exec` command), and MacControl's own setup log. When MacControl runs its own Linux VM, the Sandbox row shows its CPUs and memory, with **Stop VM** to free the memory; the VM starts again by itself when an agent needs it. With Apple container, the row has **Start** and **Stop** for the container service in the same way. On Apple silicon, Set Up downloads the Apple container installer, checks that Apple signed and notarized it, and opens it; once you finish the installer, setup continues by itself. If a step fails, **Copy Error** and **Show Log** give you the full message. **Remove from This Mac…** disconnects every client, deletes the VM and the downloaded tools, and resets the settings, keeping your workspace and logs.
+The **Help** section shows the version and opens the release notes, this guide, the workspace, the command log (every sandbox and `host_exec` command), and MacControl's own setup log. When MacControl runs its own Linux VM, the Sandbox row shows its CPUs and memory, with **Stop VM** to free the memory; the VM starts again by itself when an agent needs it. With Apple container, the row has **Start** and **Stop** for the container service in the same way. On Apple silicon, Set Up downloads the Apple container installer, checks that Apple signed and notarized it, and opens it; once you finish the installer, setup continues by itself. If a step fails, **Copy Error** and **Show Log** give you the full message. **Remove from This Mac…** (in the **More** menu) disconnects every client, deletes the sandbox and the downloaded tools, and resets the settings and MacControlHelper's permissions, keeping your workspace and logs. The sandbox means MacControl's own Linux VM, or the `mac-exec-sandbox` image when you use your own Docker or Apple container; your Docker and Apple container stay installed. Apple container can be removed separately with `/usr/local/bin/uninstall-container.sh` if nothing else uses it. Dragging MacControl to the Trash without Remove leaves all of this behind.
 
 When MacControl runs its own Linux VM, macOS may show a notification that "colima" can run in the background; that is the VM, and it is expected.
 
@@ -45,13 +45,12 @@ MacControl follows your Mac's language: it is in Traditional Chinese when that i
 
 ## Permissions
 
-macOS grants Accessibility and Screen Recording to the app that starts the servers, not to MacControl. The Permissions section lists which app to turn on for each client and opens the right System Settings pages:
+macOS grants Accessibility and Screen Recording to whichever process is responsible for mac-control. That is never MacControl itself:
 
-- **Claude Desktop**: Claude
-- **Claude Code**: the terminal app you run it in, such as Terminal or iTerm2
-- **Codex**: the Codex app, or the terminal app you run `codex` in
+- **Claude Desktop, and the Codex app**: they run mac-control on its own behalf, so turn on **MacControlHelper.app**. Set Up asks macOS for these permissions once, which adds MacControlHelper.app to both lists; you only turn on the switches. **Ask macOS** in the Permissions section does the same again, and the section shows whether each permission is on.
+- **Claude Code, or Codex in a terminal**: the terminal app you run it in, such as Terminal or iTerm2.
 
-Then quit and reopen that app, and ask the agent to call `mac_status` to confirm.
+macOS does not let any app turn these switches on for you. After turning them on, quit and reopen the client, and ask the agent to call `mac_status` to confirm. On macOS 27, Accessibility is called **Device Control and Data Access**.
 
 ## Settings
 

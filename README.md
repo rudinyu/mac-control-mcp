@@ -87,7 +87,7 @@ The project build never runs the Claude CLI; the second command is only there if
 
 ## macOS permissions
 
-`mac_status` shows `screen_recording` and `accessibility`. If Screen Recording is not granted, call `mac_request_screen_recording` and allow it in the macOS prompt or in System Settings > Privacy & Security > Screen & System Audio Recording. Keyboard, mouse, and Accessibility elements need System Settings > Privacy & Security > Accessibility. macOS may require restarting Claude Code, Codex, or their host app before the permission takes effect.
+`mac_status` shows `screen_recording` and `accessibility`. If Screen Recording is not granted, call `mac_request_screen_recording` and allow it in the macOS prompt or in System Settings > Privacy & Security > Screen & System Audio Recording. Keyboard, mouse, and Accessibility elements need System Settings > Privacy & Security > Accessibility (Device Control and Data Access on macOS 27). With Claude Desktop or the Codex app, grant both to the server itself (MacControlHelper.app when installed by MacControl.app); with a terminal client, grant them to the terminal app. macOS may require restarting Claude Code, Codex, or their host app before the permission takes effect.
 
 The server must run in a **logged-in Mac desktop session**. CI and some sandboxes have no graphical display, so the tests check only the MCP protocol and input validation and never click or record. Screenshots and recordings hand screen contents to the agent, so close private windows you do not want to share first.
 

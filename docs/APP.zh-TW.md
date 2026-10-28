@@ -33,7 +33,7 @@ Set Up 完成後，視窗會關閉，MacControl 會常駐在**選單列**。選�
 
 視窗頂端會用一行字說明整體狀態，例如「Ready: 3 clients connected, sandbox running.」。每個客戶端都有一個開關：打開就會連接；關閉時會先詢問，再從該客戶端移除 `mac-control` 和 `mac-exec`。修改設定後，橫幅會列出還在用舊設定的客戶端，按 **Apply** 就會更新。MacControl 必須放在「應用程式」裡才能連接客戶端，以免客戶端指到「下載項目」裡的副本。
 
-**說明**區塊會顯示版本，並可以打開版本說明、這份使用說明、工作資料夾、指令紀錄（每一個 sandbox 和 `host_exec` 指令），以及 MacControl 自己的設定紀錄。當 MacControl 使用自己管理的 Linux VM 時，Sandbox 那一列會顯示它的 CPU 和記憶體，並有**停止 VM** 可以釋放記憶體；代理需要時 VM 會自己再啟動。使用 Apple container 時，這一列同樣有**啟動**和**停止**，用來控制 container 服務。在 Apple Silicon 上，「設定」會下載 Apple container 安裝程式，確認它經過 Apple 簽章和公證後打開；你完成安裝程式後，設定會自己接著進行。某個步驟失敗時，**拷貝錯誤訊息**和**顯示紀錄**可以看到完整的錯誤。**從這台 Mac 移除…** 會中斷所有客戶端、刪除 VM 和下載的工具，並重設設定，你的工作資料夾和紀錄會保留。
+**說明**區塊會顯示版本，並可以打開版本說明、這份使用說明、工作資料夾、指令紀錄（每一個 sandbox 和 `host_exec` 指令），以及 MacControl 自己的設定紀錄。當 MacControl 使用自己管理的 Linux VM 時，Sandbox 那一列會顯示它的 CPU 和記憶體，並有**停止 VM** 可以釋放記憶體；代理需要時 VM 會自己再啟動。使用 Apple container 時，這一列同樣有**啟動**和**停止**，用來控制 container 服務。在 Apple Silicon 上，「設定」會下載 Apple container 安裝程式，確認它經過 Apple 簽章和公證後打開；你完成安裝程式後，設定會自己接著進行。某個步驟失敗時，**拷貝錯誤訊息**和**顯示紀錄**可以看到完整的錯誤。**從這台 Mac 移除…**（在**更多**選單裡）會中斷所有客戶端、刪除 sandbox 和下載的工具，並重設設定和 MacControlHelper 的權限，你的工作資料夾和紀錄會保留。sandbox 指的是 MacControl 自己的 Linux VM；如果用的是你自己的 Docker 或 Apple container，則是裡面的 `mac-exec-sandbox` image，Docker 和 Apple container 本身會保留。如果沒有其他程式在用 Apple container，可以另外執行 `/usr/local/bin/uninstall-container.sh` 移除。沒有先按「移除」就把 MacControl 丟到垃圾桶，這些都會留在 Mac 上。
 
 MacControl 使用自己管理的 Linux VM 時，macOS 可能會通知「colima」可以在背景執行，那就是這台 VM，屬於正常現象。
 
@@ -45,13 +45,12 @@ MacControl 會跟著 Mac 的語言設定：偏好語言是繁體中文時顯示�
 
 ## 權限
 
-macOS 的輔助使用和螢幕錄製權限，是給「啟動伺服器的 App」，不是給 MacControl。Permissions 區塊會列出每個客戶端要開哪個 App，並幫你打開正確的系統設定頁：
+macOS 的輔助使用和螢幕錄製權限，是給「負責 mac-control 的那個程序」，永遠不是 MacControl 本身：
 
-- **Claude Desktop**：Claude
-- **Claude Code**：你執行它的終端機 App，例如「終端機」或 iTerm2
-- **Codex**：Codex App，或你執行 `codex` 的終端機 App
+- **Claude Desktop 和 Codex App**：它們以 mac-control 自己的名義啟動它，所以要開 **MacControlHelper.app**。「設定」會向 macOS 要求一次權限，MacControlHelper.app 就會出現在兩個清單裡，你只要打開開關。Permissions 區塊的**向 macOS 要求**可以再要求一次，區塊也會顯示每個權限是否已開啟。
+- **在終端機裡跑的 Claude Code 或 Codex**：你執行它的終端機 App，例如「終端機」或 iTerm2。
 
-接著完全結束並重開那個 App，請代理呼叫 `mac_status` 確認。
+macOS 不允許任何 App 代替你打開這些開關。打開後，完全結束並重開客戶端，請代理呼叫 `mac_status` 確認。在 macOS 27，「輔助使用」改名為 **Device Control and Data Access**。
 
 ## 設定
 

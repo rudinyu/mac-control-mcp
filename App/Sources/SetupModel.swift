@@ -50,9 +50,9 @@ enum Client: String, CaseIterable, Identifiable {
     // The app that macOS asks to grant Accessibility and Screen Recording to.
     var permissionHolder: String {
         switch self {
-        case .claudeDesktop: return "Claude"
+        case .claudeDesktop: return "MacControlHelper"
         case .claudeCode: return String(localized: "your terminal app (Terminal, iTerm2, …)")
-        case .codex: return String(localized: "the Codex app, or your terminal app")
+        case .codex: return String(localized: "MacControlHelper for the Codex app, or your terminal app")
         }
     }
 
@@ -205,6 +205,59 @@ final class SetupModel: ObservableObject {
         Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "?"
     }
 
+    // MARK: Permissions of MacControlHelper
+
+    struct HelperPermissions: Equatable {
+        let accessibility: Bool
+        let screenRecording: Bool
+        var complete: Bool { accessibility && screenRecording }
+    }
+
+    // Desktop clients run mac-control on its own behalf, so macOS asks for the permissions in the name of
+    // MacControlHelper. Command-line clients get them from the terminal app instead.
+    @Published var helperPermissions: HelperPermissions?
+    var needsHelperPermissions: Bool { enabledClients.contains(.claudeDesktop) || enabledClients.contains(.codex) }
+    var helperPermissionsMissing: Bool { needsHelperPermissions && helperPermissions?.complete == false }
+
+    var accessibilityPaneName: String {
+        PrivacyPane.accessibilityRenamed(macOSMajor: ProcessInfo.processInfo.operatingSystemVersion.majorVersion)
+            ? String(localized: "Device Control and Data Access") : String(localized: "Accessibility")
+    }
+
+    // The helper is started through Launch Services, so macOS checks the helper itself rather than MacControl.
+    private func runHelper(_ arguments: [String], timeout: TimeInterval) async -> Bool {
+        guard FileManager.default.fileExists(atPath: paths.controlServer.path),
+              let result = try? await Installer.run("/usr/bin/open", ["-W", "-n", "-g", paths.controlHelperApp.path, "--args"] + arguments,
+                                                    timeout: timeout) else { return false }
+        return result.exitCode == 0
+    }
+
+    func checkHelperPermissions() async {
+        let file = FileManager.default.temporaryDirectory.appendingPathComponent("maccontrol-permissions-\(UUID().uuidString).json")
+        defer { try? FileManager.default.removeItem(at: file) }
+        guard await runHelper(["--check-permissions", file.path], timeout: 30) else { helperPermissions = nil; return }
+        // `open -W` can return before a helper this quick has written its answer, so wait briefly for the file.
+        for _ in 0..<25 where !FileManager.default.fileExists(atPath: file.path) {
+            try? await Task.sleep(for: .milliseconds(200))
+        }
+        guard let data = try? Data(contentsOf: file),
+              let info = try? JSONSerialization.jsonObject(with: data) as? [String: Bool] else {
+            helperPermissions = nil
+            return
+        }
+        helperPermissions = HelperPermissions(accessibility: info["accessibility"] == true,
+                                              screenRecording: info["screen_recording"] == true)
+    }
+
+    // macOS does not let an app turn these on; this shows its prompts and puts MacControlHelper in both
+    // lists, so only the switches are left for the user.
+    func requestHelperPermissions() async {
+        defaults.set(true, forKey: "askedForHelperPermissions")
+        note(String(localized: "Asking macOS for permissions for MacControlHelper…"))
+        _ = await runHelper(["--request-permissions"], timeout: 60)
+        await checkHelperPermissions()
+    }
+
     // A newer release on GitHub, if any. Only the public release list is read; nothing is sent about this Mac.
     @Published var availableUpdate: (version: String, page: URL)?
     static let releasesAPI = URL(string: "https://api.github.com/repos/rudinyu/mac-control-mcp/releases/latest")!
@@ -341,6 +394,18 @@ final class SetupModel: ObservableObject {
             await disconnect(client)
             if clients[client]?.isFailed == true { failures.append(client.rawValue) }
         }
+        // In the user's own Docker or in Apple container, only the sandbox image is MacControl's; the runtime
+        // stays. An image that cannot be checked because the runtime is not running is left, and noted.
+        if let choice = runtimeChoice, choice != .managedColima, choice != .appleContainer || Installer.appleContainerInstalled {
+            let runtime = Installer.runtime(for: choice)
+            let ready = (try? await Installer.run(runtime.program, runtime.readyArguments(), environment: runtime.environment, timeout: 30))?.exitCode == 0
+            if !ready {
+                note(String(localized: "\(choice.label) is not running, so the sandbox image was left in it."))
+            } else if await Installer.imagePresent(runtime) {
+                _ = try? await Installer.run(runtime.program, runtime.removeImageArguments(Installer.image), environment: runtime.environment, timeout: 120)
+                if await Installer.imagePresent(runtime) { failures.append(String(localized: "the sandbox image")) }
+            }
+        }
         // A VM that is already gone counts as removed, so a retry after a partial removal can finish. It is
         // only gone when neither Colima nor the disk still shows it, and the tools that can delete it are
         // kept until then.
@@ -353,6 +418,11 @@ final class SetupModel: ObservableObject {
             if deleted?.exitCode != 0 || stillThere {
                 failures.append(String(localized: "the Linux VM"))
             }
+        }
+        // Permissions given to MacControlHelper go too. Entries the user added by hand for an older copy
+        // may remain; System Settings can remove those.
+        for service in ["Accessibility", "ScreenCapture"] {
+            _ = try? await Installer.run("/usr/bin/tccutil", ["reset", service, PrivacyPane.helperBundleID], timeout: 30)
         }
         if failures.isEmpty, FileManager.default.fileExists(atPath: paths.support.path) {
             do { try FileManager.default.removeItem(at: paths.support) } catch { failures.append(String(localized: "the downloaded tools")) }
@@ -377,6 +447,7 @@ final class SetupModel: ObservableObject {
         checkLocation()
         await checkRuntime()
         await detectClients()
+        await checkHelperPermissions()
         hasChecked = true
         await checkForUpdate()
     }
@@ -583,6 +654,10 @@ final class SetupModel: ObservableObject {
         }
         for client in enabledClients where location.isDone && !(clients[client]?.isDone ?? false) {
             await connect(client)
+        }
+        // Asked once by Set Up; the Permissions section can ask again.
+        if location.isDone, helperPermissionsMissing, !defaults.bool(forKey: "askedForHelperPermissions") {
+            await requestHelperPermissions()
         }
         busy = false
         await refresh()

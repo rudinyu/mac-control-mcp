@@ -203,7 +203,7 @@ private final class MacControlServer {
         switch name {
         case "mac_status": return [textContent(status())]
         case "mac_screenshot": return try screenshot()
-        case "mac_request_screen_recording": return [textContent(CGRequestScreenCaptureAccess() ? "Screen Recording access is granted." : "Screen Recording access is not granted yet. Complete the macOS permission prompt or use System Settings > Privacy & Security > Screen & System Audio Recording, then restart the host app.")]
+        case "mac_request_screen_recording": return [textContent(CGRequestScreenCaptureAccess() ? "Screen Recording access is granted." : "Screen Recording access is not granted yet. Complete the macOS permission prompt. \(PermissionHint.screenRecording)")]
         case "mac_ui_tree": return [textContent(try uiTree(args))]
         case "mac_record_start": return [textContent(try recordStart(args))]
         case "mac_record_status": return [textContent(try recordStatus(args))]
@@ -253,7 +253,7 @@ private final class MacControlServer {
             throw ToolFailure("No Mac display is available to this process. Run the MCP host in a logged-in local desktop session.")
         }
         guard CGPreflightScreenCaptureAccess() else {
-            throw ToolFailure("Screen Recording permission is missing. Grant it in System Settings > Privacy & Security > Screen & System Audio Recording, then restart the host app.")
+            throw ToolFailure("Screen Recording permission is missing. \(PermissionHint.screenRecording)")
         }
         let path = FileManager.default.temporaryDirectory.appendingPathComponent("mac-control-\(UUID().uuidString).jpg")
         defer { try? FileManager.default.removeItem(at: path) }
@@ -284,7 +284,7 @@ private final class MacControlServer {
             throw ToolFailure("No Mac display is available to this process. Run the MCP host in a logged-in local desktop session.")
         }
         guard CGPreflightScreenCaptureAccess() else {
-            throw ToolFailure("Screen Recording permission is missing. Grant it in System Settings > Privacy & Security > Screen & System Audio Recording, then restart the host app.")
+            throw ToolFailure("Screen Recording permission is missing. \(PermissionHint.screenRecording)")
         }
         guard !recordings.values.contains(where: { $0.process.isRunning }) else {
             throw ToolFailure("A screen recording is already running.")
@@ -350,7 +350,7 @@ private final class MacControlServer {
 
     private func requireAccessibility() throws {
         guard AXIsProcessTrusted() else {
-            throw ToolFailure("Accessibility permission is missing. Grant it in System Settings > Privacy & Security > Accessibility, then restart the host app.")
+            throw ToolFailure("Accessibility permission is missing. \(PermissionHint.accessibility)")
         }
     }
 
@@ -690,7 +690,40 @@ private final class MacControlServer {
     }
 }
 
+// Where to grant the permissions. macOS gives them to the process that is responsible for this server: the
+// terminal app for a command-line client, or this server itself when a desktop app such as Claude starts
+// it on its own behalf. macOS 27 renamed the Accessibility pane.
+enum PermissionHint {
+    static var accessibilityPane: String {
+        ProcessInfo.processInfo.operatingSystemVersion.majorVersion >= 27 ? "Device Control and Data Access" : "Accessibility"
+    }
+    static let grantee = "Turn it on for MacControlHelper when Claude Desktop or another desktop app runs this server, or for your terminal app when a command-line client does"
+    static var accessibility: String {
+        "\(grantee), in System Settings > Privacy & Security > \(accessibilityPane). Then quit and reopen that app."
+    }
+    static let screenRecording = "\(grantee), in System Settings > Privacy & Security > Screen & System Audio Recording. Then quit and reopen that app."
+}
+
 @main
 private enum Main {
-    static func main() { MacControlServer().serve() }
+    static func main() {
+        let arguments = Array(CommandLine.arguments.dropFirst())
+        switch arguments.first {
+        // MacControl.app starts the helper app with these through Launch Services, so macOS treats the
+        // helper as responsible for itself, as it is when a desktop client runs it.
+        case "--request-permissions":
+            // Shows the macOS prompts and adds "MacControlHelper" to both lists, ready to be turned on.
+            let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
+            _ = AXIsProcessTrustedWithOptions(options)
+            _ = CGRequestScreenCaptureAccess()
+            Thread.sleep(forTimeInterval: 1)
+        case "--check-permissions":
+            guard arguments.count == 2 else { exit(2) }
+            let result = ["accessibility": AXIsProcessTrusted(), "screen_recording": CGPreflightScreenCaptureAccess()]
+            guard let data = try? JSONSerialization.data(withJSONObject: result),
+                  (try? data.write(to: URL(fileURLWithPath: arguments[1]), options: .atomic)) != nil else { exit(1) }
+        default:
+            MacControlServer().serve()
+        }
+    }
 }

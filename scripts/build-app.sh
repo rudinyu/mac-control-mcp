@@ -50,7 +50,17 @@ universal MacControl "$project_dir"/App/Sources/*.swift \
 mkdir -p "$app/Contents/MacOS" "$app/Contents/Helpers" "$app/Contents/Resources/sandbox"
 cp "$project_dir/App/Info.plist" "$app/Contents/Info.plist"
 cp "$out/obj/MacControl" "$app/Contents/MacOS/MacControl"
-cp "$out/obj/mac-control-mcp" "$out/obj/mac-exec-mcp" "$app/Contents/Helpers/"
+cp "$out/obj/mac-exec-mcp" "$app/Contents/Helpers/"
+# mac-control runs from its own small app, so macOS lists it as "MacControlHelper" under Accessibility and
+# Screen Recording, and MacControl can ask for and check those permissions in its name.
+helper="$app/Contents/Helpers/MacControlHelper.app"
+mkdir -p "$helper/Contents/MacOS" "$helper/Contents/Resources"
+cp "$project_dir/App/HelperInfo.plist" "$helper/Contents/Info.plist"
+/usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $version" \
+  -c "Set :CFBundleVersion $(/usr/libexec/PlistBuddy -c "Print CFBundleVersion" "$project_dir/App/Info.plist")" \
+  "$helper/Contents/Info.plist"
+cp "$out/obj/mac-control-mcp" "$helper/Contents/MacOS/mac-control-mcp"
+cp "$project_dir/App/AppIcon.icns" "$helper/Contents/Resources/AppIcon.icns"
 cp "$project_dir/sandbox/Dockerfile" "$app/Contents/Resources/sandbox/Dockerfile"
 cp "$project_dir/App/AppIcon.icns" "$app/Contents/Resources/AppIcon.icns"
 # Translations are kept as JSON; a binary plist is a valid .strings file and needs no escaping.
@@ -70,7 +80,7 @@ else
 fi
 # Helpers first, then the app that contains them. The hardened runtime is required for notarization.
 # shellcheck disable=SC2086
-codesign --force --options runtime $extra --sign "$signer" -i "$bundle_id.control" "$app/Contents/Helpers/mac-control-mcp"
+codesign --force --options runtime $extra --sign "$signer" "$helper"
 # shellcheck disable=SC2086
 codesign --force --options runtime $extra --sign "$signer" -i "$bundle_id.exec" "$app/Contents/Helpers/mac-exec-mcp"
 # shellcheck disable=SC2086

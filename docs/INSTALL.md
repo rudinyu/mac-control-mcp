@@ -91,17 +91,16 @@ Codex names the server `mac_control`, with an underscore. Claude clients name it
 
 ## 5. Grant macOS permissions
 
-macOS grants permissions to the app that starts the server, not to the server itself:
+macOS grants permissions to the process responsible for the server. A terminal app is responsible for what runs in it; a desktop app such as Claude runs the server on its own behalf, so the server program itself needs them:
 
 | You use | Grant permission to |
 | --- | --- |
 | Claude Code or Codex in a terminal | That terminal app, such as Terminal or iTerm2 |
-| Claude Desktop | Claude |
-| Codex desktop app | Codex |
+| Claude Desktop, or the Codex desktop app | The server itself: `mac-control-mcp` from your build, or **MacControlHelper.app** when MacControl.app set it up |
 
 In **System Settings > Privacy & Security**, turn the app on under both:
 
-- **Accessibility**: needed for the mouse, keyboard, text input, and UI tree tools.
+- **Accessibility** (called **Device Control and Data Access** on macOS 27): needed for the mouse, keyboard, text input, and UI tree tools.
 - **Screen & System Audio Recording**: needed for screenshots and screen recording.
 
 Then quit and reopen that app. macOS applies these permissions only to newly started processes.
