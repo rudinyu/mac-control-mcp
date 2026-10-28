@@ -379,7 +379,9 @@ final class SetupModel: ObservableObject {
             // Until MacControl runs from Applications, its helper paths differ from what clients use, so a
             // comparison would wrongly call every client outdated.
             if !location.isDone, isEnabled(client) {
-                found[client] = .notNeeded(hasEntry ? String(localized: "Connected. Checked again once MacControl runs from Applications.")
+                // Whether the entry works cannot be told from here, so only say that one exists. The Location
+                // step keeps the summary from reporting Ready meanwhile.
+                found[client] = .notNeeded(hasEntry ? String(localized: "Set up before. Checked once MacControl runs from Applications.")
                                                     : String(localized: "Connects once MacControl runs from Applications."))
                 return
             }
