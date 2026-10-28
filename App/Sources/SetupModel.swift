@@ -435,10 +435,19 @@ final class SetupModel: ObservableObject {
             return
         }
         if openAtLogin { setOpenAtLogin(false) }
+        // tccutil may leave Screen Recording on (seen on macOS 26), so show the user where to turn it off.
+        await checkHelperPermissions()
+        let screenRecordingLeft = helperPermissions?.screenRecording == true
         if let domain = Bundle.main.bundleIdentifier { defaults.removePersistentDomain(forName: domain) }
         note(String(localized: "Removed. Your workspace and logs were kept. Move MacControl from Applications to the Trash to finish."))
+        if screenRecordingLeft {
+            note(String(localized: "macOS kept Screen Recording on for MacControlHelper. Select it in System Settings and click – to remove it."))
+            openPrivacyPane("Privacy_ScreenCapture")
+        }
         NSWorkspace.shared.activateFileViewerSelecting([paths.bundle])
         try? await Task.sleep(nanoseconds: 1_500_000_000)
+        // AppKit can write the window position back after the first removal.
+        if let domain = Bundle.main.bundleIdentifier { defaults.removePersistentDomain(forName: domain) }
         NSApp.terminate(nil)
     }
 

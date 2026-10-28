@@ -6,6 +6,14 @@ import SwiftUI
 final class AppDelegate: NSObject, NSApplicationDelegate {
     var showWindow: (() -> Void)?
     private var refreshTimer: Timer?
+    private var launchedAtLogin = false
+
+    // Only a launch by Open at Login starts quietly in the menu bar; a launch by the user shows the window.
+    func applicationWillFinishLaunching(_ notification: Notification) {
+        let event = NSAppleEventManager.shared().currentAppleEvent
+        launchedAtLogin = event?.eventID == kAEOpenApplication
+            && event?.paramDescriptor(forKeyword: keyAEPropData)?.enumCodeValue == keyAELaunchedAsLogInItem
+    }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         // For checking both appearances without changing the system:
@@ -52,8 +60,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             let model = SetupModel.shared
             model.onReady = { [weak self] in self?.hideSetupWindow() }
             await model.refresh()
-            // Once everything is set up, start quietly in the menu bar.
-            if model.summary.level == .ready { self.hideSetupWindow() }
+            // Once everything is set up, a launch at login starts quietly in the menu bar.
+            if self.launchedAtLogin, model.summary.level == .ready { self.hideSetupWindow() }
         }
     }
 
@@ -90,7 +98,7 @@ private struct MenuContent: View {
         Divider()
         Button("Quit MacControl") { NSApp.terminate(nil) }
             .keyboardShortcut("q")
-            .onAppear { delegate.showWindow = { open() } }
+
     }
 
     private func open() {
@@ -100,7 +108,8 @@ private struct MenuContent: View {
     }
 }
 
-// Lets the app delegate reopen the window, for example when the app is opened again from Finder.
+// Lets the app delegate reopen the window, for example when the app is opened again from Finder. It wraps the
+// menu bar icon, which exists for the whole run; an action taken from a closed window would do nothing.
 private struct WindowOpenerCapture<Content: View>: View {
     let delegate: AppDelegate
     @ViewBuilder let content: () -> Content
@@ -124,16 +133,18 @@ struct MacControlApp: App {
 
     var body: some Scene {
         Window("MacControl", id: "setup") {
-            WindowOpenerCapture(delegate: delegate) { SetupView(model: model) }
+            SetupView(model: model)
         }
         .windowResizability(.contentMinSize)
 
         MenuBarExtra {
             MenuContent(model: model, delegate: delegate)
         } label: {
-            Image(systemName: model.summary.level == .ready || model.summary.level == .working
-                  ? "cursorarrow.rays" : "exclamationmark.triangle")
-                .accessibilityLabel("MacControl: \(model.summary.text)")
+            WindowOpenerCapture(delegate: delegate) {
+                Image(systemName: model.summary.level == .ready || model.summary.level == .working
+                      ? "cursorarrow.rays" : "exclamationmark.triangle")
+                    .accessibilityLabel("MacControl: \(model.summary.text)")
+            }
         }
     }
 }

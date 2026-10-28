@@ -174,6 +174,7 @@
   "host_exec runs commands directly on this Mac with all of your permissions. It can read and change any of your files. Only allow it if you need macOS programs, and read every command in the approval prompt before allowing it.": "host_exec 會用你的全部權限，直接在這台 Mac 上執行指令，可以讀取和修改你的任何檔案。只有在需要 macOS 程式時才允許，並在核准提示裡看清楚每個指令再允許。",
   "macOS asks you to turn these on yourself; no app can turn them on for you. Turn on %@ and Screen & System Audio Recording for:": "這些權限必須由你自己開啟，任何 App 都無法代為開啟。請為下列項目開啟「%@」和「螢幕與系統音訊錄製」：",
   "macOS is running a protected copy of MacControl. Quit it, drag MacControl into Applications in Finder, then open it from there.": "macOS 正在執行 MacControl 的受保護副本。請結束它，在 Finder 裡把 MacControl 拖進「應用程式」，再從那裡打開。",
+  "macOS kept Screen Recording on for MacControlHelper. Select it in System Settings and click – to remove it.": "macOS 保留了 MacControlHelper 的螢幕錄製權限。請在系統設定裡選取它，按「–」移除。",
   "macOS may say that “colima” can run in the background. That is this VM.": "macOS 可能會通知「colima」可以在背景執行，那就是這台 VM。",
   "start Apple container": "啟動 Apple container",
   "start Colima": "啟動 Colima",
