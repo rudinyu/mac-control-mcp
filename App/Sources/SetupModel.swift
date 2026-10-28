@@ -272,28 +272,37 @@ final class SetupModel: ObservableObject {
         guard !busy else { return }
         busy = true
         defer { busy = false }
+        // Checks that could stop the removal run before anything is changed.
+        // The workspace can never be inside the support folder (mountRejection refuses ~/Library), but check
+        // anyway, since the user's files must survive.
+        if isSame(resolvedPath(workspace), orInside: resolvedPath(paths.support)) {
+            note(String(localized: "Nothing was removed: the workspace is inside MacControl's support folder. Choose another workspace first."))
+            return
+        }
         note(String(localized: "Removing MacControl from this Mac…"))
         var failures: [String] = []
         for client in detectedClients {
             await disconnect(client)
             if clients[client]?.isFailed == true { failures.append(client.rawValue) }
         }
-        if Installer.managedColimaInstalled {
-            let deleted = try? await Installer.run(paths.colima.path, ["delete", "--profile", Installer.colimaProfile, "--force"],
-                                                   environment: Installer.managedEnvironment, timeout: 300)
-            if deleted?.exitCode != 0 { failures.append(String(localized: "the Linux VM")) }
+        // The VM's folder tells whether it still exists, so a retry after a partial removal does not fail
+        // on a VM that is already gone.
+        let profile = paths.home.appendingPathComponent(".colima/\(Installer.colimaProfile)")
+        if FileManager.default.fileExists(atPath: profile.path) {
+            let deleted = Installer.managedColimaInstalled
+                ? try? await Installer.run(paths.colima.path, ["delete", "--profile", Installer.colimaProfile, "--force"],
+                                           environment: Installer.managedEnvironment, timeout: 300)
+                : nil
+            if deleted?.exitCode != 0 || FileManager.default.fileExists(atPath: profile.path) {
+                failures.append(String(localized: "the Linux VM"))
+            }
         }
-        // The workspace can never be inside the support folder (mountRejection refuses ~/Library), but
-        // check anyway before deleting, since the user's files must survive.
-        let support = resolvedPath(paths.support)
-        if isSame(resolvedPath(workspace), orInside: support) {
-            failures.append(String(localized: "the support folder, because the workspace is inside it"))
-        } else if FileManager.default.fileExists(atPath: paths.support.path) {
+        if failures.isEmpty, FileManager.default.fileExists(atPath: paths.support.path) {
             do { try FileManager.default.removeItem(at: paths.support) } catch { failures.append(String(localized: "the downloaded tools")) }
         }
         guard failures.isEmpty else {
             let list = ListFormatter.localizedString(byJoining: failures)
-            note(String(localized: "Could not remove \(list). Nothing else was reported as removed; fix the problem and try again."))
+            note(String(localized: "Could not remove \(list). The other steps may already be done; fix the problem and click Remove again."))
             return
         }
         if openAtLogin { setOpenAtLogin(false) }
