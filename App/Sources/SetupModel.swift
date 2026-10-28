@@ -256,20 +256,26 @@ final class SetupModel: ObservableObject {
         let checked = HelperPermissions(accessibility: info["accessibility"] == true,
                                         screenRecording: info["screen_recording"] == true)
         if checked.complete, helperPermissions?.complete == false { helperGrantedThisRun = true }
+        if !checked.complete { helperGrantedThisRun = false }
         helperPermissions = checked
     }
 
     // macOS does not let an app turn these on; this shows its prompts and puts MacControlHelper in both
     // lists, so only the switches are left for the user.
-    func requestHelperPermissions(openSettings: Bool) async {
+    // macOS shows its prompts only once per app. The first request shows them; after that, the switches are
+    // only in System Settings, so that page opens instead.
+    func requestHelperPermissions() async {
+        if defaults.bool(forKey: "askedForHelperPermissions") {
+            await checkHelperPermissions()
+            if let state = helperPermissions, !state.complete {
+                openPrivacyPane(state.accessibility ? "Privacy_ScreenCapture" : "Privacy_Accessibility")
+            }
+            return
+        }
         note(String(localized: "Asking macOS for permissions for MacControlHelper…"))
         // Only a request that ran counts, so Set Up tries again after a failure. Remove clears this setting.
         if await runHelper(["--request-permissions"], timeout: 60) { defaults.set(true, forKey: "askedForHelperPermissions") }
         await checkHelperPermissions()
-        // macOS shows its prompt only once per app, so after that the switches are in System Settings.
-        if openSettings, let state = helperPermissions, !state.complete {
-            openPrivacyPane(state.accessibility ? "Privacy_ScreenCapture" : "Privacy_Accessibility")
-        }
     }
 
     // A newer release on GitHub, if any. Only the public release list is read; nothing is sent about this Mac.
@@ -680,7 +686,7 @@ final class SetupModel: ObservableObject {
         }
         // The first time, macOS shows its own prompts; after that it does not, so open System Settings instead.
         if location.isDone, helperPermissionsMissing {
-            await requestHelperPermissions(openSettings: defaults.bool(forKey: "askedForHelperPermissions"))
+            await requestHelperPermissions()
         }
         busy = false
         await refresh()

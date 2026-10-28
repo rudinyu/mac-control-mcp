@@ -145,15 +145,9 @@ struct SetupView: View {
         }
         .frame(minWidth: 640, minHeight: 640)
         // Once everything works, the permission steps are no longer needed every time; the user can still open them.
-        .onChange(of: model.summary.level) { _, level in
-            if !userToggledPermissions { showPermissions = level != .ready || model.helperPermissionsMissing }
-        }
-        .onChange(of: model.helperPermissions) { _, _ in
-            if !userToggledPermissions { showPermissions = model.summary.level != .ready || model.helperPermissionsMissing }
-        }
-        .onAppear {
-            if !userToggledPermissions { showPermissions = model.summary.level != .ready || model.helperPermissionsMissing }
-        }
+        .onChange(of: model.summary.level) { _, _ in updatePermissionsDefault() }
+        .onChange(of: model.helperPermissions) { _, _ in updatePermissionsDefault() }
+        .onAppear { updatePermissionsDefault() }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
             Task { await model.refresh() }
         }
@@ -312,6 +306,11 @@ struct SetupView: View {
         }
     }
 
+    // Open while something needs doing, collapsed once everything works, unless the user chose otherwise.
+    private func updatePermissionsDefault() {
+        if !userToggledPermissions { showPermissions = model.summary.level != .ready || model.helperPermissionsMissing }
+    }
+
     private var collapsedPermissionsHint: String {
         guard model.needsHelperPermissions, let state = model.helperPermissions else {
             // Only terminal clients are on, and MacControl cannot check a terminal app's permissions.
@@ -354,7 +353,7 @@ struct SetupView: View {
                     }
                     Spacer()
                     if !granted {
-                        Button("Ask macOS") { Task { await model.requestHelperPermissions(openSettings: true) } }.disabled(model.busy)
+                        Button("Ask macOS") { Task { await model.requestHelperPermissions() } }.disabled(model.busy)
                             .help("Shows the macOS prompts and adds MacControlHelper to both lists, or opens System Settings if macOS asked before.")
                     }
                     paneButtons
