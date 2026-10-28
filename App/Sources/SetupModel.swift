@@ -430,6 +430,12 @@ final class SetupModel: ObservableObject {
             case .claudeCode, .codex:
                 // Without its CLI the client cannot run the servers, so there is nothing left to remove.
                 if let program = clientPrograms[client] {
+                    // `mcp get` fails both for a missing server and for a broken CLI, so first make sure the CLI
+                    // works; only then does a failing `get` mean the server is not registered.
+                    let list = try await Installer.runInLoginShell(program, ["mcp", "list"], timeout: 120)
+                    guard list.exitCode == 0 else {
+                        throw ConfigFailure(description: "\(client.rawValue) did not answer (\(list.stderr.suffix(200))), so nothing was removed. Try again.")
+                    }
                     for name in ClientConfig.managedNames {
                         let serverName = client == .codex ? name.replacingOccurrences(of: "-", with: "_") : name
                         // Ask whether the server exists instead of reading error text, which varies by version.
