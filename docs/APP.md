@@ -47,7 +47,7 @@ MacControl follows your Mac's language: it is in Traditional Chinese when that i
 
 macOS grants Accessibility and Screen Recording to whichever process is responsible for mac-control. That is never MacControl itself:
 
-- **Claude Desktop, and the Codex app**: they run mac-control on its own behalf, so turn on **MacControlHelper.app**. Set Up asks macOS for these permissions once, which adds MacControlHelper.app to both lists; you only turn on the switches. **Ask macOS** in the Permissions section does the same again, and the section shows whether each permission is on.
+- **Claude Desktop, and the Codex app**: they run mac-control on its own behalf, so turn on **MacControlHelper.app**. Set Up asks macOS for these permissions once, which adds MacControlHelper.app to both lists; you only turn on the switches. **Ask macOS** in the Permissions section does the same again, or opens System Settings once macOS has already asked, and the section shows whether each permission is on. Until both are on, MacControl does not report Ready.
 - **Claude Code, or Codex in a terminal**: the terminal app you run it in, such as Terminal or iTerm2.
 
 macOS does not let any app turn these switches on for you. After turning them on, quit and reopen the client, and ask the agent to call `mac_status` to confirm. On macOS 27, Accessibility is called **Device Control and Data Access**.

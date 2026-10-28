@@ -95,6 +95,13 @@ class MCPProtocolTests(unittest.TestCase):
             with self.subTest(name=name):
                 self.assertEqual(listed[name]["inputSchema"]["properties"]["app"]["type"], "string")
 
+    def test_06_unknown_parameter_names_the_accepted_ones(self):
+        response = self.request("tools/call", {"name": "mac_scroll", "arguments": {"dy": -5}})
+        self.assertTrue(response["result"]["isError"])
+        text = response["result"]["content"][0]["text"]
+        self.assertIn("dy", text)
+        self.assertIn("vertical", text)
+
     def test_05_unknown_method_is_json_rpc_error(self):
         response = self.request("unknown/method")
         self.assertEqual(response["error"]["code"], -32601)

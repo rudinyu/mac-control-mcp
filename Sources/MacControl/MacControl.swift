@@ -200,6 +200,16 @@ private final class MacControlServer {
     }
 
     private func callTool(_ name: String, _ args: [String: Any]) throws -> [[String: Any]] {
+        // Every schema sets additionalProperties to false. Saying so, with the accepted names, keeps a
+        // misspelled parameter from being ignored or reported as a bad value.
+        if let schema = tools.first(where: { $0["name"] as? String == name })?["inputSchema"] as? [String: Any],
+           let properties = schema["properties"] as? [String: Any] {
+            let unknown = Set(args.keys).subtracting(properties.keys)
+            if !unknown.isEmpty {
+                let accepted = properties.keys.sorted().joined(separator: ", ")
+                throw ToolFailure("\(name) does not take \(unknown.sorted().joined(separator: ", ")). It accepts: \(accepted.isEmpty ? "no parameters" : accepted).")
+            }
+        }
         switch name {
         case "mac_status": return [textContent(status())]
         case "mac_screenshot": return try screenshot()

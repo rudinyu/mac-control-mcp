@@ -14,7 +14,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let event = NSAppleEventManager.shared().currentAppleEvent
         launchedAtLogin = event?.eventID == kAEOpenApplication
             && event?.paramDescriptor(forKeyword: keyAEPropData)?.enumCodeValue == keyAELaunchedAsLogInItem
-        Task { @MainActor in SetupModel.shared.note("Launched \(launchedAtLogin ? "at login" : "by the user").") }
+        Task { @MainActor in SetupModel.shared.note("Launched \(launchedAtLogin ? "at login" : "by the user").", show: false) }
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {

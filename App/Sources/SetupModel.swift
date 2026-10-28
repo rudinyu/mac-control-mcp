@@ -148,6 +148,9 @@ final class SetupModel: ObservableObject {
         if enabledClients.isEmpty {
             return Summary(level: .needsAction, text: String(localized: "Install or turn on Claude Desktop, Claude Code, or Codex."))
         }
+        if helperPermissionsMissing {
+            return Summary(level: .needsAction, text: String(localized: "Turn on MacControlHelper in System Settings. Click Set Up."))
+        }
         let count = enabledClients.count
         let text: String
         switch (count == 1, enableExec) {
@@ -185,8 +188,9 @@ final class SetupModel: ObservableObject {
         FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Logs/mac-exec/audit.log")
     }
 
-    func note(_ line: String) {
-        log.append(line)
+    // `show: false` writes only to the setup log, for lines that mean nothing to the user.
+    func note(_ line: String, show: Bool = true) {
+        if show { log.append(line) }
         let file = Self.setupLog
         try? FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
         let stamped = Data("\(ISO8601DateFormatter().string(from: Date())) \(line)\n".utf8)
@@ -218,6 +222,8 @@ final class SetupModel: ObservableObject {
     // Desktop 2026-10: it starts servers through Claude.app/Contents/Helpers/disclaimer, and mac_status
     // there reports the helper's permissions. The Codex app is assumed to behave the same.
     @Published var helperPermissions: HelperPermissions?
+    // Set when the permissions turned on while MacControl was running: desktop clients need a restart.
+    @Published var helperGrantedThisRun = false
     var needsHelperPermissions: Bool { enabledClients.contains(.claudeDesktop) || enabledClients.contains(.codex) }
     var helperPermissionsMissing: Bool { needsHelperPermissions && helperPermissions?.complete == false }
 
@@ -247,17 +253,23 @@ final class SetupModel: ObservableObject {
             helperPermissions = nil
             return
         }
-        helperPermissions = HelperPermissions(accessibility: info["accessibility"] == true,
-                                              screenRecording: info["screen_recording"] == true)
+        let checked = HelperPermissions(accessibility: info["accessibility"] == true,
+                                        screenRecording: info["screen_recording"] == true)
+        if checked.complete, helperPermissions?.complete == false { helperGrantedThisRun = true }
+        helperPermissions = checked
     }
 
     // macOS does not let an app turn these on; this shows its prompts and puts MacControlHelper in both
     // lists, so only the switches are left for the user.
-    func requestHelperPermissions() async {
+    func requestHelperPermissions(openSettings: Bool) async {
         note(String(localized: "Asking macOS for permissions for MacControlHelper…"))
         // Only a request that ran counts, so Set Up tries again after a failure. Remove clears this setting.
         if await runHelper(["--request-permissions"], timeout: 60) { defaults.set(true, forKey: "askedForHelperPermissions") }
         await checkHelperPermissions()
+        // macOS shows its prompt only once per app, so after that the switches are in System Settings.
+        if openSettings, let state = helperPermissions, !state.complete {
+            openPrivacyPane(state.accessibility ? "Privacy_ScreenCapture" : "Privacy_Accessibility")
+        }
     }
 
     // A newer release on GitHub, if any. Only the public release list is read; nothing is sent about this Mac.
@@ -666,9 +678,9 @@ final class SetupModel: ObservableObject {
         for client in enabledClients where location.isDone && !(clients[client]?.isDone ?? false) {
             await connect(client)
         }
-        // Asked once by Set Up; the Permissions section can ask again.
-        if location.isDone, helperPermissionsMissing, !defaults.bool(forKey: "askedForHelperPermissions") {
-            await requestHelperPermissions()
+        // The first time, macOS shows its own prompts; after that it does not, so open System Settings instead.
+        if location.isDone, helperPermissionsMissing {
+            await requestHelperPermissions(openSettings: defaults.bool(forKey: "askedForHelperPermissions"))
         }
         busy = false
         await refresh()

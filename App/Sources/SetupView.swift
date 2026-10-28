@@ -102,8 +102,7 @@ struct SetupView: View {
                                     .font(.callout.weight(.semibold)).foregroundStyle(.secondary).frame(width: 12)
                                 SectionTitle(text: "Permissions")
                                 if !showPermissions {
-                                    // MacControl cannot check these, so "Ready" does not cover them.
-                                    Text("Set in System Settings. Confirm with mac_status.")
+                                    Text(collapsedPermissionsHint)
                                         .font(.caption).foregroundStyle(.secondary).padding(.leading, 6)
                                 }
                             }
@@ -150,6 +149,9 @@ struct SetupView: View {
             if !userToggledPermissions { showPermissions = level != .ready || model.helperPermissionsMissing }
         }
         .onChange(of: model.helperPermissions) { _, _ in
+            if !userToggledPermissions { showPermissions = model.summary.level != .ready || model.helperPermissionsMissing }
+        }
+        .onAppear {
             if !userToggledPermissions { showPermissions = model.summary.level != .ready || model.helperPermissionsMissing }
         }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
@@ -288,15 +290,11 @@ struct SetupView: View {
                     }
                 }
             }
-            if let choice = model.runtimeChoice, model.enableExec {
+            if model.canControlVM, model.enableExec {
                 VStack(alignment: .leading, spacing: 2) {
-                    if model.canControlVM {
-                        if let detail = model.vmDetail { Text(detail) }
-                        if model.runtimeChoice == .managedColima {
-                            Text("macOS may say that “colima” can run in the background. That is this VM.")
-                        }
-                    } else {
-                        Text(choice.label)
+                    if let detail = model.vmDetail { Text(detail) }
+                    if model.runtimeChoice == .managedColima {
+                        Text("macOS may say that “colima” can run in the background. That is this VM.")
                     }
                 }
                 .font(.caption).foregroundStyle(.secondary).padding(.leading, 28)
@@ -312,6 +310,15 @@ struct SetupView: View {
                 }
             }
         }
+    }
+
+    private var collapsedPermissionsHint: String {
+        guard model.needsHelperPermissions, let state = model.helperPermissions else {
+            // Only terminal clients are on, and MacControl cannot check a terminal app's permissions.
+            return String(localized: "Set in System Settings. Confirm with mac_status.")
+        }
+        return state.complete ? String(localized: "MacControlHelper is allowed.")
+                              : String(localized: "MacControlHelper still needs permissions.")
     }
 
     private var paneButtons: some View {
@@ -333,6 +340,10 @@ struct SetupView: View {
                     VStack(alignment: .leading, spacing: 2) {
                         Text("MacControlHelper").font(.headline)
                         Text("Used when Claude Desktop or the Codex app runs mac-control.").font(.callout).foregroundStyle(.secondary)
+                        if granted, model.helperGrantedThisRun {
+                            Text("Quit and reopen Claude Desktop or the Codex app so it uses these permissions.")
+                                .font(.callout).foregroundStyle(.orange).fixedSize(horizontal: false, vertical: true)
+                        }
                         if let state = model.helperPermissions {
                             HStack(spacing: 12) {
                                 Label(model.accessibilityPaneName, systemImage: state.accessibility ? "checkmark" : "xmark")
@@ -343,19 +354,22 @@ struct SetupView: View {
                     }
                     Spacer()
                     if !granted {
-                        Button("Ask macOS") { Task { await model.requestHelperPermissions() } }.disabled(model.busy)
-                            .help("Shows the macOS prompts and adds MacControlHelper to both lists.")
+                        Button("Ask macOS") { Task { await model.requestHelperPermissions(openSettings: true) } }.disabled(model.busy)
+                            .help("Shows the macOS prompts and adds MacControlHelper to both lists, or opens System Settings if macOS asked before.")
                     }
                     paneButtons
                 }
                 .accessibilityElement(children: .contain)
             }
-            ForEach(model.enabledClients.filter { $0 != .claudeDesktop }) { client in
+            let terminalClients = model.enabledClients.filter { $0 != .claudeDesktop }
+            if !terminalClients.isEmpty {
+                // MacControl cannot read a terminal app's permissions, so this row is information, not a to-do.
                 HStack(alignment: .firstTextBaseline) {
-                    Image(systemName: "hand.raised.fill").foregroundStyle(.blue).accessibilityHidden(true)
+                    Image(systemName: "terminal").foregroundStyle(.secondary).accessibilityHidden(true)
                     VStack(alignment: .leading, spacing: 2) {
-                        Text("\(client.rawValue) in a terminal").font(.headline)
-                        Text("Turn on: \(String(localized: "your terminal app (Terminal, iTerm2, …)"))").font(.callout).foregroundStyle(.secondary)
+                        Text("\(ListFormatter.localizedString(byJoining: terminalClients.map(\.rawValue))) in a terminal").font(.headline)
+                        Text("Uses your terminal app's permissions (Terminal, iTerm2, …), which MacControl cannot check. After turning them on, quit and reopen the terminal app; to confirm, ask the agent to call mac_status.")
+                            .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                     }
                     Spacer()
                     paneButtons
@@ -365,8 +379,6 @@ struct SetupView: View {
             if model.enabledClients.isEmpty {
                 Text("No client is turned on.").foregroundStyle(.secondary)
             }
-            Text("After turning them on, quit and reopen that app. To confirm, ask the agent to call mac_status: it reports \"accessibility\": true and \"screen_recording\": true.")
-                .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }

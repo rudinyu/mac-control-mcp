@@ -47,7 +47,7 @@ MacControl 會跟著 Mac 的語言設定：偏好語言是繁體中文時顯示�
 
 macOS 的輔助使用和螢幕錄製權限，是給「負責 mac-control 的那個程序」，永遠不是 MacControl 本身：
 
-- **Claude Desktop 和 Codex App**：它們以 mac-control 自己的名義啟動它，所以要開 **MacControlHelper.app**。「設定」會向 macOS 要求一次權限，MacControlHelper.app 就會出現在兩個清單裡，你只要打開開關。Permissions 區塊的**向 macOS 要求**可以再要求一次，區塊也會顯示每個權限是否已開啟。
+- **Claude Desktop 和 Codex App**：它們以 mac-control 自己的名義啟動它，所以要開 **MacControlHelper.app**。「設定」會向 macOS 要求一次權限，MacControlHelper.app 就會出現在兩個清單裡，你只要打開開關。Permissions 區塊的**向 macOS 要求**可以再要求一次；如果 macOS 已經問過，則直接打開系統設定。區塊也會顯示每個權限是否已開啟，兩個都開啟之前，MacControl 不會顯示「已就緒」。
 - **在終端機裡跑的 Claude Code 或 Codex**：你執行它的終端機 App，例如「終端機」或 iTerm2。
 
 macOS 不允許任何 App 代替你打開這些開關。打開後，完全結束並重開客戶端，請代理呼叫 `mac_status` 確認。在 macOS 27，「輔助使用」改名為 **Device Control and Data Access**。
