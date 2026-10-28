@@ -276,11 +276,12 @@ struct SetupView: View {
                 if case .needsAction = model.runtime {
                     Button("Install") { Task { await model.setUpRuntime(); await model.checkRuntime() } }.disabled(model.busy)
                 } else if model.canControlVM {
+                    let apple = model.runtimeChoice == .appleContainer
                     if model.vmRunning {
-                        Button("Stop VM") { Task { await model.stopVM() } }.disabled(model.busy)
+                        Button(apple ? LocalizedStringKey("Stop") : "Stop VM") { Task { await model.stopVM() } }.disabled(model.busy)
                             .help("Frees its memory. It starts again by itself when an agent needs it.")
                     } else {
-                        Button("Start VM") { Task { await model.startVM() } }.disabled(model.busy)
+                        Button(apple ? LocalizedStringKey("Start") : "Start VM") { Task { await model.startVM() } }.disabled(model.busy)
                     }
                 }
             }
@@ -288,7 +289,9 @@ struct SetupView: View {
                 VStack(alignment: .leading, spacing: 2) {
                     if model.canControlVM {
                         if let detail = model.vmDetail { Text(detail) }
-                        Text("macOS may say that “colima” can run in the background. That is this VM.")
+                        if model.runtimeChoice == .managedColima {
+                            Text("macOS may say that “colima” can run in the background. That is this VM.")
+                        }
                     } else {
                         Text(choice.label)
                     }

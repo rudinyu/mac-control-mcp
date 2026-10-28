@@ -237,9 +237,25 @@ final class SetupModel: ObservableObject {
     @Published var vmDetail: String?
     @Published var vmRunning = false
 
-    var canControlVM: Bool { runtimeChoice == .managedColima && Installer.managedColimaInstalled }
+    // Start and Stop work for the runtimes MacControl installed itself: its Colima VM and Apple container.
+    var canControlVM: Bool {
+        switch runtimeChoice {
+        case .managedColima: return Installer.managedColimaInstalled
+        case .appleContainer: return Installer.appleContainerInstalled
+        default: return false
+        }
+    }
 
     func refreshVM() async {
+        if runtimeChoice == .appleContainer {
+            guard canControlVM else { vmDetail = nil; vmRunning = false; return }
+            let status = try? await Installer.run(paths.appleContainer.path, ["system", "status"], timeout: 30)
+            vmRunning = status?.exitCode == 0
+            vmDetail = vmRunning
+                ? String(localized: "Apple container is running.")
+                : String(localized: "Apple container is stopped. It starts by itself when an agent needs it.")
+            return
+        }
         guard canControlVM,
               let result = try? await Installer.run(paths.colima.path, ["list", "--profile", Installer.colimaProfile, "--json"],
                                                     environment: Installer.managedEnvironment, timeout: 30),
@@ -261,9 +277,14 @@ final class SetupModel: ObservableObject {
         guard canControlVM, !busy else { return }
         busy = true
         defer { busy = false }
-        note(String(localized: "Stopping the Linux VM…"))
-        _ = try? await Installer.run(paths.colima.path, ["stop", "--profile", Installer.colimaProfile],
-                                     environment: Installer.managedEnvironment, timeout: 180)
+        if runtimeChoice == .appleContainer {
+            note(String(localized: "Stopping Apple container…"))
+            _ = try? await Installer.run(paths.appleContainer.path, ["system", "stop"], timeout: 180)
+        } else {
+            note(String(localized: "Stopping the Linux VM…"))
+            _ = try? await Installer.run(paths.colima.path, ["stop", "--profile", Installer.colimaProfile],
+                                         environment: Installer.managedEnvironment, timeout: 180)
+        }
         await refreshVM()
     }
 
@@ -578,8 +599,12 @@ final class SetupModel: ObservableObject {
             case .appleContainer:
                 if !Installer.appleContainerInstalled {
                     try await Installer.openAppleContainerInstaller(progress: progress)
-                    runtime = .needsAction(String(localized: "Finish the Apple container installer, then click Set Up again."))
-                    return
+                    progress(String(localized: "Waiting for the Apple container installer to finish…"))
+                    guard await waitForAppleContainerInstall() else {
+                        runtime = .needsAction(String(localized: "Finish the Apple container installer, then click Set Up again."))
+                        return
+                    }
+                    note(String(localized: "Apple container is installed. Continuing setup."))
                 }
                 progress(String(localized: "Starting Apple container…"))
                 try await Installer.startAppleContainer()
@@ -594,6 +619,25 @@ final class SetupModel: ObservableObject {
             runtime = .failed(String(describing: error))
             note(String(localized: "Error: \(String(describing: error))"))
         }
+    }
+
+    // Continues setup by itself once the installer has put the container command in place. It stops waiting
+    // when the installer quits without installing it, or after an hour, so Set Up is never stuck.
+    private func waitForAppleContainerInstall() async -> Bool {
+        let started = Date()
+        var sawInstaller = false
+        while Date().timeIntervalSince(started) < 3600 {
+            if Installer.appleContainerInstalled { return true }
+            let running = !NSRunningApplication.runningApplications(withBundleIdentifier: "com.apple.installer").isEmpty
+            if running { sawInstaller = true }
+            // Allow the installer some time to open before taking "not running" to mean it was closed.
+            if !running, sawInstaller || Date().timeIntervalSince(started) > 30 {
+                try? await Task.sleep(for: .seconds(3))
+                return Installer.appleContainerInstalled
+            }
+            try? await Task.sleep(for: .seconds(2))
+        }
+        return Installer.appleContainerInstalled
     }
 
     func setUpImage() async {
