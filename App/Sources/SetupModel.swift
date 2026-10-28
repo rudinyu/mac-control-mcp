@@ -249,8 +249,11 @@ final class SetupModel: ObservableObject {
     func refreshVM() async {
         if runtimeChoice == .appleContainer {
             guard canControlVM else { vmDetail = nil; vmRunning = false; return }
-            let status = try? await Installer.run(paths.appleContainer.path, ["system", "status"], timeout: 30)
-            vmRunning = status?.exitCode == 0
+            // A status command that could not run says nothing about the service, so show nothing.
+            guard let status = try? await Installer.run(paths.appleContainer.path, ["system", "status"], timeout: 30) else {
+                vmDetail = nil; vmRunning = false; return
+            }
+            vmRunning = status.exitCode == 0
             vmDetail = vmRunning
                 ? String(localized: "Apple container is running.")
                 : String(localized: "Apple container is stopped. It starts by itself when an agent needs it.")
@@ -626,7 +629,7 @@ final class SetupModel: ObservableObject {
     private func waitForAppleContainerInstall() async -> Bool {
         let started = Date()
         var sawInstaller = false
-        while Date().timeIntervalSince(started) < 3600 {
+        while Date().timeIntervalSince(started) < 3600, !Task.isCancelled {
             if Installer.appleContainerInstalled { return true }
             let running = !NSRunningApplication.runningApplications(withBundleIdentifier: "com.apple.installer").isEmpty
             if running { sawInstaller = true }
