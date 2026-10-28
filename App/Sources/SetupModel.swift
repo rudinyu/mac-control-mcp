@@ -265,22 +265,43 @@ final class SetupModel: ObservableObject {
     }
 
     // Removes everything MacControl added to this Mac, except the workspace and the logs, which may hold
-    // the user's own work. The app itself is then shown in Finder to move to the Trash.
+    // the user's own work. Each step is checked; on any failure nothing is reported as removed and the
+    // app stays open so the user can retry. On success the app is shown in Finder and quits, so nothing
+    // it runs can write its settings back.
     func removeEverything() async {
         guard !busy else { return }
         busy = true
         defer { busy = false }
         note(String(localized: "Removing MacControl from this Mac…"))
-        for client in detectedClients { await disconnect(client) }
-        if Installer.managedColimaInstalled {
-            _ = try? await Installer.run(paths.colima.path, ["delete", "--profile", Installer.colimaProfile, "--force"],
-                                         environment: Installer.managedEnvironment, timeout: 300)
+        var failures: [String] = []
+        for client in detectedClients {
+            await disconnect(client)
+            if clients[client]?.isFailed == true { failures.append(client.rawValue) }
         }
-        try? FileManager.default.removeItem(at: paths.support)
+        if Installer.managedColimaInstalled {
+            let deleted = try? await Installer.run(paths.colima.path, ["delete", "--profile", Installer.colimaProfile, "--force"],
+                                                   environment: Installer.managedEnvironment, timeout: 300)
+            if deleted?.exitCode != 0 { failures.append(String(localized: "the Linux VM")) }
+        }
+        // The workspace can never be inside the support folder (mountRejection refuses ~/Library), but
+        // check anyway before deleting, since the user's files must survive.
+        let support = resolvedPath(paths.support)
+        if isSame(resolvedPath(workspace), orInside: support) {
+            failures.append(String(localized: "the support folder, because the workspace is inside it"))
+        } else if FileManager.default.fileExists(atPath: paths.support.path) {
+            do { try FileManager.default.removeItem(at: paths.support) } catch { failures.append(String(localized: "the downloaded tools")) }
+        }
+        guard failures.isEmpty else {
+            let list = ListFormatter.localizedString(byJoining: failures)
+            note(String(localized: "Could not remove \(list). Nothing else was reported as removed; fix the problem and try again."))
+            return
+        }
         if openAtLogin { setOpenAtLogin(false) }
         if let domain = Bundle.main.bundleIdentifier { defaults.removePersistentDomain(forName: domain) }
         note(String(localized: "Removed. Your workspace and logs were kept. Move MacControl from Applications to the Trash to finish."))
         NSWorkspace.shared.activateFileViewerSelecting([paths.bundle])
+        try? await Task.sleep(nanoseconds: 1_500_000_000)
+        NSApp.terminate(nil)
     }
 
     // MARK: Checks

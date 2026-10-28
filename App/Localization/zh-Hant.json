@@ -42,6 +42,7 @@
   "Could not change Open at Login: %@": "無法變更「登入時開啟」：%@",
   "Could not copy MacControl to Applications: %@. Drag it there in Finder instead.": "無法把 MacControl 拷貝到「應用程式」：%@。請改用 Finder 拖過去。",
   "Could not download %@ from %@.": "無法從 %2$@ 下載 %1$@。",
+  "Could not remove %@. Nothing else was reported as removed; fix the problem and try again.": "無法移除 %@。其他項目也不會顯示為已移除；請先排除問題再試一次。",
   "Disconnect": "中斷連接",
   "Disconnect %@": "中斷 %@ 的連接",
   "Disconnect this client?": "要中斷這個客戶端的連接嗎？",
@@ -145,6 +146,9 @@
   "start Apple container": "啟動 Apple container",
   "start Colima": "啟動 Colima",
   "the Codex app, or your terminal app": "Codex App，或你的終端機 App",
+  "the Linux VM": "Linux VM",
+  "the downloaded tools": "下載的工具",
+  "the support folder, because the workspace is inside it": "支援資料夾（因為工作資料夾在裡面）",
   "unpack Lima": "解壓縮 Lima",
   "unpack the Docker CLI": "解壓縮 Docker CLI",
   "your terminal app (Terminal, iTerm2, …)": "你的終端機 App（終端機、iTerm2 等）"
