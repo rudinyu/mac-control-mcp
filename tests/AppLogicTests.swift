@@ -43,6 +43,14 @@ private enum AppLogicTests {
         check("malformed JSON is refused", (try? ClientConfig.mergeClaudeDesktop(Data("{not json".utf8), servers: [control])) == nil)
         check("a non-object mcpServers is refused", (try? ClientConfig.mergeClaudeDesktop(Data(#"{"mcpServers":[1]}"#.utf8), servers: [control])) == nil)
 
+        let removed = json(try! ClientConfig.removeFromClaudeDesktop(merged))
+        check("removal keeps only other servers", Set((removed["mcpServers"] as? [String: Any] ?? [:]).keys) == ["other"])
+        check("removal keeps other settings", removed["globalShortcut"] as? String == "Cmd+Space")
+        check("removal refuses malformed JSON", (try? ClientConfig.removeFromClaudeDesktop(Data("{".utf8))) == nil)
+        check("servers detected after merge", ClientConfig.claudeDesktopHasServers(merged))
+        check("servers not detected after removal", !ClientConfig.claudeDesktopHasServers(try! ClientConfig.removeFromClaudeDesktop(merged)))
+        check("servers not detected in a missing file", !ClientConfig.claudeDesktopHasServers(nil))
+
         // CLI commands
         let claude = ClientConfig.claudeCodeCommands(exec)
         check("claude: remove first", claude[0] == ["mcp", "remove", "--scope", "user", "mac-exec"])

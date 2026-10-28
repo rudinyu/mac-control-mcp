@@ -1,8 +1,12 @@
 import AppKit
 import SwiftUI
 
-// Only one MacControl may run, so two windows never install or build at the same time.
+// MacControl lives in the menu bar. The Dock icon appears only while the setup window is open, and
+// closing the window keeps the app running. Only one copy may run, so two never install at once.
 final class AppDelegate: NSObject, NSApplicationDelegate {
+    var showWindow: (() -> Void)?
+    private var refreshTimer: Timer?
+
     func applicationDidFinishLaunching(_ notification: Notification) {
         let me = ProcessInfo.processInfo.processIdentifier
         let others = NSRunningApplication.runningApplications(withBundleIdentifier: Bundle.main.bundleIdentifier ?? "")
@@ -10,20 +14,104 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if let running = others.first {
             running.activate()
             NSApp.terminate(nil)
+            return
+        }
+        let center = NotificationCenter.default
+        center.addObserver(forName: NSWindow.didBecomeKeyNotification, object: nil, queue: .main) { _ in
+            if NSApp.activationPolicy() != .regular { NSApp.setActivationPolicy(.regular) }
+        }
+        center.addObserver(forName: NSWindow.willCloseNotification, object: nil, queue: .main) { notification in
+            // The menu bar menu is a window too; only the setup window controls the Dock icon.
+            guard (notification.object as? NSWindow)?.identifier?.rawValue.contains("setup") == true else { return }
+            NSApp.setActivationPolicy(.accessory)
+        }
+        // Keep the menu bar status current while the window is closed.
+        refreshTimer = Timer.scheduledTimer(withTimeInterval: 600, repeats: true) { _ in
+            Task { @MainActor in await SetupModel.shared.refresh() }
+        }
+        Task { @MainActor in
+            let model = SetupModel.shared
+            model.onReady = { [weak self] in self?.hideSetupWindow() }
+            await model.refresh()
+            // Once everything is set up, start quietly in the menu bar.
+            if model.summary.level == .ready { self.hideSetupWindow() }
         }
     }
 
-    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
+    // Opening the app again, for example from Finder, shows the window.
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        showWindow?()
+        return true
+    }
+
+    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
+
+    @MainActor func hideSetupWindow() {
+        for window in NSApp.windows where window.identifier?.rawValue.contains("setup") == true { window.close() }
+        NSApp.setActivationPolicy(.accessory)
+    }
+}
+
+private struct MenuContent: View {
+    @ObservedObject var model: SetupModel
+    @Environment(\.openWindow) private var openWindow
+    let delegate: AppDelegate
+
+    var body: some View {
+        Text(model.summary.text)
+        Divider()
+        Button("Open MacControl…") { open() }
+            .keyboardShortcut("o")
+        Button("Check Now") { Task { await model.refresh() } }
+            .disabled(model.busy)
+        Toggle("Open at Login", isOn: Binding(get: { model.openAtLogin }, set: { model.setOpenAtLogin($0) }))
+        Divider()
+        Button("Quit MacControl") { NSApp.terminate(nil) }
+            .keyboardShortcut("q")
+            .onAppear { delegate.showWindow = { open() } }
+    }
+
+    private func open() {
+        NSApp.setActivationPolicy(.regular)
+        openWindow(id: "setup")
+        NSApp.activate()
+    }
+}
+
+// Lets the app delegate reopen the window, for example when the app is opened again from Finder.
+private struct WindowOpenerCapture<Content: View>: View {
+    let delegate: AppDelegate
+    @ViewBuilder let content: () -> Content
+    @Environment(\.openWindow) private var openWindow
+
+    var body: some View {
+        content().onAppear {
+            delegate.showWindow = {
+                NSApp.setActivationPolicy(.regular)
+                openWindow(id: "setup")
+                NSApp.activate()
+            }
+        }
+    }
 }
 
 @main
 struct MacControlApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var delegate
+    @ObservedObject private var model = SetupModel.shared
 
     var body: some Scene {
         Window("MacControl", id: "setup") {
-            SetupView()
+            WindowOpenerCapture(delegate: delegate) { SetupView(model: model) }
         }
         .windowResizability(.contentMinSize)
+
+        MenuBarExtra {
+            MenuContent(model: model, delegate: delegate)
+        } label: {
+            Image(systemName: model.summary.level == .ready || model.summary.level == .working
+                  ? "cursorarrow.rays" : "exclamationmark.triangle")
+                .accessibilityLabel("MacControl: \(model.summary.text)")
+        }
     }
 }

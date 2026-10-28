@@ -27,6 +27,12 @@ MacControl.app 是使用 mac-control 和 mac-exec 最簡單的方式。它內含
 
 > Apple container 的支援還沒有在 Apple Silicon 硬體上實際驗證過。如果在那裡出問題，請開 issue 回報。
 
+## 日常使用
+
+Set Up 完成後，視窗會關閉，MacControl 會常駐在**選單列**。選單會顯示目前狀態，並有 **Open MacControl…**、**Check Now**、**Open at Login** 和 **Quit**。只有視窗開著時才會出現 Dock 圖示；關閉視窗不會結束 MacControl。如果選單列太滿，macOS 可能會把圖示藏起來；這時從「應用程式」或 Spotlight 再打開 MacControl，就會出現視窗。
+
+視窗頂端會用一行字說明整體狀態，例如「Ready: 3 clients connected, sandbox running.」。每個客戶端都有一個開關：打開就會連接；關閉時會先詢問，再從該客戶端移除 `mac-control` 和 `mac-exec`。修改設定後，橫幅會列出還在用舊設定的客戶端，按 **Apply** 就會更新。MacControl 必須放在「應用程式」裡才能連接客戶端，以免客戶端指到「下載項目」裡的副本。
+
 ## 權限
 
 macOS 的輔助使用和螢幕錄製權限，是給「啟動伺服器的 App」，不是給 MacControl。Permissions 區塊會列出每個客戶端要開哪個 App，並幫你打開正確的系統設定頁：
@@ -43,7 +49,7 @@ macOS 的輔助使用和螢幕錄製權限，是給「啟動伺服器的 App」�
 - **Workspace**：sandbox 唯一能寫入的 Mac 資料夾，預設 `~/AgentWorkspace`。含有憑證或設定的資料夾，例如 `~/.ssh`、`~/Library`，一律拒絕。
 - **Allow host_exec**：讓代理直接在 Mac 上、sandbox 之外執行指令。預設關閉；見 [mac-exec](EXEC.zh-TW.md#什麼時候用-host_exec)。
 
-修改設定後，客戶端會顯示為未連接，按 **Connect** 更新即可。
+修改設定後，按橫幅上的 **Apply** 更新客戶端。開啟 host_exec 前會先要求確認。
 
 ## 重新開機之後
 

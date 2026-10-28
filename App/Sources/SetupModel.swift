@@ -1,5 +1,6 @@
 import AppKit
 import Foundation
+import ServiceManagement
 
 enum StepState: Equatable {
     case unknown
@@ -15,6 +16,28 @@ enum StepState: Equatable {
         default: return false
         }
     }
+
+    var isFailed: Bool {
+        if case .failed = self { return true }
+        return false
+    }
+
+    var isWorking: Bool {
+        if case .working = self { return true }
+        return false
+    }
+
+    // What VoiceOver says for the status icon.
+    var accessibilityLabel: String {
+        switch self {
+        case .unknown: return "Checking"
+        case .working: return "In progress"
+        case .done: return "Done"
+        case .needsAction: return "Needs action"
+        case .failed: return "Failed"
+        case .notNeeded: return "Not needed"
+        }
+    }
 }
 
 enum Client: String, CaseIterable, Identifiable {
@@ -28,14 +51,31 @@ enum Client: String, CaseIterable, Identifiable {
     var permissionHolder: String {
         switch self {
         case .claudeDesktop: return "Claude"
-        case .claudeCode: return "the terminal app you run it in (Terminal, iTerm2, …)"
-        case .codex: return "the Codex app, or the terminal app you run the codex command in"
+        case .claudeCode: return "your terminal app (Terminal, iTerm2, …)"
+        case .codex: return "the Codex app, or your terminal app"
+        }
+    }
+
+    var reloadHint: String {
+        switch self {
+        case .claudeDesktop: return "Quit and reopen Claude to load the tools."
+        case .claudeCode, .codex: return "Start a new \(rawValue) session to load the tools."
         }
     }
 }
 
+// The one-line state of the whole setup, shown in the header and the menu bar.
+struct Summary: Equatable {
+    enum Level { case ready, working, needsAction, failed }
+    let level: Level
+    let text: String
+}
+
 @MainActor
 final class SetupModel: ObservableObject {
+    // One model drives the window and the menu bar item.
+    static let shared = SetupModel()
+
     private let paths = AppPaths()
     private let defaults = UserDefaults.standard
     let cpu = RuntimeSelection.currentCPU()
@@ -50,6 +90,12 @@ final class SetupModel: ObservableObject {
     @Published var log: [String] = []
     @Published var busy = false
     @Published var manualCommands: [String] = []
+    // Clients whose current entry was written with older settings and should be updated.
+    @Published var staleClients: Set<Client> = []
+    @Published var openAtLogin = SMAppService.mainApp.status == .enabled
+    @Published var hasChecked = false
+    // Called when Set Up finishes with everything ready, so the window can step aside.
+    var onReady: (() -> Void)?
 
     @Published var enableExec: Bool { didSet { defaults.set(enableExec, forKey: "enableExec"); clientsChanged() } }
     @Published var allowHost: Bool { didSet { defaults.set(allowHost, forKey: "allowHost"); clientsChanged() } }
@@ -63,6 +109,42 @@ final class SetupModel: ObservableObject {
     }
 
     var workspace: URL { URL(fileURLWithPath: (workspacePath as NSString).expandingTildeInPath) }
+
+    func isEnabled(_ client: Client) -> Bool { defaults.object(forKey: "use." + client.rawValue) as? Bool ?? true }
+
+    // Turning a client on connects it; turning it off removes this app's servers from it.
+    func setEnabled(_ client: Client, _ on: Bool) async {
+        defaults.set(on, forKey: "use." + client.rawValue)
+        objectWillChange.send()
+        if on { await connect(client) } else { await disconnect(client) }
+    }
+
+    var detectedClients: [Client] { Client.allCases.filter { clients[$0] != nil } }
+    var enabledClients: [Client] { detectedClients.filter(isEnabled) }
+
+    var summary: Summary {
+        let steps = [location, runtime, image] + enabledClients.compactMap { clients[$0] }
+        if busy || steps.contains(where: \.isWorking) { return Summary(level: .working, text: "Setting up…") }
+        if !hasChecked { return Summary(level: .working, text: "Checking this Mac…") }
+        if steps.contains(where: \.isFailed) { return Summary(level: .failed, text: "Something needs attention below.") }
+        if !staleClients.isEmpty {
+            return Summary(level: .needsAction, text: "Settings changed. Apply them to \(staleClients.count) client\(staleClients.count == 1 ? "" : "s").")
+        }
+        let remaining = steps.filter { !$0.isDone }.count
+        if remaining > 0 { return Summary(level: .needsAction, text: "\(remaining) step\(remaining == 1 ? "" : "s") left. Click Set Up.") }
+        if enabledClients.isEmpty { return Summary(level: .needsAction, text: "Install or turn on Claude Desktop, Claude Code, or Codex.") }
+        let clientText = "\(enabledClients.count) client\(enabledClients.count == 1 ? "" : "s") connected"
+        return Summary(level: .ready, text: "Ready: " + clientText + (enableExec ? ", sandbox running." : "."))
+    }
+
+    func setOpenAtLogin(_ on: Bool) {
+        do {
+            if on { try SMAppService.mainApp.register() } else { try SMAppService.mainApp.unregister() }
+        } catch {
+            note("Could not change Open at Login: \(error.localizedDescription)")
+        }
+        openAtLogin = SMAppService.mainApp.status == .enabled
+    }
 
     var workspaceProblem: String? {
         mountRejection(workspace, home: FileManager.default.homeDirectoryForCurrentUser, protected: [paths.bundle])
@@ -83,6 +165,7 @@ final class SetupModel: ObservableObject {
         checkLocation()
         await checkRuntime()
         await detectClients()
+        hasChecked = true
     }
 
     func checkLocation() {
@@ -127,17 +210,40 @@ final class SetupModel: ObservableObject {
 
     func detectClients() async {
         var found: [Client: StepState] = [:]
+        var stale: Set<Client> = []
+        func record(_ client: Client, connected: Bool, hasEntry: Bool) {
+            if !isEnabled(client) {
+                found[client] = .notNeeded(hasEntry ? "Turned off, but still connected" : "Turned off")
+            } else if connected {
+                found[client] = .done("Connected")
+            } else if hasEntry {
+                found[client] = .needsAction("Connected with older settings")
+                stale.insert(client)
+            } else {
+                found[client] = .needsAction("Not connected yet")
+            }
+        }
         if FileManager.default.fileExists(atPath: "/Applications/Claude.app") || FileManager.default.fileExists(atPath: claudeDesktopConfig.path) {
             let current = try? Data(contentsOf: claudeDesktopConfig)
-            found[.claudeDesktop] = ClientConfig.claudeDesktopMatches(current, servers: servers)
-                ? .done("Connected") : .needsAction("Not connected, or settings changed")
+            record(.claudeDesktop, connected: ClientConfig.claudeDesktopMatches(current, servers: servers),
+                   hasEntry: ClientConfig.claudeDesktopHasServers(current))
         }
         for (client, command) in [(Client.claudeCode, "claude"), (Client.codex, "codex")] {
             guard let program = await Installer.locate(command) else { continue }
             clientPrograms[client] = program
-            found[client] = await cliConnected(client, program) ? .done("Connected") : .needsAction("Not connected, or settings changed")
+            let hasEntry = defaults.string(forKey: fingerprintKey(client)) != nil
+            record(client, connected: hasEntry ? await cliConnected(client, program) : false, hasEntry: hasEntry)
         }
         clients = found
+        staleClients = stale
+    }
+
+    // Updates every client that was connected with older settings.
+    func applySettings() async {
+        guard !busy else { return }
+        busy = true
+        defer { busy = false }
+        for client in staleClients.sorted(by: { $0.rawValue < $1.rawValue }) { await connect(client) }
     }
 
     // Settings a client was last connected with. Codex hides environment values when it lists servers,
@@ -164,7 +270,10 @@ final class SetupModel: ObservableObject {
     }
 
     private func clientsChanged() {
-        Task { await detectClients() }
+        Task {
+            await checkRuntime()
+            await detectClients()
+        }
     }
 
     func checkRuntime() async {
@@ -224,10 +333,12 @@ final class SetupModel: ObservableObject {
             await setUpRuntime()
             if runtime.isDone { await setUpImage() }
         }
-        for client in clients.keys.sorted(by: { $0.rawValue < $1.rawValue }) where !(clients[client]?.isDone ?? false) {
+        for client in enabledClients where location.isDone && !(clients[client]?.isDone ?? false) {
             await connect(client)
         }
+        busy = false
         await refresh()
+        if summary.level == .ready { onReady?() }
     }
 
     func setUpRuntime() async {
@@ -279,17 +390,55 @@ final class SetupModel: ObservableObject {
     }
 
     func connect(_ client: Client) async {
+        // Clients store the helper paths, so they must point into /Applications, not a copy that may move.
+        guard location.isDone else {
+            clients[client] = .needsAction("Move MacControl to Applications first, then connect.")
+            return
+        }
         clients[client] = .working("Connecting…")
         do {
             if enableExec { try requireUsableWorkspace() }
             switch client {
             case .claudeDesktop:
                 try connectClaudeDesktop()
-                note("Connected Claude Desktop. Quit and reopen Claude to load the tools.")
             case .claudeCode, .codex:
                 try await connectCLI(client)
-                note("Connected \(client.rawValue). Start a new session to load the tools.")
             }
+            note("Connected \(client.rawValue). \(client.reloadHint)")
+        } catch {
+            clients[client] = .failed(String(describing: error))
+            note("Error: \(error)")
+            return
+        }
+        await detectClients()
+    }
+
+    func disconnect(_ client: Client) async {
+        clients[client] = .working("Disconnecting…")
+        do {
+            switch client {
+            case .claudeDesktop:
+                let fm = FileManager.default
+                if fm.fileExists(atPath: claudeDesktopConfig.path) {
+                    let existing = try Data(contentsOf: claudeDesktopConfig)
+                    let removed = try ClientConfig.removeFromClaudeDesktop(existing)
+                    if removed != existing {
+                        try keepOriginal(existing, of: claudeDesktopConfig)
+                        try removed.write(to: claudeDesktopConfig, options: .atomic)
+                    }
+                }
+            case .claudeCode, .codex:
+                if let program = clientPrograms[client] {
+                    for name in ClientConfig.managedNames {
+                        let arguments = client == .codex
+                            ? ["mcp", "remove", name.replacingOccurrences(of: "-", with: "_")]
+                            : ["mcp", "remove", "--scope", "user", name]
+                        _ = try? await Installer.runInLoginShell(program, arguments)
+                    }
+                }
+                defaults.removeObject(forKey: fingerprintKey(client))
+            }
+            note("Disconnected \(client.rawValue). \(client.reloadHint)")
         } catch {
             clients[client] = .failed(String(describing: error))
             note("Error: \(error)")

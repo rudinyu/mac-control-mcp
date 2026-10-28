@@ -27,6 +27,12 @@ After setting up, quit and reopen Claude Desktop, or start a new Claude Code or 
 
 > Apple container support has not yet been verified on Apple silicon hardware. If something fails there, please open an issue.
 
+## Using it day to day
+
+After Set Up finishes, the window closes and MacControl stays in the **menu bar**. The menu shows the current status and has **Open MacControl…**, **Check Now**, **Open at Login**, and **Quit**. The Dock icon appears only while the window is open, and closing the window keeps MacControl running. If your menu bar is full, macOS may hide the icon; open MacControl again from Applications or Spotlight to get the window back.
+
+The header shows one line about the whole setup, such as "Ready: 3 clients connected, sandbox running." Each client has a switch: turning it on connects it, and turning it off asks first, then removes `mac-control` and `mac-exec` from that client. When you change a setting, a banner lists the clients that still use the old settings, and **Apply** updates them. Clients can only be connected once MacControl is in Applications, so they never point at a copy in Downloads.
+
 ## Permissions
 
 macOS grants Accessibility and Screen Recording to the app that starts the servers, not to MacControl. The Permissions section lists which app to turn on for each client and opens the right System Settings pages:
@@ -43,7 +49,7 @@ Then quit and reopen that app, and ask the agent to call `mac_status` to confirm
 - **Workspace**: the only Mac folder the sandbox can write to. The default is `~/AgentWorkspace`. Folders with credentials or settings, such as `~/.ssh` or `~/Library`, are refused.
 - **Allow host_exec**: lets the agent run commands directly on the Mac, outside the sandbox. Off by default; see [mac-exec](EXEC.md#when-to-use-host_exec).
 
-Changing a setting marks the clients as not connected. Click **Connect** to update them.
+After changing a setting, click **Apply** in the banner to update the clients. Turning on host_exec asks you to confirm first.
 
 ## After a restart
 

@@ -15,6 +15,8 @@ struct ConfigFailure: Error, CustomStringConvertible {
 }
 
 enum ClientConfig {
+    static let managedNames = ["mac-control", "mac-exec"]
+
     // Adds or replaces this app's servers in Claude Desktop's configuration and keeps everything else,
     // including other servers and settings. Malformed JSON is refused rather than overwritten.
     static func mergeClaudeDesktop(_ existing: Data?, servers: [ServerSpec]) throws -> Data {
@@ -39,6 +41,25 @@ enum ClientConfig {
         }
         root["mcpServers"] = mcpServers
         return try JSONSerialization.data(withJSONObject: root, options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes])
+    }
+
+    // Removes this app's servers from Claude Desktop's configuration and keeps everything else.
+    static func removeFromClaudeDesktop(_ existing: Data) throws -> Data {
+        guard var root = try? JSONSerialization.jsonObject(with: existing) as? [String: Any] else {
+            throw ConfigFailure(description: "Claude Desktop's configuration is not valid JSON, so it was left unchanged.")
+        }
+        if var servers = root["mcpServers"] as? [String: Any] {
+            for name in managedNames { servers.removeValue(forKey: name) }
+            root["mcpServers"] = servers
+        }
+        return try JSONSerialization.data(withJSONObject: root, options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes])
+    }
+
+    // Whether Claude Desktop's configuration has any of this app's servers, connected with any settings.
+    static func claudeDesktopHasServers(_ existing: Data?) -> Bool {
+        guard let existing, let root = try? JSONSerialization.jsonObject(with: existing) as? [String: Any],
+              let servers = root["mcpServers"] as? [String: Any] else { return false }
+        return managedNames.contains { servers[$0] != nil }
     }
 
     // Whether Claude Desktop's configuration already points at exactly these servers.
