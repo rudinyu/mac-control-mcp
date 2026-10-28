@@ -214,7 +214,9 @@ final class SetupModel: ObservableObject {
     }
 
     // Desktop clients run mac-control on its own behalf, so macOS asks for the permissions in the name of
-    // MacControlHelper. Command-line clients get them from the terminal app instead.
+    // MacControlHelper. Command-line clients get them from the terminal app instead. Checked with Claude
+    // Desktop 2026-10: it starts servers through Claude.app/Contents/Helpers/disclaimer, and mac_status
+    // there reports the helper's permissions. The Codex app is assumed to behave the same.
     @Published var helperPermissions: HelperPermissions?
     var needsHelperPermissions: Bool { enabledClients.contains(.claudeDesktop) || enabledClients.contains(.codex) }
     var helperPermissionsMissing: Bool { needsHelperPermissions && helperPermissions?.complete == false }
@@ -252,9 +254,9 @@ final class SetupModel: ObservableObject {
     // macOS does not let an app turn these on; this shows its prompts and puts MacControlHelper in both
     // lists, so only the switches are left for the user.
     func requestHelperPermissions() async {
-        defaults.set(true, forKey: "askedForHelperPermissions")
         note(String(localized: "Asking macOS for permissions for MacControlHelper…"))
-        _ = await runHelper(["--request-permissions"], timeout: 60)
+        // Only a request that ran counts, so Set Up tries again after a failure. Remove clears this setting.
+        if await runHelper(["--request-permissions"], timeout: 60) { defaults.set(true, forKey: "askedForHelperPermissions") }
         await checkHelperPermissions()
     }
 
