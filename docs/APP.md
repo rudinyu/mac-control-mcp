@@ -68,7 +68,9 @@ You do not need to open MacControl again. When an agent sends its first sandbox 
 
 | Item | Location |
 | --- | --- |
-| The servers | `/Applications/MacControl.app/Contents/Helpers/` |
+| The servers | `/Applications/MacControl.app/Contents/Helpers/`: `MacControlHelper.app` (mac-control) and `mac-exec-mcp` |
+| Settings | `~/Library/Preferences/tw.com.eaman.MacControl.plist` |
+| Setup log | `~/Library/Logs/MacControl/setup.log` |
 | Colima, Lima, Docker CLI (when installed by the app) | `~/Library/Application Support/MacControl/runtime/` |
 | The Colima VM | `~/.colima/maccontrol/` and `~/.colima/_lima/colima-maccontrol/` |
 | Sandbox workspace | `~/AgentWorkspace`, or the folder you chose |
@@ -76,10 +78,77 @@ You do not need to open MacControl again. When an agent sends its first sandbox 
 
 ## Uninstall
 
-1. Remove the client entries: `claude mcp remove --scope user mac-control` and `mac-exec`; `codex mcp remove mac_control` and `mac_exec`; and delete the two entries from Claude Desktop's configuration.
-2. If the app installed Colima: `~/Library/Application\ Support/MacControl/runtime/bin/colima delete --profile maccontrol`, then delete `~/Library/Application Support/MacControl`.
-3. If the app installed Apple container, see Apple's uninstall instructions for `container`.
-4. Move MacControl.app to the Trash.
+### The easy way
+
+1. Open MacControl and choose **Remove from This Mac…**. From 0.3.4 it is in the **More** (…) menu at the bottom right; earlier versions have it as a button in the Help section.
+2. Move MacControl from Applications to the Trash.
+
+Dragging MacControl to the Trash without step 1 leaves the client entries, the sandbox, and the downloaded tools behind, and clients keep pointing at a program that no longer exists.
+
+What **Remove from This Mac…** removes depends on the version:
+
+| | 0.3.4 and earlier | 0.3.5 and later |
+| --- | --- | --- |
+| Claude Desktop, Claude Code, and Codex entries | Yes | Yes |
+| MacControl's own Linux VM and the downloaded tools | Yes | Yes |
+| The `mac-exec-sandbox` image in your own Docker or in Apple container | No | Yes |
+| Permission entries in System Settings | No | Accessibility yes; Screen Recording may stay, and MacControl then opens that page |
+| Settings | Yes | Yes |
+
+After removing 0.3.4 or earlier, also do steps 3 and 5 below.
+
+### By hand
+
+Each step is safe to run when that part is not installed.
+
+1. Quit MacControl:
+
+   ```sh
+   osascript -e 'tell application id "tw.com.eaman.MacControl" to quit'
+   ```
+
+2. Disconnect the clients:
+
+   ```sh
+   claude mcp remove --scope user mac-control; claude mcp remove --scope user mac-exec
+   codex mcp remove mac_control; codex mcp remove mac_exec
+   ```
+
+   For Claude Desktop, delete the `mac-control` and `mac-exec` entries under `mcpServers` in `~/Library/Application Support/Claude/claude_desktop_config.json`, then quit and reopen Claude.
+
+3. Remove the sandbox, for the runtime you used:
+
+   ```sh
+   # MacControl's own Linux VM (Colima profile "maccontrol")
+   S="$HOME/Library/Application Support/MacControl"
+   PATH="$S/runtime/bin:$S/runtime/lima-2.2.1/bin:/usr/bin:/bin:/usr/sbin:/sbin" \
+   DOCKER_CONFIG="$S/docker-config" "$S/runtime/bin/colima" delete --profile maccontrol --force
+
+   # Your own Docker (Docker Desktop, OrbStack, or your own Colima)
+   docker image rm mac-exec-sandbox:latest
+
+   # Apple container (Apple silicon)
+   container image delete mac-exec-sandbox:latest
+   ```
+
+   Apple container itself is a separate tool from Apple, and other programs may use it. If nothing else does, `/usr/local/bin/uninstall-container.sh -d` removes it with its data, and `-k` keeps the data.
+
+4. Delete the downloaded tools and the settings:
+
+   ```sh
+   rm -rf "$HOME/Library/Application Support/MacControl"
+   defaults delete tw.com.eaman.MacControl
+   ```
+
+5. Remove the permission entries. In **System Settings > Privacy & Security > Accessibility** (called **Device Control and Data Access** on macOS 27), select **MacControlHelper.app**, or `mac-control-mcp` if you added it by hand for an older version, and click **–**. Do the same under **Screen & System Audio Recording**. If **Open at Login** was on, also remove MacControl under **System Settings > General > Login Items**.
+
+6. Move MacControl.app to the Trash:
+
+   ```sh
+   mv /Applications/MacControl.app ~/.Trash/
+   ```
+
+Both ways keep your workspace (`~/AgentWorkspace`, or the folder you chose) and the logs (`~/Library/Logs/MacControl` and `~/Library/Logs/mac-exec`), since they may hold your own work. Delete them yourself if you no longer need them.
 
 ## For maintainers: building a release
 

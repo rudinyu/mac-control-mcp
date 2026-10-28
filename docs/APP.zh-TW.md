@@ -68,7 +68,9 @@ macOS 不允許任何 App 代替你打開這些開關。打開後，完全結束
 
 | 項目 | 位置 |
 | --- | --- |
-| 伺服器 | `/Applications/MacControl.app/Contents/Helpers/` |
+| 伺服器 | `/Applications/MacControl.app/Contents/Helpers/`：`MacControlHelper.app`（mac-control）和 `mac-exec-mcp` |
+| 設定 | `~/Library/Preferences/tw.com.eaman.MacControl.plist` |
+| 設定紀錄 | `~/Library/Logs/MacControl/setup.log` |
 | Colima、Lima、Docker CLI（由 App 安裝時） | `~/Library/Application Support/MacControl/runtime/` |
 | Colima VM | `~/.colima/maccontrol/` 和 `~/.colima/_lima/colima-maccontrol/` |
 | Sandbox 工作資料夾 | `~/AgentWorkspace`，或你選的資料夾 |
@@ -76,10 +78,77 @@ macOS 不允許任何 App 代替你打開這些開關。打開後，完全結束
 
 ## 移除
 
-1. 移除客戶端的設定：`claude mcp remove --scope user mac-control` 和 `mac-exec`；`codex mcp remove mac_control` 和 `mac_exec`；並從 Claude Desktop 的設定檔刪除那兩項。
-2. 如果 Colima 是 App 安裝的：執行 `~/Library/Application\ Support/MacControl/runtime/bin/colima delete --profile maccontrol`，再刪除 `~/Library/Application Support/MacControl`。
-3. 如果 Apple container 是 App 安裝的，請參考 Apple 對 `container` 的移除說明。
-4. 把 MacControl.app 丟到垃圾桶。
+### 簡單的方法
+
+1. 打開 MacControl，選**從這台 Mac 移除…**。0.3.4 起它在右下角的**更多**（…）選單裡；更早的版本是說明區塊裡的一個按鈕。
+2. 把 MacControl 從「應用程式」丟到垃圾桶。
+
+沒有先做第 1 步就把 MacControl 丟到垃圾桶，客戶端設定、sandbox 和下載的工具都會留在 Mac 上，客戶端也會繼續指向一個已經不存在的程式。
+
+**從這台 Mac 移除…** 會移除哪些東西，依版本而不同：
+
+| | 0.3.4 以前 | 0.3.5 以後 |
+| --- | --- | --- |
+| Claude Desktop、Claude Code 和 Codex 的設定 | 會 | 會 |
+| MacControl 自己的 Linux VM 和下載的工具 | 會 | 會 |
+| 你自己的 Docker 或 Apple container 裡的 `mac-exec-sandbox` image | 不會 | 會 |
+| 系統設定裡的權限項目 | 不會 | 輔助使用會；螢幕錄製可能保留，這時 MacControl 會打開那一頁 |
+| 設定 | 會 | 會 |
+
+移除 0.3.4 以前的版本後，請再做下面的第 3 步和第 5 步。
+
+### 手動移除
+
+每一步在對應的部分沒有安裝時，執行也不會出問題。
+
+1. 結束 MacControl：
+
+   ```sh
+   osascript -e 'tell application id "tw.com.eaman.MacControl" to quit'
+   ```
+
+2. 中斷客戶端：
+
+   ```sh
+   claude mcp remove --scope user mac-control; claude mcp remove --scope user mac-exec
+   codex mcp remove mac_control; codex mcp remove mac_exec
+   ```
+
+   Claude Desktop 的部分，請在 `~/Library/Application Support/Claude/claude_desktop_config.json` 的 `mcpServers` 底下刪除 `mac-control` 和 `mac-exec` 兩項，再完全結束並重開 Claude。
+
+3. 依你用的 runtime 移除 sandbox：
+
+   ```sh
+   # MacControl 自己的 Linux VM（Colima profile "maccontrol"）
+   S="$HOME/Library/Application Support/MacControl"
+   PATH="$S/runtime/bin:$S/runtime/lima-2.2.1/bin:/usr/bin:/bin:/usr/sbin:/sbin" \
+   DOCKER_CONFIG="$S/docker-config" "$S/runtime/bin/colima" delete --profile maccontrol --force
+
+   # 你自己的 Docker（Docker Desktop、OrbStack 或你自己的 Colima）
+   docker image rm mac-exec-sandbox:latest
+
+   # Apple container（Apple Silicon）
+   container image delete mac-exec-sandbox:latest
+   ```
+
+   Apple container 本身是 Apple 的另一個工具，其他程式也可能在用。如果沒有其他程式在用，`/usr/local/bin/uninstall-container.sh -d` 會連同資料一起移除，`-k` 則保留資料。
+
+4. 刪除下載的工具和設定：
+
+   ```sh
+   rm -rf "$HOME/Library/Application Support/MacControl"
+   defaults delete tw.com.eaman.MacControl
+   ```
+
+5. 移除權限項目。在**系統設定 → 隱私權與安全性 → 輔助使用**（macOS 27 叫 **Device Control and Data Access**）選取 **MacControlHelper.app**；如果你曾為舊版手動加入 `mac-control-mcp`，也選取它，按 **–**。**螢幕與系統音訊錄製**也照做一次。如果開過**登入時打開**，也到**系統設定 → 一般 → 登入項目**移除 MacControl。
+
+6. 把 MacControl.app 丟到垃圾桶：
+
+   ```sh
+   mv /Applications/MacControl.app ~/.Trash/
+   ```
+
+兩種方法都會保留你的工作資料夾（`~/AgentWorkspace` 或你選的資料夾）和紀錄（`~/Library/Logs/MacControl` 和 `~/Library/Logs/mac-exec`），因為裡面可能有你自己的東西。不需要的話請自己刪除。
 
 ## 給維護者：建置發行版
 
