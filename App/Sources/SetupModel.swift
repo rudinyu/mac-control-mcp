@@ -428,12 +428,20 @@ final class SetupModel: ObservableObject {
                     }
                 }
             case .claudeCode, .codex:
+                // Without its CLI the client cannot run the servers, so there is nothing left to remove.
                 if let program = clientPrograms[client] {
                     for name in ClientConfig.managedNames {
-                        let arguments = client == .codex
-                            ? ["mcp", "remove", name.replacingOccurrences(of: "-", with: "_")]
-                            : ["mcp", "remove", "--scope", "user", name]
-                        _ = try? await Installer.runInLoginShell(program, arguments)
+                        let serverName = client == .codex ? name.replacingOccurrences(of: "-", with: "_") : name
+                        // Ask whether the server exists instead of reading error text, which varies by version.
+                        func registered() async throws -> Bool {
+                            try await Installer.runInLoginShell(program, ["mcp", "get", serverName], timeout: 30).exitCode == 0
+                        }
+                        guard try await registered() else { continue }
+                        let arguments = client == .codex ? ["mcp", "remove", serverName] : ["mcp", "remove", "--scope", "user", serverName]
+                        let result = try await Installer.runInLoginShell(program, arguments)
+                        if try await registered() {
+                            throw ConfigFailure(description: "\(client.rawValue) still has \(serverName) after removing it: \(result.stderr.suffix(300))")
+                        }
                     }
                 }
                 defaults.removeObject(forKey: fingerprintKey(client))

@@ -17,7 +17,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
         let center = NotificationCenter.default
-        center.addObserver(forName: NSWindow.didBecomeKeyNotification, object: nil, queue: .main) { _ in
+        // Only the setup window brings back the Dock icon; the menu bar menu and alerts are windows too.
+        center.addObserver(forName: NSWindow.didBecomeKeyNotification, object: nil, queue: .main) { notification in
+            guard (notification.object as? NSWindow)?.identifier?.rawValue.contains("setup") == true else { return }
             if NSApp.activationPolicy() != .regular { NSApp.setActivationPolicy(.regular) }
         }
         center.addObserver(forName: NSWindow.willCloseNotification, object: nil, queue: .main) { notification in

@@ -113,16 +113,14 @@ struct SetupView: View {
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
             Task { await model.refresh() }
         }
-        .alert("Disconnect \(clientToDisconnect?.rawValue ?? "")?", isPresented: Binding(
+        // The client is handed to the buttons, so dismissing the alert cannot clear it before they run.
+        .alert("Disconnect this client?", isPresented: Binding(
             get: { clientToDisconnect != nil }, set: { if !$0 { clientToDisconnect = nil } }
-        )) {
-            Button("Disconnect", role: .destructive) {
-                if let client = clientToDisconnect { Task { await model.setEnabled(client, false) } }
-                clientToDisconnect = nil
-            }
-            Button("Cancel", role: .cancel) { clientToDisconnect = nil }
-        } message: {
-            Text("This removes mac-control and mac-exec from \(clientToDisconnect?.rawValue ?? "this client"). You can turn it on again at any time.")
+        ), presenting: clientToDisconnect) { client in
+            Button("Disconnect \(client.rawValue)", role: .destructive) { Task { await model.setEnabled(client, false) } }
+            Button("Cancel", role: .cancel) {}
+        } message: { client in
+            Text("This removes mac-control and mac-exec from \(client.rawValue). You can turn it on again at any time.")
         }
         .alert("Allow commands outside the sandbox?", isPresented: $confirmHostExec) {
             Button("Allow host_exec", role: .destructive) { model.allowHost = true }
