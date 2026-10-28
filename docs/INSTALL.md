@@ -143,3 +143,5 @@ The next time a client starts the server, `run-server.sh` rebuilds it. Restart t
    - **Codex**: delete `.codex/config.toml`, or run `codex mcp remove mac_control`.
 2. Optionally turn off the permissions from section 5.
 3. Delete the clone. Recordings are stored inside it, in `.build/recordings/`, so they are deleted too.
+
+To remove MacControl.app and its sandbox, see [Uninstall in the app guide](APP.md#uninstall).

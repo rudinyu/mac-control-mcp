@@ -143,3 +143,5 @@ git pull
    - **Codex**：刪除 `.codex/config.toml`，或執行 `codex mcp remove mac_control`。
 2. 視需要關掉第 5 節授予的權限。
 3. 刪除 clone 的資料夾。錄影檔存在裡面的 `.build/recordings/`，會一起被刪除。
+
+要移除 MacControl.app 和它的 sandbox，請見 [App 說明的「移除」](APP.zh-TW.md#移除)。
