@@ -19,14 +19,14 @@ private struct StatusIcon: View {
 }
 
 private struct StepRow<Leading: View, Action: View>: View {
-    let title: String
+    let title: LocalizedStringKey
     let state: StepState
     @ViewBuilder let leading: () -> Leading
     @ViewBuilder let action: () -> Action
 
     private var detail: String {
         switch state {
-        case .unknown: return "Checking…"
+        case .unknown: return String(localized: "Checking…")
         case .working(let text), .done(let text), .needsAction(let text), .failed(let text), .notNeeded(let text): return text
         }
     }
@@ -38,7 +38,19 @@ private struct StepRow<Leading: View, Action: View>: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text(title).font(.headline)
                 Text(detail).font(.callout).foregroundStyle(state.isFailed ? .red : .secondary)
+                    .lineLimit(state.isFailed ? 3 : nil)
                     .textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
+                if state.isFailed {
+                    // Errors can be long; keep the row short and let the user copy or read the whole text.
+                    HStack(spacing: 8) {
+                        Button("Copy Error") {
+                            NSPasteboard.general.clearContents()
+                            NSPasteboard.general.setString(detail, forType: .string)
+                        }
+                        Button("Show Log") { NSWorkspace.shared.open(SetupModel.setupLog) }
+                    }
+                    .controlSize(.small)
+                }
             }
             Spacer()
             action()
@@ -49,13 +61,13 @@ private struct StepRow<Leading: View, Action: View>: View {
 }
 
 extension StepRow where Leading == EmptyView {
-    init(title: String, state: StepState, @ViewBuilder action: @escaping () -> Action) {
+    init(title: LocalizedStringKey, state: StepState, @ViewBuilder action: @escaping () -> Action) {
         self.init(title: title, state: state, leading: { EmptyView() }, action: action)
     }
 }
 
 private struct SectionTitle: View {
-    let text: String
+    let text: LocalizedStringKey
     var body: some View {
         Text(text).font(.title3.weight(.semibold)).padding(.leading, 2).accessibilityAddTraits(.isHeader)
     }
@@ -65,6 +77,7 @@ struct SetupView: View {
     @ObservedObject var model: SetupModel
     @State private var confirmHostExec = false
     @State private var clientToDisconnect: Client?
+    @State private var confirmRemove = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -84,6 +97,10 @@ struct SetupView: View {
                     VStack(alignment: .leading, spacing: 8) {
                         SectionTitle(text: "Sandbox settings")
                         GroupBox { settings.padding(6) }
+                    }
+                    VStack(alignment: .leading, spacing: 8) {
+                        SectionTitle(text: "Help")
+                        GroupBox { help.padding(6) }
                     }
                     if !model.manualCommands.isEmpty {
                         VStack(alignment: .leading, spacing: 8) {
@@ -121,6 +138,12 @@ struct SetupView: View {
             Button("Cancel", role: .cancel) {}
         } message: { client in
             Text("This removes mac-control and mac-exec from \(client.rawValue). You can turn it on again at any time.")
+        }
+        .alert("Remove MacControl from this Mac?", isPresented: $confirmRemove) {
+            Button("Remove", role: .destructive) { Task { await model.removeEverything() } }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("This disconnects every client, deletes the Linux VM and the tools MacControl downloaded, and resets its settings. Your workspace and logs are kept. Afterwards, move MacControl to the Trash.")
         }
         .alert("Allow commands outside the sandbox?", isPresented: $confirmHostExec) {
             Button("Allow host_exec", role: .destructive) { model.allowHost = true }
@@ -174,7 +197,7 @@ struct SetupView: View {
     private var applyBanner: some View {
         HStack(spacing: 10) {
             Image(systemName: "arrow.triangle.2.circlepath").foregroundStyle(.orange).accessibilityHidden(true)
-            Text("Settings changed. \(model.staleClients.map(\.rawValue).sorted().joined(separator: ", ")) still use the old settings.")
+            Text("Settings changed. \(ListFormatter.localizedString(byJoining: model.staleClients.map(\.rawValue).sorted())) still use the old settings.")
                 .fixedSize(horizontal: false, vertical: true)
             Spacer()
             Button("Apply") { Task { await model.applySettings() } }
@@ -198,8 +221,8 @@ struct SetupView: View {
                 StepRow(title: "Clients", state: .needsAction("Install Claude Desktop, Claude Code, or Codex, then reopen this window.")) { EmptyView() }
             }
             ForEach(model.detectedClients) { client in
-                StepRow(title: client.rawValue, state: model.clients[client]!, leading: {
-                    Toggle("Connect \(client.rawValue)", isOn: Binding(
+                StepRow(title: LocalizedStringKey(client.rawValue), state: model.clients[client]!, leading: {
+                    Toggle(String(localized: "Connect \(client.rawValue)"), isOn: Binding(
                         get: { model.isEnabled(client) },
                         // Turning a client off removes its servers, so ask first; a misclick should not disconnect it.
                         set: { on in if on { Task { await model.setEnabled(client, true) } } else { clientToDisconnect = client } }
@@ -208,7 +231,7 @@ struct SetupView: View {
                 }) {
                     if model.isEnabled(client), case .needsAction = model.clients[client]!, !model.staleClients.contains(client) {
                         Button("Connect") { Task { await model.connect(client) } }.disabled(model.busy)
-                    } else if !model.isEnabled(client), case .notNeeded(let text) = model.clients[client]!, text.contains("still connected") {
+                    } else if !model.isEnabled(client), model.stillConnected.contains(client) {
                         Button("Disconnect") { Task { await model.disconnect(client) } }.disabled(model.busy)
                     } else if case .failed = model.clients[client]! {
                         Button("Retry") { Task { await model.connect(client) } }.disabled(model.busy)
@@ -216,15 +239,29 @@ struct SetupView: View {
                 }
             }
             Divider()
-            StepRow(title: "Sandbox runtime" + (model.runtimeChoice.map { ": " + $0.label } ?? ""), state: model.runtime) {
+            StepRow(title: "Sandbox", state: model.runtime) {
                 if case .needsAction = model.runtime {
                     Button("Install") { Task { await model.setUpRuntime(); await model.checkRuntime() } }.disabled(model.busy)
+                } else if model.canControlVM {
+                    if model.vmRunning {
+                        Button("Stop VM") { Task { await model.stopVM() } }.disabled(model.busy)
+                            .help("Frees its memory. It starts again by itself when an agent needs it.")
+                    } else {
+                        Button("Start VM") { Task { await model.startVM() } }.disabled(model.busy)
+                    }
                 }
+            }
+            if let choice = model.runtimeChoice, model.enableExec {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(choice.label)
+                    if let detail = model.vmDetail { Text(detail) }
+                }
+                .font(.caption).foregroundStyle(.secondary).padding(.leading, 28)
             }
             if let note = model.appleSiliconNote {
                 Text(note).font(.caption).foregroundStyle(.orange).padding(.leading, 28)
             }
-            StepRow(title: "Sandbox image", state: model.image) {
+            StepRow(title: "Sandbox environment", state: model.image) {
                 if case .needsAction = model.image {
                     Button("Build") { Task { await model.setUpImage() } }.disabled(model.busy)
                 } else if case .failed = model.image {
@@ -256,6 +293,28 @@ struct SetupView: View {
             }
             Text("After turning them on, quit and reopen that app. To confirm, ask the agent to call mac_status: it reports \"accessibility\": true and \"screen_recording\": true.")
                 .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var help: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Text("Version \(model.version)").foregroundStyle(.secondary)
+                Spacer()
+                Button("Release Notes") { model.openWeb("https://github.com/rudinyu/mac-control-mcp/releases") }
+                Button("Guide") { model.openWeb("https://github.com/rudinyu/mac-control-mcp/blob/main/docs/APP.md") }
+            }
+            HStack {
+                Button("Open Workspace") { model.reveal(model.workspace) }.disabled(!model.enableExec)
+                Button("Command Log") { model.openLog(SetupModel.auditLog) }
+                    .help("Every sandbox and host_exec command, with its result.")
+                Button("Setup Log") { model.openLog(SetupModel.setupLog) }
+                Spacer()
+                Button("Remove from This Mac…", role: .destructive) { confirmRemove = true }
+                    .foregroundStyle(.red)
+                    .disabled(model.busy)
+            }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }

@@ -30,12 +30,12 @@ enum StepState: Equatable {
     // What VoiceOver says for the status icon.
     var accessibilityLabel: String {
         switch self {
-        case .unknown: return "Checking"
-        case .working: return "In progress"
-        case .done: return "Done"
-        case .needsAction: return "Needs action"
-        case .failed: return "Failed"
-        case .notNeeded: return "Not needed"
+        case .unknown: return String(localized: "Checking")
+        case .working: return String(localized: "In progress")
+        case .done: return String(localized: "Done")
+        case .needsAction: return String(localized: "Needs action")
+        case .failed: return String(localized: "Failed")
+        case .notNeeded: return String(localized: "Not needed")
         }
     }
 }
@@ -51,15 +51,15 @@ enum Client: String, CaseIterable, Identifiable {
     var permissionHolder: String {
         switch self {
         case .claudeDesktop: return "Claude"
-        case .claudeCode: return "your terminal app (Terminal, iTerm2, …)"
-        case .codex: return "the Codex app, or your terminal app"
+        case .claudeCode: return String(localized: "your terminal app (Terminal, iTerm2, …)")
+        case .codex: return String(localized: "the Codex app, or your terminal app")
         }
     }
 
     var reloadHint: String {
         switch self {
-        case .claudeDesktop: return "Quit and reopen Claude to load the tools."
-        case .claudeCode, .codex: return "Start a new \(rawValue) session to load the tools."
+        case .claudeDesktop: return String(localized: "Quit and reopen Claude to load the tools.")
+        case .claudeCode, .codex: return String(localized: "Start a new \(rawValue) session to load the tools.")
         }
     }
 }
@@ -92,6 +92,8 @@ final class SetupModel: ObservableObject {
     @Published var manualCommands: [String] = []
     // Clients whose current entry was written with older settings and should be updated.
     @Published var staleClients: Set<Client> = []
+    // Clients that are turned off but still have this app's servers.
+    @Published var stillConnected: Set<Client> = []
     @Published var openAtLogin = SMAppService.mainApp.status == .enabled
     @Published var hasChecked = false
     // Called when Set Up finishes with everything ready, so the window can step aside.
@@ -124,24 +126,40 @@ final class SetupModel: ObservableObject {
 
     var summary: Summary {
         let steps = [location, runtime, image] + enabledClients.compactMap { clients[$0] }
-        if busy || steps.contains(where: \.isWorking) { return Summary(level: .working, text: "Setting up…") }
-        if !hasChecked { return Summary(level: .working, text: "Checking this Mac…") }
-        if steps.contains(where: \.isFailed) { return Summary(level: .failed, text: "Something needs attention below.") }
+        if busy || steps.contains(where: \.isWorking) { return Summary(level: .working, text: String(localized: "Setting up…")) }
+        if !hasChecked { return Summary(level: .working, text: String(localized: "Checking this Mac…")) }
+        if steps.contains(where: \.isFailed) { return Summary(level: .failed, text: String(localized: "Something needs attention below.")) }
         if !staleClients.isEmpty {
-            return Summary(level: .needsAction, text: "Settings changed. Apply them to \(staleClients.count) client\(staleClients.count == 1 ? "" : "s").")
+            let count = staleClients.count
+            return Summary(level: .needsAction, text: count == 1
+                ? String(localized: "Settings changed. Apply them to 1 client.")
+                : String(localized: "Settings changed. Apply them to \(count) clients."))
         }
         let remaining = steps.filter { !$0.isDone }.count
-        if remaining > 0 { return Summary(level: .needsAction, text: "\(remaining) step\(remaining == 1 ? "" : "s") left. Click Set Up.") }
-        if enabledClients.isEmpty { return Summary(level: .needsAction, text: "Install or turn on Claude Desktop, Claude Code, or Codex.") }
-        let clientText = "\(enabledClients.count) client\(enabledClients.count == 1 ? "" : "s") connected"
-        return Summary(level: .ready, text: "Ready: " + clientText + (enableExec ? ", sandbox running." : "."))
+        if remaining > 0 {
+            return Summary(level: .needsAction, text: remaining == 1
+                ? String(localized: "1 step left. Click Set Up.")
+                : String(localized: "\(remaining) steps left. Click Set Up."))
+        }
+        if enabledClients.isEmpty {
+            return Summary(level: .needsAction, text: String(localized: "Install or turn on Claude Desktop, Claude Code, or Codex."))
+        }
+        let count = enabledClients.count
+        let text: String
+        switch (count == 1, enableExec) {
+        case (true, true): text = String(localized: "Ready: 1 client connected, sandbox ready.")
+        case (true, false): text = String(localized: "Ready: 1 client connected.")
+        case (false, true): text = String(localized: "Ready: \(count) clients connected, sandbox ready.")
+        case (false, false): text = String(localized: "Ready: \(count) clients connected.")
+        }
+        return Summary(level: .ready, text: text)
     }
 
     func setOpenAtLogin(_ on: Bool) {
         do {
             if on { try SMAppService.mainApp.register() } else { try SMAppService.mainApp.unregister() }
         } catch {
-            note("Could not change Open at Login: \(error.localizedDescription)")
+            note(String(localized: "Could not change Open at Login: \(error.localizedDescription)"))
         }
         openAtLogin = SMAppService.mainApp.status == .enabled
     }
@@ -156,7 +174,114 @@ final class SetupModel: ObservableObject {
             : nil
     }
 
-    private func note(_ line: String) { log.append(line) }
+    static var setupLog: URL {
+        FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Logs/MacControl/setup.log")
+    }
+    static var auditLog: URL {
+        FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Logs/mac-exec/audit.log")
+    }
+
+    private func note(_ line: String) {
+        log.append(line)
+        let file = Self.setupLog
+        try? FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let stamped = Data("\(ISO8601DateFormatter().string(from: Date())) \(line)\n".utf8)
+        if let handle = try? FileHandle(forWritingTo: file) {
+            defer { try? handle.close() }
+            _ = try? handle.seekToEnd()
+            try? handle.write(contentsOf: stamped)
+        } else {
+            try? stamped.write(to: file)
+        }
+    }
+
+    // MARK: Help, logs, and the sandbox VM
+
+    var version: String {
+        let info = Bundle.main.infoDictionary
+        return "\(info?["CFBundleShortVersionString"] as? String ?? "?") (\(info?["CFBundleVersion"] as? String ?? "?"))"
+    }
+
+    @Published var vmDetail: String?
+    @Published var vmRunning = false
+
+    var canControlVM: Bool { runtimeChoice == .managedColima && Installer.managedColimaInstalled }
+
+    func refreshVM() async {
+        guard canControlVM,
+              let result = try? await Installer.run(paths.colima.path, ["list", "--profile", Installer.colimaProfile, "--json"],
+                                                    environment: Installer.managedEnvironment, timeout: 30),
+              let line = result.stdout.split(separator: "\n").first,
+              let info = try? JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: Any] else {
+            vmDetail = nil
+            vmRunning = false
+            return
+        }
+        vmRunning = (info["status"] as? String) == "Running"
+        let cpus = info["cpus"] as? Int ?? 0
+        let gigabytes = Int(((info["memory"] as? NSNumber)?.doubleValue ?? 0) / 1_073_741_824)
+        vmDetail = vmRunning
+            ? String(localized: "Linux VM running: \(cpus) CPUs, \(gigabytes) GB memory")
+            : String(localized: "Linux VM stopped. It starts by itself when an agent needs it.")
+    }
+
+    func stopVM() async {
+        guard canControlVM, !busy else { return }
+        busy = true
+        defer { busy = false }
+        note(String(localized: "Stopping the Linux VM…"))
+        _ = try? await Installer.run(paths.colima.path, ["stop", "--profile", Installer.colimaProfile],
+                                     environment: Installer.managedEnvironment, timeout: 180)
+        await refreshVM()
+    }
+
+    func startVM() async {
+        guard canControlVM, !busy else { return }
+        busy = true
+        defer { busy = false }
+        await setUpRuntime()
+        await refreshVM()
+    }
+
+    func copyToPasteboard(_ text: String) {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(text, forType: .string)
+    }
+
+    func reveal(_ file: URL) {
+        if FileManager.default.fileExists(atPath: file.path) {
+            NSWorkspace.shared.activateFileViewerSelecting([file])
+        } else {
+            NSWorkspace.shared.open(file.deletingLastPathComponent())
+        }
+    }
+
+    func openLog(_ file: URL) {
+        if FileManager.default.fileExists(atPath: file.path) { NSWorkspace.shared.open(file) } else { reveal(file) }
+    }
+
+    func openWeb(_ address: String) {
+        if let url = URL(string: address) { NSWorkspace.shared.open(url) }
+    }
+
+    // Removes everything MacControl added to this Mac, except the workspace and the logs, which may hold
+    // the user's own work. The app itself is then shown in Finder to move to the Trash.
+    func removeEverything() async {
+        guard !busy else { return }
+        busy = true
+        defer { busy = false }
+        note(String(localized: "Removing MacControl from this Mac…"))
+        for client in detectedClients { await disconnect(client) }
+        if Installer.managedColimaInstalled {
+            _ = try? await Installer.run(paths.colima.path, ["delete", "--profile", Installer.colimaProfile, "--force"],
+                                         environment: Installer.managedEnvironment, timeout: 300)
+        }
+        try? FileManager.default.removeItem(at: paths.support)
+        if openAtLogin { setOpenAtLogin(false) }
+        if let domain = Bundle.main.bundleIdentifier { defaults.removePersistentDomain(forName: domain) }
+        note(String(localized: "Removed. Your workspace and logs were kept. Move MacControl from Applications to the Trash to finish."))
+        NSWorkspace.shared.activateFileViewerSelecting([paths.bundle])
+    }
 
     // MARK: Checks
 
@@ -170,12 +295,12 @@ final class SetupModel: ObservableObject {
 
     func checkLocation() {
         location = paths.bundle.path.hasPrefix("/Applications/")
-            ? .done("Installed in \(paths.bundle.deletingLastPathComponent().path)")
-            : .needsAction("Move MacControl to the Applications folder, so clients keep finding it.")
+            ? .done(String(localized: "Installed in \(paths.bundle.deletingLastPathComponent().path)"))
+            : .needsAction(String(localized: "Move MacControl to the Applications folder, so clients keep finding it."))
     }
 
     private func requireUsableWorkspace() throws {
-        if let problem = workspaceProblem { throw InstallFailure(description: "The workspace cannot be used: \(problem)") }
+        if let problem = workspaceProblem { throw InstallFailure(description: String(localized: "The workspace cannot be used: \(problem)")) }
     }
 
     // The servers as clients should run them, with this app's current settings.
@@ -211,16 +336,18 @@ final class SetupModel: ObservableObject {
     func detectClients() async {
         var found: [Client: StepState] = [:]
         var stale: Set<Client> = []
+        var leftover: Set<Client> = []
         func record(_ client: Client, connected: Bool, hasEntry: Bool) {
             if !isEnabled(client) {
-                found[client] = .notNeeded(hasEntry ? "Turned off, but still connected" : "Turned off")
+                if hasEntry { leftover.insert(client) }
+                found[client] = .notNeeded(hasEntry ? String(localized: "Turned off, but still connected") : String(localized: "Turned off"))
             } else if connected {
-                found[client] = .done("Connected")
+                found[client] = .done(String(localized: "Connected"))
             } else if hasEntry {
-                found[client] = .needsAction("Connected with older settings")
+                found[client] = .needsAction(String(localized: "Connected with older settings"))
                 stale.insert(client)
             } else {
-                found[client] = .needsAction("Not connected yet")
+                found[client] = .needsAction(String(localized: "Not connected yet"))
             }
         }
         if FileManager.default.fileExists(atPath: "/Applications/Claude.app") || FileManager.default.fileExists(atPath: claudeDesktopConfig.path) {
@@ -236,6 +363,7 @@ final class SetupModel: ObservableObject {
         }
         clients = found
         staleClients = stale
+        stillConnected = leftover
     }
 
     // Updates every client that was connected with older settings.
@@ -278,8 +406,8 @@ final class SetupModel: ObservableObject {
 
     func checkRuntime() async {
         guard enableExec else {
-            runtime = .notNeeded("Sandboxed commands are turned off")
-            image = .notNeeded("Not needed")
+            runtime = .notNeeded(String(localized: "Sandboxed commands are turned off"))
+            image = .notNeeded(String(localized: "Not needed"))
             return
         }
         let choice: RuntimeChoice
@@ -304,22 +432,38 @@ final class SetupModel: ObservableObject {
             choice = RuntimeSelection.choose(cpu: cpu, macOSMajor: macOSMajor, workingDocker: workingDocker)
         }
         runtimeChoice = choice
+        var reachable = false
         switch choice {
         case .appleContainer:
-            runtime = Installer.appleContainerInstalled ? .done("Apple container is installed") : .needsAction("Apple container needs to be installed")
+            reachable = Installer.appleContainerInstalled
+            runtime = reachable
+                ? .done(String(localized: "Ready. Each command runs in its own small VM (Apple container)."))
+                : .needsAction(String(localized: "Apple's container tool needs to be installed. MacControl downloads Apple's signed installer."))
         case .existingDocker(let docker):
-            runtime = .done("Using the Docker that is already running (\(docker))")
+            reachable = true
+            runtime = .done(String(localized: "Ready. Uses the Docker already running on this Mac (\(docker))."))
         case .managedColima:
             if !Installer.managedColimaInstalled {
-                runtime = .needsAction("No running Docker was found, so Colima will be downloaded (about 80 MB). If you use Docker Desktop or OrbStack, start it and reopen this window instead.")
+                runtime = .needsAction(String(localized: "No running Docker was found, so MacControl will download a small Linux VM (about 80 MB). If you use Docker Desktop or OrbStack, start it and reopen this window instead."))
             } else {
-                runtime = await Installer.colimaRunning() ? .done("Colima is running") : .needsAction("Colima is installed but not running")
+                // A stopped VM is fine: mac-exec starts it when an agent needs it.
+                reachable = await Installer.colimaRunning()
+                runtime = .done(reachable
+                    ? String(localized: "Ready. A Linux VM managed by MacControl runs your commands.")
+                    : String(localized: "Ready. The Linux VM is stopped and starts by itself when needed."))
             }
         }
-        if runtime.isDone {
-            image = await Installer.imagePresent(Installer.runtime(for: choice)) ? .done("The sandbox image is built") : .needsAction("The sandbox image needs to be built")
+        await refreshVM()
+        let imageReady = String(localized: "Ready. Linux tools such as Python, Node.js, and git are installed.")
+        if reachable {
+            let present = await Installer.imagePresent(Installer.runtime(for: choice))
+            defaults.set(present, forKey: "imageReady")
+            image = present ? .done(imageReady) : .needsAction(String(localized: "Needs to be built once. This takes a few minutes."))
+        } else if runtime.isDone, defaults.bool(forKey: "imageReady") {
+            // The image cannot be checked while the VM is stopped; use the last check.
+            image = .done(imageReady)
         } else {
-            image = .notNeeded("Waits for the sandbox runtime")
+            image = .notNeeded(String(localized: "Waits for the sandbox"))
         }
     }
 
@@ -344,7 +488,7 @@ final class SetupModel: ObservableObject {
     func setUpRuntime() async {
         guard let choice = runtimeChoice else { return }
         if let problem = workspaceProblem {
-            runtime = .failed("The workspace cannot be used: \(problem)")
+            runtime = .failed(String(localized: "The workspace cannot be used: \(problem)"))
             return
         }
         try? FileManager.default.createDirectory(at: workspace, withIntermediateDirectories: true)
@@ -354,10 +498,10 @@ final class SetupModel: ObservableObject {
             case .appleContainer:
                 if !Installer.appleContainerInstalled {
                     try await Installer.openAppleContainerInstaller(progress: progress)
-                    runtime = .needsAction("Finish the Apple container installer, then click Set Up again.")
+                    runtime = .needsAction(String(localized: "Finish the Apple container installer, then click Set Up again."))
                     return
                 }
-                progress("Starting Apple container…")
+                progress(String(localized: "Starting Apple container…"))
                 try await Installer.startAppleContainer()
             case .existingDocker:
                 break
@@ -365,10 +509,10 @@ final class SetupModel: ObservableObject {
                 if !Installer.managedColimaInstalled { try await Installer.installManagedColima(cpu: cpu, progress: progress) }
                 try await Installer.startColima(workspace: workspace, readOnly: [], cpu: cpu, progress: progress)
             }
-            runtime = .done("\(choice.label) is ready")
+            runtime = .done(String(localized: "\(choice.label) is ready"))
         } catch {
             runtime = .failed(String(describing: error))
-            note("Error: \(error)")
+            note(String(localized: "Error: \(String(describing: error))"))
         }
     }
 
@@ -379,23 +523,24 @@ final class SetupModel: ObservableObject {
         do {
             try requireUsableWorkspace()
             if !(await Installer.imagePresent(runtime)) { try await Installer.buildImage(runtime, progress: progress) }
-            progress("Testing the sandbox…")
+            progress(String(localized: "Testing the sandbox…"))
             try await Installer.smokeTest(runtime, workspace: workspace)
-            image = .done("The sandbox works")
-            note("Sandbox test passed.")
+            image = .done(String(localized: "Ready. The sandbox passed its test."))
+            defaults.set(true, forKey: "imageReady")
+            note(String(localized: "Sandbox test passed."))
         } catch {
             image = .failed(String(describing: error))
-            note("Error: \(error)")
+            note(String(localized: "Error: \(String(describing: error))"))
         }
     }
 
     func connect(_ client: Client) async {
         // Clients store the helper paths, so they must point into /Applications, not a copy that may move.
         guard location.isDone else {
-            clients[client] = .needsAction("Move MacControl to Applications first, then connect.")
+            clients[client] = .needsAction(String(localized: "Move MacControl to Applications first, then connect."))
             return
         }
-        clients[client] = .working("Connecting…")
+        clients[client] = .working(String(localized: "Connecting…"))
         do {
             if enableExec { try requireUsableWorkspace() }
             switch client {
@@ -404,17 +549,17 @@ final class SetupModel: ObservableObject {
             case .claudeCode, .codex:
                 try await connectCLI(client)
             }
-            note("Connected \(client.rawValue). \(client.reloadHint)")
+            note(String(localized: "Connected \(client.rawValue). \(client.reloadHint)"))
         } catch {
             clients[client] = .failed(String(describing: error))
-            note("Error: \(error)")
+            note(String(localized: "Error: \(String(describing: error))"))
             return
         }
         await detectClients()
     }
 
     func disconnect(_ client: Client) async {
-        clients[client] = .working("Disconnecting…")
+        clients[client] = .working(String(localized: "Disconnecting…"))
         do {
             switch client {
             case .claudeDesktop:
@@ -434,7 +579,7 @@ final class SetupModel: ObservableObject {
                     // works; only then does a failing `get` mean the server is not registered.
                     let list = try await Installer.runInLoginShell(program, ["mcp", "list"], timeout: 120)
                     guard list.exitCode == 0 else {
-                        throw ConfigFailure(description: "\(client.rawValue) did not answer (\(list.stderr.suffix(200))), so nothing was removed. Try again.")
+                        throw ConfigFailure(description: String(localized: "\(client.rawValue) did not answer (\(list.stderr.suffix(200))), so nothing was removed. Try again."))
                     }
                     for name in ClientConfig.managedNames {
                         let serverName = client == .codex ? name.replacingOccurrences(of: "-", with: "_") : name
@@ -446,16 +591,16 @@ final class SetupModel: ObservableObject {
                         let arguments = client == .codex ? ["mcp", "remove", serverName] : ["mcp", "remove", "--scope", "user", serverName]
                         let result = try await Installer.runInLoginShell(program, arguments)
                         if try await registered() {
-                            throw ConfigFailure(description: "\(client.rawValue) still has \(serverName) after removing it: \(result.stderr.suffix(300))")
+                            throw ConfigFailure(description: String(localized: "\(client.rawValue) still has \(serverName) after removing it: \(result.stderr.suffix(300))"))
                         }
                     }
                 }
                 defaults.removeObject(forKey: fingerprintKey(client))
             }
-            note("Disconnected \(client.rawValue). \(client.reloadHint)")
+            note(String(localized: "Disconnected \(client.rawValue). \(client.reloadHint)"))
         } catch {
             clients[client] = .failed(String(describing: error))
-            note("Error: \(error)")
+            note(String(localized: "Error: \(String(describing: error))"))
             return
         }
         await detectClients()
@@ -478,14 +623,14 @@ final class SetupModel: ObservableObject {
                 (client == .codex ? ClientConfig.codexCommands(server) : ClientConfig.claudeCodeCommands(server))
                     .dropFirst().map { ClientConfig.displayCommand(client == .codex ? "codex" : "claude", $0) }
             }
-            throw ConfigFailure(description: "\(client.rawValue) was not found. Run the commands shown below in Terminal.")
+            throw ConfigFailure(description: String(localized: "\(client.rawValue) was not found. Run the commands shown below in Terminal."))
         }
         for server in servers {
             let commands = client == .codex ? ClientConfig.codexCommands(server) : ClientConfig.claudeCodeCommands(server)
             _ = try? await Installer.runInLoginShell(program, commands[0]) // removing an entry that does not exist is fine
             let result = try await Installer.runInLoginShell(program, commands[1])
             guard result.exitCode == 0 else {
-                throw ConfigFailure(description: "\(client.rawValue) refused the server \(server.name): \(result.stderr.suffix(400))")
+                throw ConfigFailure(description: String(localized: "\(client.rawValue) refused the server \(server.name): \(result.stderr.suffix(400))"))
             }
         }
         if client == .codex, servers.contains(where: { $0.name == "mac-exec" }) { try setCodexExecTimeout() }
@@ -524,7 +669,7 @@ final class SetupModel: ObservableObject {
             }
         } catch {
             try? fm.removeItem(at: staging)
-            location = .failed("Could not copy MacControl to Applications: \(error.localizedDescription). Drag it there in Finder instead.")
+            location = .failed(String(localized: "Could not copy MacControl to Applications: \(error.localizedDescription). Drag it there in Finder instead."))
         }
     }
 

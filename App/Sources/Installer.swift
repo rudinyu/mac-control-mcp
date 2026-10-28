@@ -79,11 +79,12 @@ enum Installer {
         let (temporary, response) = try await URLSession.shared.download(from: download.url)
         guard (response as? HTTPURLResponse)?.statusCode == 200 else {
             try? FileManager.default.removeItem(at: temporary)
-            throw InstallFailure(description: "Could not download \(download.name) from \(download.url.host ?? "the server").")
+            let host = download.url.host ?? "?"
+            throw InstallFailure(description: String(localized: "Could not download \(download.name) from \(host)."))
         }
         guard Checksum.matches(temporary, download.sha256) else {
             try? FileManager.default.removeItem(at: temporary)
-            throw InstallFailure(description: "\(download.name) did not match its expected checksum, so it was not installed. Try again later, or update MacControl.")
+            throw InstallFailure(description: String(localized: "\(download.name) did not match its expected checksum, so it was not installed. Try again later, or update MacControl."))
         }
         try? FileManager.default.removeItem(at: target)
         try FileManager.default.moveItem(at: temporary, to: target)
@@ -103,30 +104,30 @@ enum Installer {
         let fm = FileManager.default
         try fm.createDirectory(at: paths.runtimeBin, withIntermediateDirectories: true)
 
-        progress("Downloading \(Manifest.lima(cpu).name)…")
+        progress(String(localized: "Downloading \(Manifest.lima(cpu).name)…"))
         let lima = try await fetch(Manifest.lima(cpu))
         try? fm.removeItem(at: paths.lima)
         try fm.createDirectory(at: paths.lima, withIntermediateDirectories: true)
-        try await check(run("/usr/bin/tar", ["-xzf", lima.path, "-C", paths.lima.path]), "unpack Lima")
+        try await check(run("/usr/bin/tar", ["-xzf", lima.path, "-C", paths.lima.path]), String(localized: "unpack Lima"))
 
-        progress("Downloading \(Manifest.colima(cpu).name)…")
+        progress(String(localized: "Downloading \(Manifest.colima(cpu).name)…"))
         let colima = try await fetch(Manifest.colima(cpu))
         try? fm.removeItem(at: paths.colima)
         try fm.copyItem(at: colima, to: paths.colima)
         try fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: paths.colima.path)
 
-        progress("Downloading \(Manifest.dockerCLI(cpu).name)…")
+        progress(String(localized: "Downloading \(Manifest.dockerCLI(cpu).name)…"))
         let docker = try await fetch(Manifest.dockerCLI(cpu))
         let unpacked = paths.downloads.appendingPathComponent("docker-unpacked")
         try? fm.removeItem(at: unpacked)
         try fm.createDirectory(at: unpacked, withIntermediateDirectories: true)
-        try await check(run("/usr/bin/tar", ["-xzf", docker.path, "-C", unpacked.path, "docker/docker"]), "unpack the Docker CLI")
+        try await check(run("/usr/bin/tar", ["-xzf", docker.path, "-C", unpacked.path, "docker/docker"]), String(localized: "unpack the Docker CLI"))
         try? fm.removeItem(at: paths.docker)
         try fm.moveItem(at: unpacked.appendingPathComponent("docker/docker"), to: paths.docker)
         try? fm.removeItem(at: unpacked)
 
         try installedVersions.write(to: paths.marker, atomically: true, encoding: .utf8)
-        progress("Installed \(installedVersions).")
+        progress(String(localized: "Installed \(installedVersions)."))
     }
 
     static func colimaRunning() async -> Bool {
@@ -142,17 +143,17 @@ enum Installer {
         let mountKey = "colimaMounts"
         if await colimaRunning(), UserDefaults.standard.stringArray(forKey: mountKey) == mounts { return }
         if await colimaRunning() {
-            progress("Restarting the sandbox VM with the new shared folders…")
+            progress(String(localized: "Restarting the sandbox VM with the new shared folders…"))
             _ = try? await run(paths.colima.path, ["stop", "--profile", colimaProfile], environment: managedEnvironment, timeout: 180)
         } else {
-            progress("Starting the sandbox VM (this takes a minute the first time)…")
+            progress(String(localized: "Starting the sandbox VM (this takes a minute the first time)…"))
         }
         try FileManager.default.createDirectory(at: paths.dockerConfig, withIntermediateDirectories: true)
         var arguments = ["start", "--profile", colimaProfile, "--runtime", "docker", "--vm-type", "vz",
                          "--cpu", "2", "--memory", "4", "--disk", "30"]
         if cpu == .appleSilicon { arguments += ["--arch", "aarch64"] }
         for mount in mounts { arguments += ["--mount", mount] }
-        try await check(run(paths.colima.path, arguments, environment: managedEnvironment, timeout: 900), "start Colima")
+        try await check(run(paths.colima.path, arguments, environment: managedEnvironment, timeout: 900), String(localized: "start Colima"))
         UserDefaults.standard.set(mounts, forKey: mountKey)
     }
 
@@ -163,21 +164,21 @@ enum Installer {
     // Downloads Apple's signed installer, checks its checksum and that Apple's Containerization team signed it,
     // then opens it in Installer, where the user confirms and authenticates.
     static func openAppleContainerInstaller(progress: @escaping @Sendable (String) -> Void) async throws {
-        progress("Downloading \(Manifest.appleContainer.name)…")
+        progress(String(localized: "Downloading \(Manifest.appleContainer.name)…"))
         let package = try await fetch(Manifest.appleContainer)
         let signature = try await run("/usr/sbin/pkgutil", ["--check-signature", package.path], timeout: 60)
         guard signature.exitCode == 0, signature.stdout.contains("(\(Manifest.appleContainerTeamID))"),
               signature.stdout.contains("Notarization: trusted by the Apple notary service") else {
-            throw InstallFailure(description: "The Apple container installer is not signed and notarized by Apple, so it was not opened.")
+            throw InstallFailure(description: String(localized: "The Apple container installer is not signed and notarized by Apple, so it was not opened."))
         }
-        progress("Opening the installer. Follow its steps, then come back to MacControl.")
+        progress(String(localized: "Opening the installer. Follow its steps, then come back to MacControl."))
         _ = try await run("/usr/bin/open", ["-a", "Installer", package.path], timeout: 30)
     }
 
     static func startAppleContainer() async throws {
         let status = try? await run(paths.appleContainer.path, ["system", "status"], timeout: 30)
         if status?.exitCode == 0 { return }
-        try await check(run(paths.appleContainer.path, ["system", "start", "--enable-kernel-install"], timeout: 900), "start Apple container")
+        try await check(run(paths.appleContainer.path, ["system", "start", "--enable-kernel-install"], timeout: 900), String(localized: "start Apple container"))
     }
 
     // MARK: Sandbox image
@@ -201,9 +202,9 @@ enum Installer {
     }
 
     static func buildImage(_ runtime: ContainerRuntime, progress: @escaping @Sendable (String) -> Void) async throws {
-        progress("Building the sandbox image (a few minutes the first time)…")
+        progress(String(localized: "Building the sandbox image (a few minutes the first time)…"))
         try await check(run(runtime.program, runtime.buildArguments(image: image, context: paths.sandboxContext.path),
-                            environment: runtime.environment, timeout: 1800), "build the sandbox image")
+                            environment: runtime.environment, timeout: 1800), String(localized: "build the sandbox image"))
     }
 
     // Runs one throwaway container the way mac-exec does, to prove the whole path works.
@@ -214,14 +215,17 @@ enum Installer {
                              command: "id -u && touch \(probe) && rm \(probe)")
         let result = try await self.run(runtime.program, try runtime.runArguments(run), environment: runtime.environment, timeout: 300)
         guard result.exitCode == 0, result.stdout.split(separator: "\n").first == "1000" else {
-            throw InstallFailure(description: "The sandbox test container failed: \(String(result.stderr.suffix(600)))")
+            throw InstallFailure(description: String(localized: "The sandbox test container failed: \(String(result.stderr.suffix(600)))"))
         }
     }
 
     private static func check(_ result: RunResult, _ action: String) throws {
         guard result.exitCode == 0, !result.timedOut else {
             let detail = (result.stderr.isEmpty ? result.stdout : result.stderr).suffix(800)
-            throw InstallFailure(description: "Could not \(action)\(result.timedOut ? " (it took too long)" : ""): \(detail)")
+            let reason = String(detail)
+            throw InstallFailure(description: result.timedOut
+                ? String(localized: "Could not \(action) (it took too long): \(reason)")
+                : String(localized: "Could not \(action): \(reason)"))
         }
     }
 }

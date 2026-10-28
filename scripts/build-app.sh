@@ -53,6 +53,12 @@ cp "$out/obj/MacControl" "$app/Contents/MacOS/MacControl"
 cp "$out/obj/mac-control-mcp" "$out/obj/mac-exec-mcp" "$app/Contents/Helpers/"
 cp "$project_dir/sandbox/Dockerfile" "$app/Contents/Resources/sandbox/Dockerfile"
 cp "$project_dir/App/AppIcon.icns" "$app/Contents/Resources/AppIcon.icns"
+# Translations are kept as JSON; a binary plist is a valid .strings file and needs no escaping.
+for table in "$project_dir"/App/Localization/*.json; do
+  language=$(basename "$table" .json)
+  mkdir -p "$app/Contents/Resources/$language.lproj"
+  plutil -convert binary1 -o "$app/Contents/Resources/$language.lproj/Localizable.strings" "$table"
+done
 rm -rf "$out/obj"
 
 if [ "$sign" = 1 ]; then

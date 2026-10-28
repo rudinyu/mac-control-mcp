@@ -23,14 +23,14 @@ enum ClientConfig {
         var root: [String: Any] = [:]
         if let existing, !existing.isEmpty {
             guard let parsed = try? JSONSerialization.jsonObject(with: existing) as? [String: Any] else {
-                throw ConfigFailure(description: "Claude Desktop's configuration is not valid JSON, so it was left unchanged. Fix or remove it, then try again.")
+                throw ConfigFailure(description: String(localized: "Claude Desktop's configuration is not valid JSON, so it was left unchanged. Fix or remove it, then try again."))
             }
             root = parsed
         }
         var mcpServers: [String: Any] = [:]
         if let current = root["mcpServers"] {
             guard let dictionary = current as? [String: Any] else {
-                throw ConfigFailure(description: "\"mcpServers\" in Claude Desktop's configuration is not an object, so it was left unchanged.")
+                throw ConfigFailure(description: String(localized: "\"mcpServers\" in Claude Desktop's configuration is not an object, so it was left unchanged."))
             }
             mcpServers = dictionary
         }
@@ -46,7 +46,7 @@ enum ClientConfig {
     // Removes this app's servers from Claude Desktop's configuration and keeps everything else.
     static func removeFromClaudeDesktop(_ existing: Data) throws -> Data {
         guard var root = try? JSONSerialization.jsonObject(with: existing) as? [String: Any] else {
-            throw ConfigFailure(description: "Claude Desktop's configuration is not valid JSON, so it was left unchanged.")
+            throw ConfigFailure(description: String(localized: "Claude Desktop's configuration is not valid JSON, so it was left unchanged."))
         }
         if var servers = root["mcpServers"] as? [String: Any] {
             for name in managedNames { servers.removeValue(forKey: name) }

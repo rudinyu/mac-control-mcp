@@ -10,6 +10,7 @@ let iconset = FileManager.default.temporaryDirectory.appendingPathComponent("App
 try FileManager.default.createDirectory(at: iconset, withIntermediateDirectories: true)
 
 func draw(_ size: CGFloat) -> Data {
+    let simple = size <= 16 // at the smallest size the prompt turns into a smudge, so draw the pointer alone
     let image = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: Int(size), pixelsHigh: Int(size), bitsPerSample: 8,
                                  samplesPerPixel: 4, hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB,
                                  bytesPerRow: 0, bitsPerPixel: 0)!
@@ -34,6 +35,7 @@ func draw(_ size: CGFloat) -> Data {
         .draw(in: shape, angle: -90)
 
     // Terminal panel in the lower left.
+    if !simple {
     let panel = NSBezierPath(roundedRect: NSRect(x: 190 * s, y: 190 * s, width: 470 * s, height: 330 * s), xRadius: 56 * s, yRadius: 56 * s)
     NSColor(calibratedWhite: 0.06, alpha: 0.55).setFill()
     panel.fill()
@@ -49,10 +51,13 @@ func draw(_ size: CGFloat) -> Data {
     let cursorBar = NSBezierPath(roundedRect: NSRect(x: 405 * s, y: 258 * s, width: 160 * s, height: 44 * s), xRadius: 22 * s, yRadius: 22 * s)
     NSColor(calibratedRed: 0.55, green: 0.95, blue: 0.70, alpha: 1).setFill()
     cursorBar.fill()
+    }
 
     // Mouse pointer in the upper right, overlapping the panel.
     let arrow = NSBezierPath()
-    let points: [(CGFloat, CGFloat)] = [(470, 830), (470, 380), (575, 480), (650, 320), (725, 352), (650, 512), (790, 512)]
+    // At 16 px the pointer is enlarged and centred, since it is the only element.
+    let base: [(CGFloat, CGFloat)] = [(470, 830), (470, 380), (575, 480), (650, 320), (725, 352), (650, 512), (790, 512)]
+    let points = simple ? base.map { (($0.0 - 630) * 1.35 + 512, ($0.1 - 575) * 1.35 + 512) } : base
     arrow.move(to: NSPoint(x: points[0].0 * s, y: points[0].1 * s))
     for point in points.dropFirst() { arrow.line(to: NSPoint(x: point.0 * s, y: point.1 * s)) }
     arrow.close()

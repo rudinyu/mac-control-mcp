@@ -33,6 +33,10 @@ After Set Up finishes, the window closes and MacControl stays in the **menu bar*
 
 The header shows one line about the whole setup, such as "Ready: 3 clients connected, sandbox running." Each client has a switch: turning it on connects it, and turning it off asks first, then removes `mac-control` and `mac-exec` from that client. When you change a setting, a banner lists the clients that still use the old settings, and **Apply** updates them. Clients can only be connected once MacControl is in Applications, so they never point at a copy in Downloads.
 
+The **Help** section shows the version and opens the release notes, this guide, the workspace, the command log (every sandbox and `host_exec` command), and MacControl's own setup log. When MacControl runs its own Linux VM, the Sandbox row shows its CPUs and memory, with **Stop VM** to free the memory; the VM starts again by itself when an agent needs it. If a step fails, **Copy Error** and **Show Log** give you the full message. **Remove from This Mac…** disconnects every client, deletes the VM and the downloaded tools, and resets the settings, keeping your workspace and logs.
+
+MacControl follows your Mac's language: it is in Traditional Chinese when that is your preferred language, and in English otherwise.
+
 ## Permissions
 
 macOS grants Accessibility and Screen Recording to the app that starts the servers, not to MacControl. The Permissions section lists which app to turn on for each client and opens the right System Settings pages:

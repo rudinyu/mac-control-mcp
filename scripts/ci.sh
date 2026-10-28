@@ -23,6 +23,7 @@ swiftc -module-cache-path "$cache" -parse-as-library \
 
 "$project_dir/.build/terminal-text-tests"
 "$project_dir/.build/session-lock-tests"
+sh "$project_dir/scripts/check-localization.sh"
 "$project_dir/.build/container-runtime-tests"
 "$project_dir/.build/app-logic-tests"
 python3 "$project_dir/tests/test_protocol.py" "$project_dir/.build/mac-control-mcp"

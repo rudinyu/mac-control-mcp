@@ -65,9 +65,9 @@ enum RuntimeChoice: Equatable {
 
     var label: String {
         switch self {
-        case .appleContainer: return "Apple container"
-        case .existingDocker: return "Docker (already installed)"
-        case .managedColima: return "Colima (installed by MacControl)"
+        case .appleContainer: return String(localized: "Apple container")
+        case .existingDocker: return String(localized: "Docker on this Mac")
+        case .managedColima: return String(localized: "Linux VM by MacControl")
         }
     }
 }
