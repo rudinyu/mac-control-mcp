@@ -185,7 +185,7 @@ final class SetupModel: ObservableObject {
         FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Logs/mac-exec/audit.log")
     }
 
-    private func note(_ line: String) {
+    func note(_ line: String) {
         log.append(line)
         let file = Self.setupLog
         try? FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)

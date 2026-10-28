@@ -9,10 +9,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var launchedAtLogin = false
 
     // Only a launch by Open at Login starts quietly in the menu bar; a launch by the user shows the window.
+    // If macOS does not mark the login launch, the window simply shows at login too.
     func applicationWillFinishLaunching(_ notification: Notification) {
         let event = NSAppleEventManager.shared().currentAppleEvent
         launchedAtLogin = event?.eventID == kAEOpenApplication
             && event?.paramDescriptor(forKeyword: keyAEPropData)?.enumCodeValue == keyAELaunchedAsLogInItem
+        Task { @MainActor in SetupModel.shared.note("Launched \(launchedAtLogin ? "at login" : "by the user").") }
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -67,7 +69,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     // Opening the app again, for example from Finder, shows the window.
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
-        showWindow?()
+        if let showWindow {
+            showWindow()
+        } else if let window = NSApp.windows.first(where: { $0.identifier?.rawValue.contains("setup") == true }) {
+            NSApp.setActivationPolicy(.regular)
+            window.makeKeyAndOrderFront(nil)
+            NSApp.activate()
+        }
         return true
     }
 
