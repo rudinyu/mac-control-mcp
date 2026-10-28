@@ -209,21 +209,29 @@ final class SetupModel: ObservableObject {
     @Published var availableUpdate: (version: String, page: URL)?
     static let releasesAPI = URL(string: "https://api.github.com/repos/rudinyu/mac-control-mcp/releases/latest")!
 
+    // Only the network call is throttled; the last release seen is kept, so the banner survives a relaunch
+    // and disappears once this copy is up to date.
     func checkForUpdate(force: Bool = false) async {
         let last = defaults.double(forKey: "lastUpdateCheck")
-        guard force || Date().timeIntervalSince1970 - last > 24 * 3600 || availableUpdate == nil && last == 0 else { return }
-        var request = URLRequest(url: Self.releasesAPI, timeoutInterval: 15)
-        request.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
-        guard let (data, response) = try? await URLSession.shared.data(for: request),
-              (response as? HTTPURLResponse)?.statusCode == 200,
-              let release = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let tag = release["tag_name"] as? String,
-              let page = (release["html_url"] as? String).flatMap(URL.init(string:)),
-              page.host == "github.com" else { return }
-        defaults.set(Date().timeIntervalSince1970, forKey: "lastUpdateCheck")
+        if force || Date().timeIntervalSince1970 - last > 24 * 3600 {
+            var request = URLRequest(url: Self.releasesAPI, timeoutInterval: 15)
+            request.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
+            if let (data, response) = try? await URLSession.shared.data(for: request),
+               (response as? HTTPURLResponse)?.statusCode == 200,
+               let release = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+               let tag = release["tag_name"] as? String,
+               let page = release["html_url"] as? String {
+                defaults.set(Date().timeIntervalSince1970, forKey: "lastUpdateCheck")
+                defaults.set(tag, forKey: "latestReleaseTag")
+                defaults.set(page, forKey: "latestReleasePage")
+            }
+        }
         let current = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0"
-        availableUpdate = AppVersion.isNewer(tag, than: current)
-            ? (tag.trimmingCharacters(in: CharacterSet(charactersIn: "vV")), page) : nil
+        guard let tag = defaults.string(forKey: "latestReleaseTag"),
+              let page = defaults.string(forKey: "latestReleasePage").flatMap(URL.init(string:)),
+              page.scheme == "https", page.host == "github.com",
+              AppVersion.isNewer(tag, than: current) else { availableUpdate = nil; return }
+        availableUpdate = (tag.trimmingCharacters(in: CharacterSet(charactersIn: "vV")), page)
     }
 
     @Published var vmDetail: String?
