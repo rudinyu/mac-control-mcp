@@ -91,6 +91,7 @@
   "Permissions": "權限",
   "Previously set up. Checked once MacControl runs from Applications.": "之前已設定過。等 MacControl 從「應用程式」執行時再檢查。",
   "Quit MacControl": "結束 MacControl",
+  "Quit MacControl, then open it from Applications.": "請結束 MacControl，再從「應用程式」打開它。",
   "Quit and reopen Claude to load the tools.": "請完全結束並重開 Claude，以載入這些工具。",
   "Ready. A Linux VM managed by MacControl runs your commands.": "已就緒。由 MacControl 管理的 Linux VM 執行你的指令。",
   "Ready. Each command runs in its own small VM (Apple container).": "已就緒。每個指令都在各自的小型 VM 中執行（Apple container）。",

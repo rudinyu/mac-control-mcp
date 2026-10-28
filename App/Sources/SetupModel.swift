@@ -128,6 +128,10 @@ final class SetupModel: ObservableObject {
         let steps = [location, runtime, image] + enabledClients.compactMap { clients[$0] }
         if busy || steps.contains(where: \.isWorking) { return Summary(level: .working, text: String(localized: "Setting up…")) }
         if !hasChecked { return Summary(level: .working, text: String(localized: "Checking this Mac…")) }
+        // Set Up cannot fix a translocated copy; only moving the app can.
+        if isTranslocated {
+            return Summary(level: .needsAction, text: String(localized: "Quit MacControl, then open it from Applications."))
+        }
         if steps.contains(where: \.isFailed) { return Summary(level: .failed, text: String(localized: "Something needs attention below.")) }
         if !staleClients.isEmpty {
             let count = staleClients.count

@@ -205,7 +205,7 @@ struct SetupView: View {
                 }
                 .buttonStyle(.borderedProminent)
                 .controlSize(.large)
-                .disabled(model.busy || !model.hasChecked)
+                .disabled(model.busy || !model.hasChecked || model.isTranslocated)
             }
         }
         .padding(16)
