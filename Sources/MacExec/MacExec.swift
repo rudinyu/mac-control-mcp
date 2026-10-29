@@ -86,6 +86,8 @@ private struct Settings {
 
 private final class MacExecServer {
     private let settings = Settings.load()
+    // The client's own name from initialize, such as claude-ai or codex, so the audit log shows who ran what.
+    private var client: String?
 
     private var tools: [[String: Any]] {
         let command: [String: Any] = ["type": "string", "maxLength": maxCommandLength]
@@ -181,6 +183,10 @@ private final class MacExecServer {
         switch method {
         case "initialize":
             let requested = params["protocolVersion"] as? String ?? ""
+            if let name = (params["clientInfo"] as? [String: Any])?["name"] as? String {
+                let cleaned = String(name.unicodeScalars.filter { !CharacterSet.controlCharacters.contains($0) }).trimmingCharacters(in: .whitespaces)
+                client = cleaned.isEmpty ? nil : String(cleaned.prefix(64))
+            }
             let selected = supportedProtocolVersions.contains(requested) ? requested : "2025-11-25"
             send(result: [
                 "protocolVersion": selected,
@@ -260,6 +266,7 @@ private final class MacExecServer {
     private func audit(_ entry: [String: Any]) throws {
         var record = entry
         record["time"] = ISO8601DateFormatter().string(from: Date())
+        if let client { record["client"] = client }
         guard let data = try? JSONSerialization.data(withJSONObject: record, options: [.sortedKeys]) else {
             throw ToolFailure("Could not encode the audit record; nothing was run.")
         }

@@ -14,7 +14,7 @@
 | 不是 root、沒有特權 | 指令以使用者 `agent`（uid 1000）執行，拿掉所有 Linux capability，並開啟 `no-new-privileges`，所以無法變成 root。 |
 | 系統唯讀 | 容器的系統檔案是唯讀的。只有 `/workspace`、`/tmp` 和家目錄 `/home/agent` 可以寫入，後兩者在指令結束後就會清掉。 |
 | 資源限制 | 每個指令最多 2 GB 記憶體、2 顆 CPU、256 個程序；逾時預設 120 秒，最多 600 秒。跑太久的指令會連同容器一起被終止；`host_exec` 則會終止指令所屬程序群組裡的所有程序。 |
-| 稽核紀錄 | 每個指令在執行前都會寫進 `~/Library/Logs/mac-exec/audit.log`，執行完再記下結果。紀錄寫不進去，指令就不會執行。 |
+| 稽核紀錄 | 每個指令在執行前都會寫進 `~/Library/Logs/mac-exec/audit.log`，執行完再記下結果。每筆紀錄都會寫上送出指令的客戶端，例如 `claude-ai` 或 `codex`（客戶端自己回報的名稱）。紀錄寫不進去，指令就不會執行。 |
 | 核准提示 | 執行指令和寫入檔案的工具都標記為破壞性。客戶端會不會每次都先問你，取決於它的權限設定：請保持 Claude Code 的核准提示開啟，Codex 則保留 `default_tools_approval_mode = "prompt"`。`sandbox_write_file` 會覆蓋工作資料夾裡的檔案。 |
 | 預設不能直接在 Mac 上執行 | 直接在 Mac 上執行指令的 `host_exec`，只有在你開啟後才會出現。每次呼叫都要寫理由，並拒絕 `sudo`、`su` 和 `doas`。 |
 

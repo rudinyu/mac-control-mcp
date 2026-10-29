@@ -266,6 +266,11 @@ class HostExecTests(unittest.TestCase):
         self.assertEqual(events, [("host_exec", "start"), ("host_exec", "end")])
         self.assertEqual(self.server.audit_entries()[0]["reason"], "testing host execution")
 
+    def test_audit_names_the_client(self):
+        self.server.request("initialize", {"protocolVersion": "2025-11-25", "clientInfo": {"name": "test-client\n", "version": "1"}})
+        self.server.ok("host_exec", command="echo hi", reason="testing the client name")
+        self.assertEqual({e.get("client") for e in self.server.audit_entries()}, {"test-client"})
+
     def test_host_exec_refusals(self):
         for arguments in ({"command": "echo hi"}, {"command": "echo hi", "reason": "short"},
                           {"command": "sudo ls", "reason": "needs admin rights"},

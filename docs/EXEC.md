@@ -14,7 +14,7 @@ English | [繁體中文](EXEC.zh-TW.md)
 | No root, no privileges | Commands run as the user `agent` (uid 1000) with every Linux capability dropped and `no-new-privileges`, so they cannot become root. |
 | Read-only system | The container's system files are read-only. Only `/workspace`, `/tmp`, and the home folder `/home/agent` are writable, and the last two are erased when the command ends. |
 | Resource limits | 2 GB of memory, 2 CPUs, and 256 processes per command, and a timeout of 120 seconds by default, up to 600. A command that runs too long is killed with its container, and `host_exec` kills every process in the command's process group. |
-| Audit log | Every command is written to `~/Library/Logs/mac-exec/audit.log` before it runs, with its result afterwards. If the log cannot be written, the command does not run. |
+| Audit log | Every command is written to `~/Library/Logs/mac-exec/audit.log` before it runs, with its result afterwards. Each entry names the client that sent it, such as `claude-ai` or `codex`, as the client reports itself. If the log cannot be written, the command does not run. |
 | Approval prompts | Command and write tools are marked as destructive. Whether the client asks you before each call depends on its permission settings: keep Claude Code's prompts on, and keep `default_tools_approval_mode = "prompt"` in Codex. `sandbox_write_file` can overwrite files in the workspace. |
 | Running on the Mac is off by default | `host_exec`, which runs a command directly on the Mac, exists only when you turn it on. Each call must give a reason, and `sudo`, `su`, and `doas` are refused. |
 

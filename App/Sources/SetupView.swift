@@ -201,10 +201,18 @@ struct SetupView: View {
                         Text("Version \(update.version) is available.").font(.callout)
                         Button("Download") { NSWorkspace.shared.open(update.page) }.controlSize(.small)
                     }
+                    Text("To update, quit MacControl, drag the new version into Applications, and open it again.")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+                if let message = model.oldServersMessage {
+                    HStack(alignment: .firstTextBaseline, spacing: 6) {
+                        Image(systemName: "arrow.clockwise.circle.fill").foregroundStyle(.orange).accessibilityHidden(true)
+                        Text(message).font(.callout).fixedSize(horizontal: false, vertical: true)
+                    }
                 }
             }
             Spacer()
-            if model.summary.level == .ready {
+            if model.summary.level == .ready || !model.summary.setUpHelps {
                 Button("Check Again") { Task { await model.refresh() } }
                     .controlSize(.large)
                     .disabled(model.busy)
@@ -374,6 +382,14 @@ struct SetupView: View {
             }
             if model.enabledClients.isEmpty {
                 Text("No client is turned on.").foregroundStyle(.secondary)
+            } else {
+                // Prompts that name a client itself have confused people into thinking mac-control needs them.
+                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                    Text("A prompt that names Claude, ChatGPT, or Codex itself is for that app's own features; mac-control does not need it.")
+                        .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                    Button("Learn More") { model.openWeb("https://github.com/rudinyu/mac-control-mcp/blob/main/docs/APP.md#permissions") }
+                        .buttonStyle(.link).font(.caption)
+                }
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)

@@ -41,6 +41,17 @@ MacControl 使用自己管理的 Linux VM 時，macOS 可能會通知「colima�
 
 MacControl 啟動時，以及之後最多每天一次，會到 GitHub 查詢有沒有新版本。它只讀取公開的版本清單，不會送出任何關於你這台 Mac 的資訊；有新版本時，視窗和選單會出現**下載**。
 
+## 更新
+
+MacControl 不會自己替換自己。更新步驟：
+
+1. 在視窗或選單裡按**下載**，或打開[最新版本](https://github.com/rudinyu/mac-control-mcp/releases/latest)，下載 DMG。
+2. 從選單選 **Quit MacControl** 結束 MacControl。只關閉視窗不夠。
+3. 打開 DMG，把 MacControl 拖到「應用程式」，選**取代**。
+4. 從「應用程式」打開 MacControl。
+
+權限、已連接的客戶端和 sandbox 都會保留，不需要再按「開始設定」。客戶端在重新啟動之前，會繼續執行它當初啟動的 mac-control 和 mac-exec，所以請結束並重開 Claude Desktop 和 Codex App，並開始新的 Claude Code 或 Codex 工作階段。在那之前，MacControl 會列出仍在使用舊版的客戶端，也不會顯示「已就緒」。
+
 MacControl 會跟著 Mac 的語言設定：偏好語言是繁體中文時顯示中文，其他情況顯示英文。
 
 ## 權限
@@ -49,6 +60,15 @@ macOS 的輔助使用和螢幕錄製權限，是給「負責 mac-control 的那�
 
 - **Claude Desktop 和 Codex App**：它們以 mac-control 自己的名義啟動它，所以要開 **MacControlHelper.app**。「設定」會向 macOS 要求一次權限，MacControlHelper.app 就會出現在兩個清單裡，你只要打開開關。Permissions 區塊的**向 macOS 要求**可以再要求一次；如果 macOS 已經問過，則直接打開系統設定。區塊也會顯示每個權限是否已開啟，兩個都開啟之前，MacControl 不會顯示「已就緒」。
 - **在終端機裡跑的 Claude Code 或 Codex**：你執行它的終端機 App，例如「終端機」或 iTerm2。
+
+權限提示顯示的是「提出要求的 App」，不一定是你以為的那一個：
+
+| 提示或清單裡的名稱 | 它是什麼 | 怎麼做 |
+| --- | --- | --- |
+| **MacControlHelper** | 由 Claude Desktop 或 Codex App 啟動的 mac-control | 允許。 |
+| 你的終端機 App，例如 **iTerm2** | 由那個終端機裡的 Claude Code 或 Codex 啟動的 mac-control | 有在用就允許。 |
+| **Claude**、**ChatGPT** 或 **Codex** 本身 | 那個 App 自己的功能，例如它內建的電腦操作，不是 mac-control | mac-control 不需要；只有你要用那個功能才允許。 |
+| **mac-control-mcp** | 從原始碼建置、由桌面 App 啟動的 mac-control | 如果是你自己這樣設定的就允許。 |
 
 macOS 不允許任何 App 代替你打開這些開關。打開後，完全結束並重開客戶端，請代理呼叫 `mac_status` 確認。在 macOS 27，「輔助使用」改名為 **Device Control and Data Access**。
 

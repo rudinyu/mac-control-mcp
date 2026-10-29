@@ -69,6 +69,8 @@ struct Summary: Equatable {
     enum Level { case ready, working, needsAction, failed }
     let level: Level
     let text: String
+    // False when the remaining step is outside MacControl, such as restarting a client, so Set Up cannot help.
+    var setUpHelps = true
 }
 
 @MainActor
@@ -151,6 +153,9 @@ final class SetupModel: ObservableObject {
         if helperPermissionsMissing {
             return Summary(level: .needsAction, text: String(localized: "Turn on MacControlHelper in System Settings. Click Set Up."))
         }
+        if !oldServers.clients.isEmpty || oldServers.unknown > 0 {
+            return Summary(level: .needsAction, text: String(localized: "Restart your agent apps to use this version."), setUpHelps: false)
+        }
         let count = enabledClients.count
         let text: String
         switch (count == 1, enableExec) {
@@ -216,6 +221,21 @@ final class SetupModel: ObservableObject {
     // Desktop 2026-10: it starts servers through Claude.app/Contents/Helpers/disclaimer, and mac_status
     // there reports the helper's permissions. The Codex app is assumed to behave the same.
     @Published var helperPermissions: HelperPermissions?
+    // Clients still running mac-control or mac-exec from before MacControl was updated.
+    @Published var oldServers = RunningServers.Old(clients: [], unknown: 0)
+    var oldServersMessage: String? {
+        if oldServers.clients.isEmpty && oldServers.unknown == 0 { return nil }
+        guard !oldServers.clients.isEmpty else {
+            return String(localized: "An agent app still uses the previous version of MacControl. Quit and reopen it, or start a new session.")
+        }
+        let names = ListFormatter.localizedString(byJoining: oldServers.clients)
+        return String(localized: "\(names) still uses the previous version of MacControl. Quit and reopen it, or start a new session.")
+    }
+
+    func checkOldServers() {
+        oldServers = RunningServers.old(programs: [paths.controlServer, paths.execServer])
+        if let message = oldServersMessage { note(message, show: false) }
+    }
     // Set when the permissions turned on while MacControl was running: desktop clients need a restart.
     @Published var helperGrantedThisRun = false
     var needsHelperPermissions: Bool { enabledClients.contains(.claudeDesktop) || enabledClients.contains(.codex) }
@@ -471,6 +491,7 @@ final class SetupModel: ObservableObject {
         await checkRuntime()
         await detectClients()
         await checkHelperPermissions()
+        checkOldServers()
         hasChecked = true
         await checkForUpdate()
     }

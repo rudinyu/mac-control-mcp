@@ -41,6 +41,17 @@ If MacControl says macOS is running a protected copy, it was opened straight fro
 
 MacControl checks GitHub for a newer release when it starts and at most once a day. It only reads the public release list and sends nothing about your Mac; when a newer version exists, the window and the menu show **Download**.
 
+## Updating
+
+MacControl does not replace itself. To update:
+
+1. Click **Download** in the window or the menu, or open the [latest release](https://github.com/rudinyu/mac-control-mcp/releases/latest), and download the DMG.
+2. Quit MacControl with **Quit MacControl** in its menu. Closing the window is not enough.
+3. Open the DMG and drag MacControl into Applications, choosing **Replace**.
+4. Open MacControl from Applications.
+
+Permissions, connected clients, and the sandbox stay as they are; you do not need to click Set Up again. A client keeps running the mac-control and mac-exec it started until you restart it, so quit and reopen Claude Desktop and the Codex app, and start a new Claude Code or Codex session. Until then, MacControl names the clients that still use the previous version and does not report Ready.
+
 MacControl follows your Mac's language: it is in Traditional Chinese when that is your preferred language, and in English otherwise.
 
 ## Permissions
@@ -49,6 +60,15 @@ macOS grants Accessibility and Screen Recording to whichever process is responsi
 
 - **Claude Desktop, and the Codex app**: they run mac-control on its own behalf, so turn on **MacControlHelper.app**. Set Up asks macOS for these permissions once, which adds MacControlHelper.app to both lists; you only turn on the switches. **Ask macOS** in the Permissions section does the same again, or opens System Settings once macOS has already asked, and the section shows whether each permission is on. Until both are on, MacControl does not report Ready.
 - **Claude Code, or Codex in a terminal**: the terminal app you run it in, such as Terminal or iTerm2.
+
+A permission prompt names the app that asks, which is not always the one you expect:
+
+| The prompt or the list names | What it is | What to do |
+| --- | --- | --- |
+| **MacControlHelper** | mac-control, started by Claude Desktop or the Codex app | Allow it. |
+| Your terminal app, such as **iTerm2** | mac-control, started by Claude Code or Codex in that terminal | Allow it if you use those. |
+| **Claude** or **ChatGPT** / **Codex** itself | A feature of that app, such as its own computer use, not mac-control | mac-control does not need it; allow it only if you use that feature. |
+| **mac-control-mcp** | A copy of mac-control built from source and started by a desktop app | Allow it if you set that up yourself. |
 
 macOS does not let any app turn these switches on for you. After turning them on, quit and reopen the client, and ask the agent to call `mac_status` to confirm. On macOS 27, Accessibility is called **Device Control and Data Access**.
 

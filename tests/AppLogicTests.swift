@@ -110,6 +110,22 @@ private enum AppLogicTests {
         check("Accessibility keeps its name on macOS 26", !PrivacyPane.accessibilityRenamed(macOSMajor: 26))
         check("Accessibility is renamed on macOS 27", PrivacyPane.accessibilityRenamed(macOSMajor: 27))
 
+        // Servers left running from before an update
+        let updated = Date(timeIntervalSince1970: 1_000_000)
+        check("a server started before the update is old", OldServers.isOld(started: updated.addingTimeInterval(-60), programModified: updated))
+        check("a server started after the update is not old", !OldServers.isOld(started: updated.addingTimeInterval(5), programModified: updated))
+        check("a second of rounding is not old", !OldServers.isOld(started: updated.addingTimeInterval(-0.5), programModified: updated))
+        check("Claude Desktop through disclaimer", OldServers.clientName(ancestors: [
+            "/Applications/Claude.app/Contents/Helpers/disclaimer", "/Applications/Claude.app/Contents/MacOS/Claude"]) == "Claude Desktop")
+        check("Codex app", OldServers.clientName(ancestors: [
+            "/Applications/ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex"]) == "Codex app")
+        check("Claude Code from Homebrew", OldServers.clientName(ancestors: [
+            "/usr/local/Caskroom/claude-code/2.1.308/claude", "/bin/zsh", "/Applications/iTerm.app/Contents/MacOS/iTerm2"]) == "Claude Code")
+        check("Claude Code from the native installer", OldServers.clientName(ancestors: [
+            "/Users/me/.local/share/claude/versions/2.1.308", "/bin/zsh"]) == "Claude Code")
+        check("Codex CLI", OldServers.clientName(ancestors: ["/opt/homebrew/bin/codex", "/bin/zsh"]) == "Codex")
+        check("unknown client", OldServers.clientName(ancestors: ["/bin/zsh", "/usr/bin/login"]) == nil)
+
         // Manifest and checksums
         for download in [Manifest.colima(.intel), Manifest.colima(.appleSilicon), Manifest.lima(.intel), Manifest.lima(.appleSilicon),
                          Manifest.dockerCLI(.intel), Manifest.dockerCLI(.appleSilicon), Manifest.appleContainer] {
