@@ -297,7 +297,8 @@ private final class MacExecServer {
             defer { try? handle.close() }
             var info = stat()
             guard fstat(fd, &info) == 0, info.st_mode & S_IFMT == S_IFREG else { throw POSIXError(.EFTYPE) }
-            if info.st_mode & 0o077 != 0 { fchmod(fd, 0o600) }
+            guard info.st_uid == getuid() else { throw POSIXError(.EPERM) }
+            if info.st_mode & 0o077 != 0, fchmod(fd, 0o600) != 0 { throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EPERM) }
             try handle.write(contentsOf: data + Data([0x0a]))
         } catch {
             throw ToolFailure("Could not write the audit log \(settings.auditLog.path): \(error.localizedDescription); nothing was run.")

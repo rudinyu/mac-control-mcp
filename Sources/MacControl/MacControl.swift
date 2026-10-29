@@ -360,11 +360,15 @@ private final class MacControlServer {
         if !fm.fileExists(atPath: directory.path) {
             try fm.createDirectory(at: directory, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
         }
+        // Check and change the folder through one descriptor, so a link swapped in cannot redirect the chmod.
+        let fd = open(directory.path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
+        guard fd >= 0 else { throw ToolFailure("\(directory.path) is not a folder; move it away and try again.") }
+        defer { close(fd) }
         var info = stat()
-        guard lstat(directory.path, &info) == 0, info.st_mode & S_IFMT == S_IFDIR, info.st_uid == getuid() else {
+        guard fstat(fd, &info) == 0, info.st_uid == getuid() else {
             throw ToolFailure("\(directory.path) is not a folder of yours; move it away and try again.")
         }
-        if info.st_mode & 0o077 != 0, chmod(directory.path, 0o700) != 0 {
+        if info.st_mode & 0o077 != 0, fchmod(fd, 0o700) != 0 {
             throw ToolFailure("Could not make \(directory.path) private; recordings were not started.")
         }
         return directory

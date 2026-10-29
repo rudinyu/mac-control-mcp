@@ -360,6 +360,22 @@ class HostExecTests(unittest.TestCase):
         finally:
             shutil.rmtree(folder)
 
+    def test_audit_log_is_made_private(self):
+        folder = make_temp("mac-exec-log-")
+        try:
+            log = os.path.join(folder, "audit.log")
+            with open(log, "w", encoding="utf-8"):
+                pass
+            os.chmod(log, 0o644)
+            server = Server(MAC_EXEC_ALLOW_HOST="1", MAC_EXEC_AUDIT_LOG=log)
+            try:
+                server.ok("host_exec", command="true", reason="testing audit modes")
+                self.assertEqual(os.stat(log).st_mode & 0o777, 0o600)
+            finally:
+                server.close()
+        finally:
+            shutil.rmtree(folder)
+
     def test_audit_log_links_are_not_followed(self):
         folder = make_temp("mac-exec-log-")
         try:
