@@ -2,11 +2,11 @@
 
 [English](README.md) | 繁體中文
 
-**最簡單的方式：**下載 [MacControl.app](docs/APP.zh-TW.md)，它會幫你安裝並連接所有東西。
+**最簡單的方式：**[下載 MacControl.app](https://github.com/rudinyu/mac-control-mcp/releases/latest)，它會幫你安裝並連接所有東西。說明見 [docs/APP.zh-TW.md](docs/APP.zh-TW.md)。
 
 **指南：**[MacControl.app](docs/APP.zh-TW.md) · [從原始碼安裝](docs/INSTALL.zh-TW.md) · [使用說明與工具參考](docs/USAGE.zh-TW.md) · [mac-exec：在 sandbox 裡執行指令和處理檔案](docs/EXEC.zh-TW.md)
 
-這是一個在你自己的 Mac 上執行的 MCP 伺服器，讓本機 Claude Code 或 Codex 使用 macOS 的截圖、輔助使用、鍵盤、滑鼠與螢幕錄影功能。它只透過標準輸入／輸出與 MCP 主程式通信，mac-control 沒有網路監聽埠，也不提供任意 shell 指令。
+這是一個在你自己的 Mac 上執行的 MCP 伺服器，讓這台 Mac 上的 Claude Desktop、Claude Code 或 Codex 使用 macOS 的截圖、輔助使用、鍵盤、滑鼠與螢幕錄影功能。它只透過標準輸入／輸出與 MCP 主程式通信，mac-control 沒有網路監聽埠，也不提供任意 shell 指令。
 
 這個 repo 另外還有 **mac-exec**，是一個獨立的 MCP 伺服器，預設在隔離的 Docker 容器裡執行指令和處理檔案。見 [docs/EXEC.zh-TW.md](docs/EXEC.zh-TW.md)。
 
@@ -26,7 +26,7 @@
 
 滑鼠座標使用**最近一次 `mac_screenshot` 影像的像素座標**。螢幕解析度變動後，請先重新截圖。錄影檔存於 `.build/recordings/`，此目錄不會進入 Git；錄影工具回傳的檔案路徑可供本機查看或後續處理。影片沒有額外錄製麥克風或系統音訊。
 
-`mac_type_text`、`mac_key` 和 `mac_ui_tree` 可以加上 `app` 參數，填執行中、有 Dock 圖示的 App 名稱或 bundle ID（例如 `TextEdit` 或 `com.apple.TextEdit`）。名稱同時符合多個 App 時，會選目前在前景的那個；都不在前景就回報錯誤並列出候選，請改用 bundle ID。輸入工具會先把該 App 切到前景，送出前再確認一次；如果焦點已經被其他 App 搶走，就不會送出任何輸入，並回報錯誤。`mac_ui_tree` 指定 `app` 時只讀取，不會切換前景 App。代理在終端機裡執行時，焦點常在兩次工具呼叫之間回到終端機，所以建議輸入時一律指定 `app`。iTerm2 等終端機在輔助使用文字裡用 NUL 代表寬字元的補位和空白格：寬字元後的補位會移除，其他 NUL 轉成空格，每行結尾的空白會去掉。
+`mac_screenshot`、`mac_mouse`、`mac_scroll`、`mac_type_text`、`mac_key` 和 `mac_ui_tree` 都可以加上 `app` 參數，填執行中、有 Dock 圖示的 App 名稱或 bundle ID（例如 `TextEdit` 或 `com.apple.TextEdit`）。名稱同時符合多個 App 時，會選目前在前景的那個；都不在前景就回報錯誤並列出候選，請改用 bundle ID。其他工具會先把該 App 切到前景，送出前再確認一次；如果焦點已經被其他 App 搶走，就不會送出任何輸入，並回報錯誤。`mac_mouse` 指定 `app` 時，如果上一張截圖不是在該 App 位於前景時拍的，或它的視窗之後移動或改變了大小，也不會點擊。`mac_ui_tree` 指定 `app` 時只讀取，不會切換前景 App。代理在終端機裡執行時，焦點常在兩次工具呼叫之間回到終端機，所以建議一律指定 `app`。iTerm2 等終端機在輔助使用文字裡用 NUL 代表寬字元的補位和空白格：寬字元後的補位會移除，其他 NUL 轉成空格，每行結尾的空白會去掉。
 
 `mac_type_text` 會短暫使用系統剪貼簿，再還原原有內容；如果在貼上期間其他程式更新了剪貼簿，它不會覆寫該更新。超過 40 MB 或無法完整保存的剪貼簿內容會讓輸入取消。這比直接送 Unicode 鍵盤事件更能配合目前的注音輸入法與各 App 文字欄位。
 

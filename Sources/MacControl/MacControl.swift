@@ -17,6 +17,10 @@ private struct CaptureSize {
     let width: Int
     let height: Int
     let displayBounds: CGRect
+    // The app in front and its window when the screenshot was taken, so a click aimed at an app can be
+    // refused when the screen it lands on is no longer the one in the screenshot.
+    let focusedPID: pid_t?
+    let windowFrame: CGRect?
 }
 
 private let appProperty: [String: Any] = [
@@ -49,9 +53,8 @@ private final class MacControlServer {
         ],
         [
             "name": "mac_screenshot",
-            "description": "Capture the main display. The returned image dimensions define the x/y coordinate space for mac_mouse until the next screenshot. Requires Screen Recording permission.",
-            "inputSchema": ["type": "object", "properties": [:], "additionalProperties": false],
-            "annotations": ["readOnlyHint": true]
+            "description": "Capture the main display. The returned image dimensions define the x/y coordinate space for mac_mouse until the next screenshot. If app is given, that running app is brought to the front first, which also brings back a window from the Stage Manager strip, and mac_mouse with the same app can check that its window has not changed since. Requires Screen Recording permission, and Accessibility permission when app is given.",
+            "inputSchema": ["type": "object", "properties": ["app": appProperty], "additionalProperties": false]
         ],
         [
             "name": "mac_request_screen_recording",
@@ -98,13 +101,14 @@ private final class MacControlServer {
         ],
         [
             "name": "mac_mouse",
-            "description": "Move, click, double-click, right-click, or drag on the main display. x/y and to_x/to_y are pixels in the most recent mac_screenshot image. Requires Accessibility permission.",
+            "description": "Move, click, double-click, right-click, or drag on the main display. x/y and to_x/to_y are pixels in the most recent mac_screenshot image. If app is given, that running app is brought to the front first, and nothing is sent unless it is still in front, the last mac_screenshot was taken with it in front, and its window has not moved or resized since. Requires Accessibility permission.",
             "inputSchema": [
                 "type": "object",
                 "properties": [
                     "action": ["type": "string", "enum": ["move", "click", "double_click", "right_click", "drag"]],
                     "x": ["type": "number"], "y": ["type": "number"],
-                    "to_x": ["type": "number"], "to_y": ["type": "number"]
+                    "to_x": ["type": "number"], "to_y": ["type": "number"],
+                    "app": appProperty
                 ],
                 "required": ["action", "x", "y"],
                 "additionalProperties": false
@@ -112,12 +116,13 @@ private final class MacControlServer {
         ],
         [
             "name": "mac_scroll",
-            "description": "Scroll at the current pointer position by line increments. Positive vertical values scroll up; positive horizontal values scroll left. Requires Accessibility permission.",
+            "description": "Scroll at the current pointer position by line increments. Positive vertical values scroll up; positive horizontal values scroll left. If app is given, that running app is brought to the front first and nothing is scrolled unless it is still in front. Requires Accessibility permission.",
             "inputSchema": [
                 "type": "object",
                 "properties": [
                     "vertical": ["type": "integer", "minimum": -20, "maximum": 20],
-                    "horizontal": ["type": "integer", "minimum": -20, "maximum": 20]
+                    "horizontal": ["type": "integer", "minimum": -20, "maximum": 20],
+                    "app": appProperty
                 ],
                 "additionalProperties": false
             ]
@@ -176,7 +181,7 @@ private final class MacControlServer {
                 "protocolVersion": selected,
                 "capabilities": ["tools": [:]],
                 "serverInfo": ["name": "mac-control", "version": serverVersion],
-                "instructions": "Use mac_status first. Use mac_screenshot before mac_mouse; mouse coordinates use the most recent screenshot. Ask the user before irreversible actions."
+                "instructions": "Use mac_status first. Use mac_screenshot before mac_mouse; mouse coordinates use the most recent screenshot. Pass app with the name of the app you are working in to mac_screenshot, mac_mouse, mac_scroll, mac_type_text, and mac_key, so input cannot land in another app. Ask the user before irreversible actions."
             ], id: id)
         case "ping":
             send(result: [:], id: id)
@@ -212,7 +217,7 @@ private final class MacControlServer {
         }
         switch name {
         case "mac_status": return [textContent(status())]
-        case "mac_screenshot": return try screenshot()
+        case "mac_screenshot": return try screenshot(args)
         case "mac_request_screen_recording": return [textContent(CGRequestScreenCaptureAccess() ? "Screen Recording access is granted." : "Screen Recording access is not granted yet. Complete the macOS permission prompt. \(PermissionHint.screenRecording)")]
         case "mac_ui_tree": return [textContent(try uiTree(args))]
         case "mac_record_start": return [textContent(try recordStart(args))]
@@ -258,12 +263,17 @@ private final class MacControlServer {
         return jsonString(info)
     }
 
-    private func screenshot() throws -> [[String: Any]] {
+    private func screenshot(_ args: [String: Any]) throws -> [[String: Any]] {
         guard CGDisplayBounds(CGMainDisplayID()).width > 0 else {
             throw ToolFailure("No Mac display is available to this process. Run the MCP host in a logged-in local desktop session.")
         }
         guard CGPreflightScreenCaptureAccess() else {
             throw ToolFailure("Screen Recording permission is missing. \(PermissionHint.screenRecording)")
+        }
+        let target = try targetApp(args)
+        if let target {
+            try requireAccessibility()
+            try bringToFront(target)
         }
         let path = FileManager.default.temporaryDirectory.appendingPathComponent("mac-control-\(UUID().uuidString).jpg")
         defer { try? FileManager.default.removeItem(at: path) }
@@ -280,8 +290,11 @@ private final class MacControlServer {
             throw ToolFailure("Screen capture failed. Check Screen Recording permission and that this process runs in a logged-in Mac desktop session.")
         }
         let bounds = CGDisplayBounds(CGMainDisplayID())
-        lastCapture = CaptureSize(width: image.pixelsWide, height: image.pixelsHigh, displayBounds: bounds)
-        let description = "Main display screenshot: \(image.pixelsWide) x \(image.pixelsHigh) pixels. Use these pixel coordinates with mac_mouse."
+        let focused = AXIsProcessTrusted() ? focusedApp() : nil
+        lastCapture = CaptureSize(width: image.pixelsWide, height: image.pixelsHigh, displayBounds: bounds,
+                                  focusedPID: focused?.processIdentifier, windowFrame: focused.flatMap(windowFrame))
+        var description = "Main display screenshot: \(image.pixelsWide) x \(image.pixelsHigh) pixels. Use these pixel coordinates with mac_mouse."
+        if let focused { description += " \(focused.localizedName ?? "An app") is in front." }
         return [textContent(description), ["type": "image", "data": data.base64EncodedString(), "mimeType": "image/jpeg"]]
     }
 
@@ -417,8 +430,44 @@ private final class MacControlServer {
     private func bringToFront(_ app: NSRunningApplication) throws {
         if focusedApp()?.processIdentifier == app.processIdentifier { return }
         // activate() can return false yet still take effect, so waitUntilFocused is the real check.
+        if app.isHidden { _ = app.unhide() }
         _ = app.activate()
-        guard waitUntilFocused(app) else { throw focusFailure(app, focusedApp()) }
+        if waitUntilFocused(app) { return }
+        // With Stage Manager, or when the app has no open window, activate() may leave it behind. Opening
+        // it again through Launch Services sends the reopen event that clicking its Dock icon does.
+        if let url = app.bundleURL {
+            let configuration = NSWorkspace.OpenConfiguration()
+            configuration.activates = true
+            NSWorkspace.shared.openApplication(at: url, configuration: configuration) { _, _ in }
+            if waitUntilFocused(app) { return }
+        }
+        throw focusFailure(app, focusedApp())
+    }
+
+    // The frame of the app's focused or main window, in screen points.
+    private func windowFrame(_ app: NSRunningApplication) -> CGRect? {
+        let appElement = AXUIElementCreateApplication(app.processIdentifier)
+        guard let window = elementAttribute(appElement, kAXFocusedWindowAttribute as CFString)
+                ?? elementAttribute(appElement, kAXMainWindowAttribute as CFString),
+              let position = attribute(window, kAXPositionAttribute as CFString),
+              let size = attribute(window, kAXSizeAttribute as CFString),
+              CFGetTypeID(position) == AXValueGetTypeID(), CFGetTypeID(size) == AXValueGetTypeID() else { return nil }
+        var origin = CGPoint.zero, extent = CGSize.zero
+        guard AXValueGetValue(position as! AXValue, .cgPoint, &origin),
+              AXValueGetValue(size as! AXValue, .cgSize, &extent) else { return nil }
+        return CGRect(origin: origin, size: extent)
+    }
+
+    // A click aimed at an app must land on the screen the agent saw: the app was in front for the last
+    // screenshot and its window has not moved or resized since.
+    private func requireUnchangedSinceScreenshot(_ app: NSRunningApplication) throws {
+        let name = app.localizedName ?? "the app"
+        guard let capture = lastCapture, capture.focusedPID == app.processIdentifier else {
+            throw ToolFailure("\(name) was not in front for the last mac_screenshot; no input was sent. Call mac_screenshot with app \"\(name)\" first.")
+        }
+        guard windowFrame(app) == capture.windowFrame else {
+            throw ToolFailure("\(name)'s window moved, resized, or changed since the last mac_screenshot; no input was sent. Call mac_screenshot with app \"\(name)\" again.")
+        }
     }
 
     // Re-checks focus immediately before posting input, since another app can take focus between tool calls.
@@ -471,8 +520,14 @@ private final class MacControlServer {
         }
         let start = try point(args)
         let end = action == "drag" ? try point(args, xKey: "to_x", yKey: "to_y") : nil
+        let target = try targetApp(args)
         try requireAccessibility()
         try requireUnlocked()
+        if let target {
+            try bringToFront(target)
+            try requireUnchangedSinceScreenshot(target)
+        }
+        let receiver = try confirmFocus(target)
         switch action {
         case "move":
             try postMouse(.mouseMoved, at: start)
@@ -499,7 +554,7 @@ private final class MacControlServer {
             try postMouse(.leftMouseUp, at: end)
         default: break
         }
-        return "Mouse \(action) completed."
+        return target == nil ? "Mouse \(action) completed." : "Mouse \(action) completed in \(receiver)."
     }
 
     private func scroll(_ args: [String: Any]) throws -> String {
@@ -510,14 +565,17 @@ private final class MacControlServer {
               vertical != 0 || horizontal != 0 else {
             throw ToolFailure("Scroll values must be nonzero integers from -20 to 20.")
         }
+        let target = try targetApp(args)
         try requireAccessibility()
         try requireUnlocked()
+        if let target { try bringToFront(target) }
+        let receiver = try confirmFocus(target)
         guard let event = CGEvent(scrollWheelEvent2Source: nil, units: .line, wheelCount: 2,
                                   wheel1: Int32(vertical), wheel2: Int32(horizontal), wheel3: 0) else {
             throw ToolFailure("Could not create a scroll event.")
         }
         event.post(tap: .cghidEventTap)
-        return "Scrolled."
+        return target == nil ? "Scrolled." : "Scrolled in \(receiver)."
     }
 
     private func typeText(_ args: [String: Any]) throws -> String {

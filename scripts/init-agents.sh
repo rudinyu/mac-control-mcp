@@ -64,5 +64,6 @@ render claude_desktop_config.json
 cat <<EOF
 
 Then grant Accessibility and Screen & System Audio Recording, in System Settings > Privacy & Security,
-to the app that starts the server: your terminal for Claude Code or Codex, or Claude for Claude Desktop.
+to the app that starts the server: your terminal for Claude Code or Codex, or mac-control-mcp itself for
+Claude Desktop, which starts it on its own behalf.
 EOF

@@ -42,14 +42,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         center.addObserver(forName: NSWindow.willCloseNotification, object: nil, queue: .main) { notification in
             // The menu bar menu is a window too; only the setup window controls the Dock icon.
             guard (notification.object as? NSWindow)?.identifier?.rawValue.contains("setup") == true else { return }
-            NSApp.setActivationPolicy(.accessory)
-            // The first time, say where MacControl went; a full menu bar can hide its icon.
-            if !UserDefaults.standard.bool(forKey: "toldAboutMenuBar") {
-                UserDefaults.standard.set(true, forKey: "toldAboutMenuBar")
+            let iconShown = MainActor.assumeIsolated { self.leaveDock() }
+            // The first time, say where MacControl went.
+            let key = iconShown ? "toldAboutMenuBar" : "toldAboutDock"
+            if !UserDefaults.standard.bool(forKey: key) {
+                UserDefaults.standard.set(true, forKey: key)
                 DispatchQueue.main.async {
                     let alert = NSAlert()
-                    alert.messageText = String(localized: "MacControl keeps running in the menu bar")
-                    alert.informativeText = String(localized: "Its icon is in the menu bar at the top right. If your menu bar is full and you cannot find it, open MacControl again from Applications or Spotlight.")
+                    if iconShown {
+                        alert.messageText = String(localized: "MacControl keeps running in the menu bar")
+                        alert.informativeText = String(localized: "Its icon is in the menu bar at the top right. If your menu bar is full and you cannot find it, open MacControl again from Applications or Spotlight.")
+                    } else {
+                        alert.messageText = String(localized: "MacControl keeps running in the Dock")
+                        alert.informativeText = String(localized: "Your menu bar is full, so macOS is hiding MacControl's icon there. MacControl keeps its icon in the Dock instead; click it to open the window.")
+                    }
                     alert.runModal()
                 }
             }
@@ -83,7 +89,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @MainActor func hideSetupWindow() {
         for window in NSApp.windows where window.identifier?.rawValue.contains("setup") == true { window.close() }
-        NSApp.setActivationPolicy(.accessory)
+        leaveDock()
+    }
+
+    // Removes the Dock icon when the window closes, unless the menu bar icon is hidden, which macOS does when
+    // the menu bar is full. Then the Dock icon stays, so MacControl can still be found. Returns whether the
+    // menu bar icon is shown.
+    @MainActor @discardableResult func leaveDock() -> Bool {
+        let shown = menuBarIconShown()
+        SetupModel.shared.note("Menu bar icon \(shown ? "shown" : "hidden"); Dock icon \(shown ? "removed" : "kept").", show: false)
+        NSApp.setActivationPolicy(shown ? .accessory : .regular)
+        return shown
+    }
+
+    // The status item lives in its own window. macOS moves it off every screen, or hides it, when there is no
+    // room for it. If the window cannot be found, the icon counts as hidden, which only keeps the Dock icon.
+    @MainActor private func menuBarIconShown() -> Bool {
+        NSApp.windows.contains { window in
+            String(describing: type(of: window)).contains("StatusBar") && window.isVisible
+                && NSScreen.screens.contains { $0.frame.contains(CGPoint(x: window.frame.midX, y: window.frame.midY)) }
+        }
     }
 }
 

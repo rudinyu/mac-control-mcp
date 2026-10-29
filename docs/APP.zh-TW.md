@@ -8,7 +8,7 @@ MacControl.app 是使用 mac-control 和 mac-exec 最簡單的方式。它內含
 
 1. 從 [Releases 頁面](https://github.com/rudinyu/mac-control-mcp/releases) 下載 `MacControl-<版本>.dmg`。
 2. 打開它，把 **MacControl** 拖進「**應用程式**」。如果從其他位置打開，App 會提議把自己移過去。
-3. 從「應用程式」打開 MacControl，按 **Set Up**。
+3. 從「應用程式」打開 MacControl，按 **Set Up**（中文介面為「開始設定」）。
 
 需要 macOS 14 或以上，Apple Silicon 和 Intel 都可以。App 有 Developer ID 簽章並通過 Apple 公證，打開時不會出現警告。
 

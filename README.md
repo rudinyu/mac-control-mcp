@@ -2,11 +2,11 @@
 
 English | [繁體中文](README.zh-TW.md)
 
-**Easiest way:** download [MacControl.app](docs/APP.md), which installs and connects everything for you.
+**Easiest way:** [download MacControl.app](https://github.com/rudinyu/mac-control-mcp/releases/latest), which installs and connects everything for you. See [docs/APP.md](docs/APP.md).
 
 **Guides:** [MacControl.app](docs/APP.md) · [Installation from source](docs/INSTALL.md) · [Usage and tool reference](docs/USAGE.md) · [mac-exec: sandboxed commands and files](docs/EXEC.md)
 
-An MCP server that runs on your own Mac and lets a local Claude Code or Codex session use macOS screenshots, Accessibility, keyboard, mouse, and screen recording. It talks to the MCP host only over standard input and output. mac-control opens no network port and does not offer arbitrary shell commands.
+An MCP server that runs on your own Mac and lets Claude Desktop, Claude Code, or Codex on that Mac use macOS screenshots, Accessibility, keyboard, mouse, and screen recording. It talks to the MCP host only over standard input and output. mac-control opens no network port and does not offer arbitrary shell commands.
 
 The repository also contains **mac-exec**, a separate MCP server that runs commands and works with files inside an isolated Docker container by default. See [docs/EXEC.md](docs/EXEC.md).
 
@@ -26,7 +26,7 @@ The repository also contains **mac-exec**, a separate MCP server that runs comma
 
 Mouse coordinates are **pixel coordinates in the most recent `mac_screenshot` image**. Take a new screenshot after the screen resolution changes. Recordings are saved in `.build/recordings/`, which is not tracked by Git, and the recording tools return the file path for local viewing or further processing. Recordings do not capture the microphone or system audio.
 
-`mac_type_text`, `mac_key`, and `mac_ui_tree` accept an `app` parameter: the name or bundle ID of a running app with a Dock icon, such as `TextEdit` or `com.apple.TextEdit`. If a name matches several apps, the one in front is chosen; if none of them is in front, the tool reports an error that lists the candidates, and you should use a bundle ID instead. The input tools bring the app to the front first and check again just before sending. If another app has taken focus by then, no input is sent and the tool reports an error. With `app`, `mac_ui_tree` only reads and does not change which app is in front. When the agent runs in a terminal, focus often returns to the terminal between tool calls, so always pass `app` when sending input.
+`mac_screenshot`, `mac_mouse`, `mac_scroll`, `mac_type_text`, `mac_key`, and `mac_ui_tree` accept an `app` parameter: the name or bundle ID of a running app with a Dock icon, such as `TextEdit` or `com.apple.TextEdit`. If a name matches several apps, the one in front is chosen; if none of them is in front, the tool reports an error that lists the candidates, and you should use a bundle ID instead. The other tools bring the app to the front first and check again just before sending. If another app has taken focus by then, no input is sent and the tool reports an error. `mac_mouse` with `app` also refuses to click when the last screenshot was not taken with that app in front, or when its window has moved or resized since. With `app`, `mac_ui_tree` only reads and does not change which app is in front. When the agent runs in a terminal, focus often returns to the terminal between tool calls, so always pass `app`.
 
 In `mac_ui_tree` output, terminals such as iTerm2 use NUL in Accessibility text both to pad wide characters and to mark blank cells. Padding after a wide character is removed, other NULs become spaces, and blanks at the end of each line are trimmed.
 

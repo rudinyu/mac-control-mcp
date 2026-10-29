@@ -83,6 +83,9 @@ class MCPProtocolTests(unittest.TestCase):
             ("mac_key", {"key": "a", "app": "No Such App 7f3c"}),
             ("mac_ui_tree", {"app": 42}),
             ("mac_ui_tree", {"app": "No Such App 7f3c"}),
+            ("mac_mouse", {"action": "click", "x": 0, "y": 0, "app": "No Such App 7f3c"}),
+            ("mac_scroll", {"vertical": 1, "app": "No Such App 7f3c"}),
+            ("mac_screenshot", {"app": "No Such App 7f3c"}),
         ]
         for name, arguments in calls:
             with self.subTest(name=name):
@@ -91,7 +94,7 @@ class MCPProtocolTests(unittest.TestCase):
 
     def test_04_input_tools_accept_target_app(self):
         listed = {tool["name"]: tool for tool in self.request("tools/list")["result"]["tools"]}
-        for name in ("mac_type_text", "mac_key", "mac_ui_tree"):
+        for name in ("mac_type_text", "mac_key", "mac_ui_tree", "mac_mouse", "mac_scroll", "mac_screenshot"):
             with self.subTest(name=name):
                 self.assertEqual(listed[name]["inputSchema"]["properties"]["app"]["type"], "string")
 
