@@ -300,6 +300,7 @@ private final class MacControlServer {
                                   focusedPID: steady ? focused?.processIdentifier : nil, windowFrame: steady ? frame : nil)
         var description = "Main display screenshot: \(image.pixelsWide) x \(image.pixelsHigh) pixels. Use these pixel coordinates with mac_mouse."
         if let focused { description += " \(focused.localizedName ?? "An app") is in front." }
+        if trusted, !steady { description += " The front app or its window changed during the capture; take another screenshot before clicking with app." }
         return [textContent(description), ["type": "image", "data": data.base64EncodedString(), "mimeType": "image/jpeg"]]
     }
 
@@ -487,10 +488,15 @@ private final class MacControlServer {
     }
 
     private func requirePoint(_ point: CGPoint, in app: NSRunningApplication, what: String) throws {
-        guard appAt(point) == app.processIdentifier else {
+        let owner = appAt(point)
+        guard owner == app.processIdentifier else {
             let name = app.localizedName ?? "the app"
-            let owner = appAt(point).flatMap { NSRunningApplication(processIdentifier: $0)?.localizedName }
-            throw ToolFailure("\(what) is not over \(name)\(owner.map { " but over \($0)" } ?? ""); no input was sent. Use a point inside \(name) from a mac_screenshot taken with app \"\(name)\".")
+            guard let owner else {
+                throw ToolFailure("Accessibility could not tell which app is under \(what.lowercased()); no input was sent. Check Accessibility permission, or try again.")
+            }
+            // Some panels, such as Open and Save in sandboxed apps, run in a separate process.
+            let other = NSRunningApplication(processIdentifier: owner)?.localizedName ?? "another process"
+            throw ToolFailure("\(what) is not over \(name) but over \(other); no input was sent. Use a point inside \(name) from a mac_screenshot taken with app \"\(name)\". If the point is in a panel that \(name) opened, leave out app.")
         }
     }
 
