@@ -25,7 +25,7 @@
 
 **滑鼠座標以最新的截圖為準。** `mac_mouse` 使用最近一次 `mac_screenshot` 影像裡的像素位置。在 Retina 螢幕上，影像的像素通常是 `mac_status` 回報的螢幕尺寸的兩倍，例如 1920 × 1080 的螢幕會得到 3840 × 2160 的影像，伺服器會自動換算。請一律以截圖回報的尺寸為準。畫面有任何移動，或解析度改變之後，都要重新截圖。
 
-**一定要指定目標 App。** 代理在終端機或 Claude Desktop 裡執行時，焦點常常會在兩次工具呼叫之間回到那個視窗。沒有指定目標的輸入，就會送進代理自己的視窗，或剛好跑到前景的 App。請在 `mac_screenshot`、`mac_mouse`、`mac_scroll`、`mac_type_text` 和 `mac_key` 加上 `app`。伺服器會先把該 App 切到前景，送出前再確認一次；如果焦點已經被其他 App 搶走，就什麼都不送。`mac_mouse` 另外會檢查：上一張截圖不是在該 App 位於前景時拍的，或它的視窗之後移動或改變了大小，就不點擊。可以在指示裡加一句：
+**一定要指定目標 App。** 代理在終端機或 Claude Desktop 裡執行時，焦點常常會在兩次工具呼叫之間回到那個視窗。沒有指定目標的輸入，就會送進代理自己的視窗，或剛好跑到前景的 App。請在 `mac_screenshot`、`mac_mouse`、`mac_scroll`、`mac_type_text` 和 `mac_key` 加上 `app`。伺服器會先把該 App 切到前景，送出前再確認一次；如果焦點已經被其他 App 搶走，就什麼都不送。`mac_mouse` 另外會檢查：上一張截圖不是在該 App 位於前景時拍的，或它的視窗之後移動或改變了大小，或那個位置上是其他 App（例如蓋在上面的視窗、Dock 或選單列圖示），就不點擊。`mac_scroll` 在游標位於其他 App 上時不會捲動。可以在指示裡加一句：
 
 > 每個 mac-control 工具都使用 `"app": "TextEdit"`。
 
@@ -41,7 +41,7 @@
 
 | 參數 | 型別 | 說明 |
 | --- | --- | --- |
-| `app` | 字串 | 截圖前要切到前景的 App，用法同 `mac_type_text`。也會把它的視窗從「幕前調度」側邊帶回來。需要輔助使用權限。 |
+| `app` | 字串 | 截圖前要切到前景的 App，用法同 `mac_type_text`。也會把它的視窗從「幕前調度」側邊帶回來；沒有開啟視窗的 App 可能會開一個新視窗。需要輔助使用權限。 |
 
 ### `mac_request_screen_recording`
 
@@ -141,7 +141,7 @@
 | `The screen is locked` | Mac 鎖定，或其他使用者正在使用螢幕時，輸入會送到登入視窗，所以工具會拒絕送出。請先解鎖，再請代理繼續。截圖仍可使用，但只會拍到鎖定畫面。 |
 | `Could not determine which app has focus` | 輔助使用無法回報焦點所在的 App。請檢查輔助使用權限。 |
 | `Call mac_screenshot before mac_mouse` 或座標被拒絕 | 先截圖，並使用那張截圖的座標。 |
-| `… was not in front for the last mac_screenshot` 或 `… window moved, resized, or changed` | 沒有點擊任何東西。用同一個 `app` 重新截圖，再用新截圖的座標點擊。 |
+| `… was not steadily in front for the last mac_screenshot`、`… window moved, resized, or changed` 或 `… is not over …` | 沒有點擊任何東西。用同一個 `app` 重新截圖，再用新截圖的座標點擊。 |
 | 點擊位置不對 | 截圖之後畫面變了。重新截圖，並指定 `app`，讓伺服器可以檢查。 |
 | 文字或點擊跑到代理自己的視窗或其他 App | 沒有指定 `app`。一定要指定。 |
 | 客戶端裡看不到這些工具 | 重開客戶端，再檢查設定裡的伺服器路徑。在 Claude Code 可以執行 `/mcp`。 |

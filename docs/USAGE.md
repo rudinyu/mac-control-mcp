@@ -25,7 +25,7 @@ Example requests:
 
 **Mouse coordinates come from the latest screenshot.** `mac_mouse` uses pixel positions in the most recent `mac_screenshot` image. On a Retina display the image usually has twice the pixels of the screen size that `mac_status` reports, for example 3840 × 2160 for a 1920 × 1080 display, and the server converts for you. Always go by the size the screenshot reports. Take a new screenshot after anything moves, and after the resolution changes.
 
-**Always name the target app.** When the agent runs in a terminal or in Claude Desktop, focus often returns to that window between two tool calls. Input sent without a target then lands in the agent's own window, or in whatever app came to the front. Pass `app` to `mac_screenshot`, `mac_mouse`, `mac_scroll`, `mac_type_text`, and `mac_key`. The server brings that app to the front, checks again just before sending, and sends nothing if another app has taken focus. For `mac_mouse`, it also refuses to click when the last screenshot was not taken with that app in front, or when its window has moved or resized since. Add a line like this to your request:
+**Always name the target app.** When the agent runs in a terminal or in Claude Desktop, focus often returns to that window between two tool calls. Input sent without a target then lands in the agent's own window, or in whatever app came to the front. Pass `app` to `mac_screenshot`, `mac_mouse`, `mac_scroll`, `mac_type_text`, and `mac_key`. The server brings that app to the front, checks again just before sending, and sends nothing if another app has taken focus. For `mac_mouse`, it also refuses to click when the last screenshot was not taken with that app in front, when its window has moved or resized since, or when the point is over another app, such as a window on top, the Dock, or a menu bar icon. `mac_scroll` refuses when the pointer is over another app. Add a line like this to your request:
 
 > Use `"app": "TextEdit"` with every mac-control tool.
 
@@ -41,7 +41,7 @@ Captures the main display as a JPEG. The image size sets the coordinate space fo
 
 | Parameter | Type | Notes |
 | --- | --- | --- |
-| `app` | string | App to bring to the front before capturing, as for `mac_type_text`. Also brings its window back from the Stage Manager strip. Needs Accessibility permission. |
+| `app` | string | App to bring to the front before capturing, as for `mac_type_text`. Also brings its window back from the Stage Manager strip; an app with no open window may open a new one. Needs Accessibility permission. |
 
 ### `mac_request_screen_recording`
 
@@ -141,7 +141,7 @@ Only one recording runs at a time. Files are QuickTime MOV, saved in `.build/rec
 | `The screen is locked` | Input is refused while the Mac is locked or another user is on the display, because it would go to the login window. Unlock the Mac, then ask the agent to continue. Screenshots still work but show the lock screen. |
 | `Could not determine which app has focus` | Accessibility could not report the focused app. Check the Accessibility permission. |
 | `Call mac_screenshot before mac_mouse` or coordinates rejected | Take a screenshot first, and use coordinates from that image. |
-| `… was not in front for the last mac_screenshot` or `… window moved, resized, or changed` | Nothing was clicked. Take a new screenshot with the same `app`, then click using its coordinates. |
+| `… was not steadily in front for the last mac_screenshot`, `… window moved, resized, or changed`, or `… is not over …` | Nothing was clicked. Take a new screenshot with the same `app`, then click using its coordinates. |
 | Clicks land in the wrong place | The screen changed after the screenshot. Take a new one, and pass `app` so the server can check. |
 | Text or a click went to the agent's own window or another app | `app` was not passed. Always pass it. |
 | The tools do not appear in the client | Restart the client, then check the server path in its configuration. In Claude Code, run `/mcp`. |

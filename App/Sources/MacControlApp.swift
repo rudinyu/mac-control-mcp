@@ -54,7 +54,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                         alert.informativeText = String(localized: "Its icon is in the menu bar at the top right. If your menu bar is full and you cannot find it, open MacControl again from Applications or Spotlight.")
                     } else {
                         alert.messageText = String(localized: "MacControl keeps running in the Dock")
-                        alert.informativeText = String(localized: "Your menu bar is full, so macOS is hiding MacControl's icon there. MacControl keeps its icon in the Dock instead; click it to open the window.")
+                        alert.informativeText = String(localized: "macOS is not showing MacControl's icon in the menu bar, usually because the menu bar is full. MacControl keeps its icon in the Dock instead; click it to open the window.")
                     }
                     alert.runModal()
                 }

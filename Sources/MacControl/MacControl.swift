@@ -53,7 +53,7 @@ private final class MacControlServer {
         ],
         [
             "name": "mac_screenshot",
-            "description": "Capture the main display. The returned image dimensions define the x/y coordinate space for mac_mouse until the next screenshot. If app is given, that running app is brought to the front first, which also brings back a window from the Stage Manager strip, and mac_mouse with the same app can check that its window has not changed since. Requires Screen Recording permission, and Accessibility permission when app is given.",
+            "description": "Capture the main display. The returned image dimensions define the x/y coordinate space for mac_mouse until the next screenshot. If app is given, that running app is brought to the front first, which also brings back a window from the Stage Manager strip (an app with no open window may open a new one), and mac_mouse with the same app can check that its window has not changed since. Requires Screen Recording permission, and Accessibility permission when app is given.",
             "inputSchema": ["type": "object", "properties": ["app": appProperty], "additionalProperties": false]
         ],
         [
@@ -101,7 +101,7 @@ private final class MacControlServer {
         ],
         [
             "name": "mac_mouse",
-            "description": "Move, click, double-click, right-click, or drag on the main display. x/y and to_x/to_y are pixels in the most recent mac_screenshot image. If app is given, that running app is brought to the front first, and nothing is sent unless it is still in front, the last mac_screenshot was taken with it in front, and its window has not moved or resized since. Requires Accessibility permission.",
+            "description": "Move, click, double-click, right-click, or drag on the main display. x/y and to_x/to_y are pixels in the most recent mac_screenshot image. If app is given, that running app is brought to the front first, and nothing is sent unless it is still in front, the last mac_screenshot was taken with it in front, its window has not moved or resized since, and the point is over that app. Requires Accessibility permission.",
             "inputSchema": [
                 "type": "object",
                 "properties": [
@@ -116,7 +116,7 @@ private final class MacControlServer {
         ],
         [
             "name": "mac_scroll",
-            "description": "Scroll at the current pointer position by line increments. Positive vertical values scroll up; positive horizontal values scroll left. If app is given, that running app is brought to the front first and nothing is scrolled unless it is still in front. Requires Accessibility permission.",
+            "description": "Scroll at the current pointer position by line increments. Positive vertical values scroll up; positive horizontal values scroll left. If app is given, that running app is brought to the front first and nothing is scrolled unless it is still in front and the pointer is over it. Requires Accessibility permission.",
             "inputSchema": [
                 "type": "object",
                 "properties": [
@@ -264,17 +264,21 @@ private final class MacControlServer {
     }
 
     private func screenshot(_ args: [String: Any]) throws -> [[String: Any]] {
+        let target = try targetApp(args)
         guard CGDisplayBounds(CGMainDisplayID()).width > 0 else {
             throw ToolFailure("No Mac display is available to this process. Run the MCP host in a logged-in local desktop session.")
         }
         guard CGPreflightScreenCaptureAccess() else {
             throw ToolFailure("Screen Recording permission is missing. \(PermissionHint.screenRecording)")
         }
-        let target = try targetApp(args)
         if let target {
             try requireAccessibility()
             try bringToFront(target)
         }
+        // Read before capturing, so a window that moves during the capture is not recorded as unchanged.
+        let trusted = AXIsProcessTrusted()
+        let focused = trusted ? focusedApp() : nil
+        let frame = focused.flatMap(windowFrame)
         let path = FileManager.default.temporaryDirectory.appendingPathComponent("mac-control-\(UUID().uuidString).jpg")
         defer { try? FileManager.default.removeItem(at: path) }
         let process = Process()
@@ -290,9 +294,10 @@ private final class MacControlServer {
             throw ToolFailure("Screen capture failed. Check Screen Recording permission and that this process runs in a logged-in Mac desktop session.")
         }
         let bounds = CGDisplayBounds(CGMainDisplayID())
-        let focused = AXIsProcessTrusted() ? focusedApp() : nil
+        let after = trusted ? focusedApp() : nil
+        let steady = after?.processIdentifier == focused?.processIdentifier && after.flatMap(windowFrame) == frame
         lastCapture = CaptureSize(width: image.pixelsWide, height: image.pixelsHigh, displayBounds: bounds,
-                                  focusedPID: focused?.processIdentifier, windowFrame: focused.flatMap(windowFrame))
+                                  focusedPID: steady ? focused?.processIdentifier : nil, windowFrame: steady ? frame : nil)
         var description = "Main display screenshot: \(image.pixelsWide) x \(image.pixelsHigh) pixels. Use these pixel coordinates with mac_mouse."
         if let focused { description += " \(focused.localizedName ?? "An app") is in front." }
         return [textContent(description), ["type": "image", "data": data.base64EncodedString(), "mimeType": "image/jpeg"]]
@@ -463,10 +468,29 @@ private final class MacControlServer {
     private func requireUnchangedSinceScreenshot(_ app: NSRunningApplication) throws {
         let name = app.localizedName ?? "the app"
         guard let capture = lastCapture, capture.focusedPID == app.processIdentifier else {
-            throw ToolFailure("\(name) was not in front for the last mac_screenshot; no input was sent. Call mac_screenshot with app \"\(name)\" first.")
+            throw ToolFailure("\(name) was not steadily in front for the last mac_screenshot; no input was sent. Call mac_screenshot with app \"\(name)\" first.")
         }
-        guard windowFrame(app) == capture.windowFrame else {
-            throw ToolFailure("\(name)'s window moved, resized, or changed since the last mac_screenshot; no input was sent. Call mac_screenshot with app \"\(name)\" again.")
+        guard let frame = capture.windowFrame, windowFrame(app) == frame else {
+            throw ToolFailure("\(name)'s window moved, resized, or changed since the last mac_screenshot, or could not be read; no input was sent. Call mac_screenshot with app \"\(name)\" again.")
+        }
+    }
+
+    // Mouse events go to whatever is under the pointer, so ask Accessibility which app owns that spot. This
+    // also covers the app's own menus and sheets, and refuses another app's window on top, the Dock, and
+    // menu bar icons. Returns nil when Accessibility cannot tell.
+    private func appAt(_ point: CGPoint) -> pid_t? {
+        var element: AXUIElement?
+        guard AXUIElementCopyElementAtPosition(AXUIElementCreateSystemWide(), Float(point.x), Float(point.y), &element) == .success,
+              let element else { return nil }
+        var pid: pid_t = 0
+        return AXUIElementGetPid(element, &pid) == .success ? pid : nil
+    }
+
+    private func requirePoint(_ point: CGPoint, in app: NSRunningApplication, what: String) throws {
+        guard appAt(point) == app.processIdentifier else {
+            let name = app.localizedName ?? "the app"
+            let owner = appAt(point).flatMap { NSRunningApplication(processIdentifier: $0)?.localizedName }
+            throw ToolFailure("\(what) is not over \(name)\(owner.map { " but over \($0)" } ?? ""); no input was sent. Use a point inside \(name) from a mac_screenshot taken with app \"\(name)\".")
         }
     }
 
@@ -518,16 +542,18 @@ private final class MacControlServer {
         guard ["move", "click", "double_click", "right_click", "drag"].contains(action) else {
             throw ToolFailure("Invalid mouse action")
         }
+        let target = try targetApp(args)
         let start = try point(args)
         let end = action == "drag" ? try point(args, xKey: "to_x", yKey: "to_y") : nil
-        let target = try targetApp(args)
         try requireAccessibility()
         try requireUnlocked()
-        if let target {
-            try bringToFront(target)
-            try requireUnchangedSinceScreenshot(target)
-        }
+        if let target { try bringToFront(target) }
         let receiver = try confirmFocus(target)
+        if let target {
+            try requireUnchangedSinceScreenshot(target)
+            // Moving the pointer sends nothing to an app; a drag may end over another app, as a drop onto Finder does.
+            if action != "move" { try requirePoint(start, in: target, what: "The point") }
+        }
         switch action {
         case "move":
             try postMouse(.mouseMoved, at: start)
@@ -570,6 +596,12 @@ private final class MacControlServer {
         try requireUnlocked()
         if let target { try bringToFront(target) }
         let receiver = try confirmFocus(target)
+        if let target {
+            guard let pointer = CGEvent(source: nil)?.location else {
+                throw ToolFailure("Could not read the pointer position; no input was sent.")
+            }
+            try requirePoint(pointer, in: target, what: "The pointer")
+        }
         guard let event = CGEvent(scrollWheelEvent2Source: nil, units: .line, wheelCount: 2,
                                   wheel1: Int32(vertical), wheel2: Int32(horizontal), wheel3: 0) else {
             throw ToolFailure("Could not create a scroll event.")

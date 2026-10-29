@@ -83,14 +83,24 @@ class MCPProtocolTests(unittest.TestCase):
             ("mac_key", {"key": "a", "app": "No Such App 7f3c"}),
             ("mac_ui_tree", {"app": 42}),
             ("mac_ui_tree", {"app": "No Such App 7f3c"}),
-            ("mac_mouse", {"action": "click", "x": 0, "y": 0, "app": "No Such App 7f3c"}),
-            ("mac_scroll", {"vertical": 1, "app": "No Such App 7f3c"}),
-            ("mac_screenshot", {"app": "No Such App 7f3c"}),
         ]
         for name, arguments in calls:
             with self.subTest(name=name):
                 response = self.request("tools/call", {"name": name, "arguments": arguments})
                 self.assertTrue(response["result"]["isError"])
+
+    def test_07_target_app_is_checked_before_anything_else(self):
+        # These fail on the app alone, before the screenshot, permission, or coordinate checks.
+        for name, arguments in [
+            ("mac_mouse", {"action": "click", "x": 0, "y": 0}),
+            ("mac_scroll", {"vertical": 1}),
+            ("mac_screenshot", {}),
+        ]:
+            for app, expected in [("No Such App 7f3c", "No running app"), (42, "non-empty app name")]:
+                with self.subTest(name=name, app=app):
+                    response = self.request("tools/call", {"name": name, "arguments": {**arguments, "app": app}})
+                    self.assertTrue(response["result"]["isError"])
+                    self.assertIn(expected, response["result"]["content"][0]["text"])
 
     def test_04_input_tools_accept_target_app(self):
         listed = {tool["name"]: tool for tool in self.request("tools/list")["result"]["tools"]}
