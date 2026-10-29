@@ -27,8 +27,8 @@ private struct Settings {
     let auditLog: URL
     let problems: [String]
 
-    // A read-only folder inside the workspace could be replaced with a link by the sandbox between runs,
-    // so it may not be there; it is visible under /workspace anyway.
+    // A read-only folder inside the workspace is refused: the sandbox could replace it with a link between
+    // runs, and it is visible under /workspace anyway.
     static func readOnlyRejection(_ folder: URL, home: URL, project: URL, workspace: URL) -> String? {
         if let reason = mountRejection(folder, home: home, protected: [project]) { return reason }
         let path = resolvedPath(folder), root = resolvedPath(workspace)
@@ -290,11 +290,14 @@ private final class MacExecServer {
             try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true,
                                                     attributes: [.posixPermissions: 0o700])
             // O_NOFOLLOW: never append to another file through a link put in the log's place.
-            let fd = open(settings.auditLog.path, O_WRONLY | O_APPEND | O_CREAT | O_NOFOLLOW | O_CLOEXEC, 0o600)
+            // O_NONBLOCK: a FIFO there fails at once instead of waiting for a reader; it is refused below.
+            let fd = open(settings.auditLog.path, O_WRONLY | O_APPEND | O_CREAT | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC, 0o600)
             guard fd >= 0 else { throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
             let handle = FileHandle(fileDescriptor: fd, closeOnDealloc: true)
+            defer { try? handle.close() }
             var info = stat()
             guard fstat(fd, &info) == 0, info.st_mode & S_IFMT == S_IFREG else { throw POSIXError(.EFTYPE) }
+            if info.st_mode & 0o077 != 0 { fchmod(fd, 0o600) }
             try handle.write(contentsOf: data + Data([0x0a]))
         } catch {
             throw ToolFailure("Could not write the audit log \(settings.auditLog.path): \(error.localizedDescription); nothing was run.")
@@ -358,12 +361,15 @@ private final class MacExecServer {
             var target = folder.lastPathComponent, suffix = 2
             while used.contains(target) { target = "\(folder.lastPathComponent)-\(suffix)"; suffix += 1 }
             used.insert(target)
-            // Check again what the folder resolves to now, since links in its path may have changed since startup.
-            if let reason = Settings.readOnlyRejection(folder, home: settings.home, project: settings.project,
-                                                       workspace: settings.workspace) {
+            // Check again what the folder resolves to now, since links in its path may have changed since startup,
+            // and mount exactly the path that was checked. The sandbox cannot change links outside the workspace,
+            // so only another program on the Mac could still swap one between this check and the mount.
+            let source = resolvedPath(folder)
+            if let reason = Settings.readOnlyRejection(URL(fileURLWithPath: source), home: settings.home,
+                                                       project: settings.project, workspace: settings.workspace) {
                 throw ToolFailure("MAC_EXEC_READONLY_DIRS entry \(folder.path) can no longer be shared: \(reason) Nothing was run.")
             }
-            readOnly.append((resolvedPath(folder), "/mnt/readonly/\(target)"))
+            readOnly.append((source, "/mnt/readonly/\(target)"))
         }
         let arguments = try runtime.runArguments(SandboxRun(name: name, image: settings.image, workspace: root,
                                                         readOnly: readOnly, workdir: containerCwd, command: command))

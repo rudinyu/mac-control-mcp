@@ -44,7 +44,7 @@ Set these in the `env` section of the server's entry in your client configuratio
 | `MAC_EXEC_ALLOW_HOST` | off | Set to `1` to make `host_exec` available. |
 | `MAC_EXEC_IMAGE` | `mac-exec-sandbox:latest` | The Docker image to run. |
 | `MAC_EXEC_DOCKER` | found automatically | Path of the `docker` program, if it is not in a usual place. |
-| `MAC_EXEC_AUDIT_LOG` | `~/Library/Logs/mac-exec/audit.log` | Where commands are logged. It may not be inside the workspace, and it is never written through a link. |
+| `MAC_EXEC_AUDIT_LOG` | `~/Library/Logs/mac-exec/audit.log` | Where commands are logged. It may not be inside the workspace, and the log file itself may not be a link. |
 
 Example `.mcp.json` entry that shares a project folder read-only and allows `host_exec`:
 

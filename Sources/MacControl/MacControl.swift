@@ -318,11 +318,7 @@ private final class MacControlServer {
         guard !recordings.values.contains(where: { $0.process.isRunning }) else {
             throw ToolFailure("A screen recording is already running.")
         }
-        let directory = Self.recordingsFolder()
-        // Only this user may read recordings; screencapture creates the file with the ordinary umask.
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true,
-                                                attributes: [.posixPermissions: 0o700])
-        try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: directory.path)
+        let directory = try Self.privateRecordingsFolder()
         let id = UUID().uuidString
         let path = directory.appendingPathComponent("\(id).mov")
         let process = Process()
@@ -346,12 +342,32 @@ private final class MacControlServer {
     // is replaced on update, and writing into it breaks its signature. Removing MacControl keeps them.
     // A source build keeps .build/recordings.
     private static func recordingsFolder() -> URL {
-        let executable = URL(fileURLWithPath: CommandLine.arguments[0]).standardizedFileURL
-        if executable.path.contains(".app/Contents/") {
+        if Bundle.main.bundleURL.pathExtension == "app" {
             return FileManager.default.homeDirectoryForCurrentUser
                 .appendingPathComponent("Movies/MacControl", isDirectory: true)
         }
+        let executable = Bundle.main.executableURL?.resolvingSymlinksInPath()
+            ?? URL(fileURLWithPath: CommandLine.arguments[0]).standardizedFileURL
         return executable.deletingLastPathComponent().appendingPathComponent("recordings", isDirectory: true)
+    }
+
+    // Only this user may read recordings; screencapture creates each file with the ordinary umask,
+    // so the folder itself must be 0700. Folders above it keep their own modes.
+    private static func privateRecordingsFolder() throws -> URL {
+        let directory = recordingsFolder()
+        let fm = FileManager.default
+        try fm.createDirectory(at: directory.deletingLastPathComponent(), withIntermediateDirectories: true)
+        if !fm.fileExists(atPath: directory.path) {
+            try fm.createDirectory(at: directory, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
+        }
+        var info = stat()
+        guard lstat(directory.path, &info) == 0, info.st_mode & S_IFMT == S_IFDIR, info.st_uid == getuid() else {
+            throw ToolFailure("\(directory.path) is not a folder of yours; move it away and try again.")
+        }
+        if info.st_mode & 0o077 != 0, chmod(directory.path, 0o700) != 0 {
+            throw ToolFailure("Could not make \(directory.path) private; recordings were not started.")
+        }
+        return directory
     }
 
     private func recordStatus(_ args: [String: Any]) throws -> String {

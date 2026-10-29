@@ -44,7 +44,7 @@
 | `MAC_EXEC_ALLOW_HOST` | 關閉 | 設成 `1` 才會出現 `host_exec`。 |
 | `MAC_EXEC_IMAGE` | `mac-exec-sandbox:latest` | 要執行的 Docker 映像檔。 |
 | `MAC_EXEC_DOCKER` | 自動尋找 | `docker` 程式的路徑，如果它不在常見的位置。 |
-| `MAC_EXEC_AUDIT_LOG` | `~/Library/Logs/mac-exec/audit.log` | 指令紀錄的位置。不能在 workspace 裡，也不會透過連結寫入。 |
+| `MAC_EXEC_AUDIT_LOG` | `~/Library/Logs/mac-exec/audit.log` | 指令紀錄的位置。不能在 workspace 裡，紀錄檔本身也不能是連結。 |
 
 `.mcp.json` 範例：唯讀共用一個專案資料夾，並開啟 `host_exec`：
 

@@ -258,6 +258,17 @@ class SettingsTests(unittest.TestCase):
         finally:
             shutil.rmtree(workspace)
 
+    def test_read_only_folder_containing_the_workspace_is_allowed(self):
+        parent = make_temp("mac-exec-parent-")
+        try:
+            server = Server(MAC_EXEC_WORKSPACE=os.path.join(parent, "workspace"), MAC_EXEC_READONLY_DIRS=parent)
+            try:
+                self.assertEqual(server.ok("exec_status")["problems"], [])
+            finally:
+                server.close()
+        finally:
+            shutil.rmtree(parent, ignore_errors=True)
+
     def test_audit_log_inside_the_workspace_is_refused(self):
         workspace = make_temp("mac-exec-ws-")
         try:
@@ -331,6 +342,23 @@ class HostExecTests(unittest.TestCase):
             self.assertFalse(os.path.exists(marker))
         finally:
             server.close()
+
+    def test_audit_log_fifo_is_refused_without_blocking(self):
+        folder = make_temp("mac-exec-log-")
+        try:
+            log = os.path.join(folder, "audit.log")
+            os.mkfifo(log)
+            marker = os.path.join(folder, "ran")
+            server = Server(MAC_EXEC_ALLOW_HOST="1", MAC_EXEC_AUDIT_LOG=log)
+            try:
+                is_error, text = server.call("host_exec", command=f"touch '{marker}'", reason="testing audit FIFOs")
+                self.assertTrue(is_error)
+                self.assertIn("audit log", text)
+                self.assertFalse(os.path.exists(marker))
+            finally:
+                server.close()
+        finally:
+            shutil.rmtree(folder)
 
     def test_audit_log_links_are_not_followed(self):
         folder = make_temp("mac-exec-log-")
@@ -418,8 +446,10 @@ class SandboxTests(unittest.TestCase):
             server = Server(MAC_EXEC_READONLY_DIRS=link)
             try:
                 self.assertEqual(server.ok("sandbox_exec", command="echo first")["exit_code"], 0)
+                inside = os.path.join(server.workspace, "inside")
+                os.mkdir(inside)
                 os.remove(link)
-                os.symlink(os.path.expanduser("~/.ssh"), link)
+                os.symlink(inside, link)
                 is_error, text = server.call("sandbox_exec", command="ls /mnt/readonly/shared")
                 self.assertTrue(is_error)
                 self.assertIn("can no longer be shared", text)
