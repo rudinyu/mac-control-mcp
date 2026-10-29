@@ -250,7 +250,7 @@ struct SetupView: View {
             }
             Divider()
             if model.detectedClients.isEmpty && model.hasChecked {
-                StepRow(title: "Clients", state: .needsAction("Install Claude Desktop, Claude Code, or Codex, then reopen this window.")) { EmptyView() }
+                StepRow(title: "Clients", state: .needsAction(String(localized: "Install Claude Desktop, Claude Code, or Codex, then reopen this window."))) { EmptyView() }
             }
             ForEach(model.detectedClients) { client in
                 StepRow(title: LocalizedStringKey(client.rawValue), state: model.clients[client]!, leading: {
@@ -292,9 +292,6 @@ struct SetupView: View {
                     }
                 }
                 .font(.caption).foregroundStyle(.secondary).padding(.leading, 28)
-            }
-            if let note = model.appleSiliconNote {
-                Text(note).font(.caption).foregroundStyle(.orange).padding(.leading, 28)
             }
             StepRow(title: "Sandbox environment", state: model.image) {
                 if case .needsAction = model.image {

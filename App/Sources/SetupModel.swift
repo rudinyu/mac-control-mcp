@@ -175,12 +175,6 @@ final class SetupModel: ObservableObject {
         mountRejection(workspace, home: FileManager.default.homeDirectoryForCurrentUser, protected: [paths.bundle])
     }
 
-    var appleSiliconNote: String? {
-        runtimeChoice == .appleContainer
-            ? "Apple container support has not yet been verified on Apple silicon hardware. Please report problems."
-            : nil
-    }
-
     static var setupLog: URL {
         FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Logs/MacControl/setup.log")
     }

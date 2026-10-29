@@ -72,6 +72,7 @@
   "Hides the permission steps": "隱藏權限步驟",
   "In progress": "進行中",
   "Install": "安裝",
+  "Install Claude Desktop, Claude Code, or Codex, then reopen this window.": "請安裝 Claude Desktop、Claude Code 或 Codex，再重新打開這個視窗。",
   "Install or turn on Claude Desktop, Claude Code, or Codex.": "請安裝或開啟 Claude Desktop、Claude Code 或 Codex。",
   "Installed %@.": "已安裝 %@。",
   "Installed in %@": "已安裝在 %@",

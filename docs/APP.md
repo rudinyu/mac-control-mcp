@@ -25,7 +25,7 @@ Every download has its version and SHA-256 checksum fixed inside the signed app.
 
 After setting up, quit and reopen Claude Desktop, or start a new Claude Code or Codex session, to load the tools.
 
-> Apple container support has not yet been verified on Apple silicon hardware. If something fails there, please open an issue.
+> Apple container was verified on Apple silicon with macOS 26: the sandbox runs as an unprivileged user with a read-only system, and files in the workspace appear on the Mac. If something fails on your Mac, please open an issue.
 
 ## Using it day to day
 
