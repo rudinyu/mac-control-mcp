@@ -11,36 +11,38 @@ enum RunningServers {
         let unknown: Int
     }
 
-    private struct FileID: Equatable {
-        let device: UInt64
-        let inode: UInt64
-    }
-
     static func old(programs: [URL]) -> Old {
-        var current: [String: FileID] = [:]
+        // Inodes of the programs on disk. The path is the same on both sides, so the volume is too.
+        var current: [String: UInt64] = [:]
         for program in programs {
             let path = program.resolvingSymlinksInPath().path
             var info = stat()
-            if stat(path, &info) == 0 { current[path] = FileID(device: UInt64(UInt32(bitPattern: info.st_dev)), inode: UInt64(info.st_ino)) }
+            if stat(path, &info) == 0 { current[path] = UInt64(info.st_ino) }
         }
         var clients = Set<String>(), unknown = 0
         for pid in allPIDs() {
             guard let path = path(of: pid), let onDisk = current[path],
-                  let running = runningProgram(pid), running != onDisk, let info = info(of: pid) else { continue }
+                  let running = runningInode(pid, path: path), running != onDisk, let info = info(of: pid) else { continue }
             if let name = OldServers.clientName(ancestors: ancestors(of: info)) { clients.insert(name) } else { unknown += 1 }
         }
         return Old(clients: clients.sorted(), unknown: unknown)
     }
 
-    // The file the process is running: its lowest mapped file region, which is the program itself.
-    private static func runningProgram(_ pid: pid_t) -> FileID? {
+    // A program maps its own file within its first few regions, ahead of libraries and the shared cache.
+    private static let regionsToSearch = 64
+
+    // The inode of the file the process mapped from its program path, which stays the replaced file's after
+    // an update. Returns nil when it cannot be read, so the server counts as current: a wrong warning
+    // would keep MacControl from reporting Ready, while a missed one only leaves the old advice.
+    private static func runningInode(_ pid: pid_t, path: String) -> UInt64? {
         var region = proc_regionwithpathinfo()
         let size = Int32(MemoryLayout<proc_regionwithpathinfo>.size)
         var address: UInt64 = 0
-        for _ in 0..<64 {
+        for _ in 0..<regionsToSearch {
             guard proc_pidinfo(pid, PROC_PIDREGIONPATHINFO, address, &region, size) == size else { return nil }
-            let stat = region.prp_vip.vip_vi.vi_stat
-            if stat.vst_ino != 0 { return FileID(device: UInt64(stat.vst_dev), inode: stat.vst_ino) }
+            let regionPath = withUnsafeBytes(of: region.prp_vip.vip_path) { String(cString: $0.bindMemory(to: CChar.self).baseAddress!) }
+            let fileStat = region.prp_vip.vip_vi.vi_stat
+            if fileStat.vst_ino != 0, regionPath == path { return fileStat.vst_ino }
             address = region.prp_prinfo.pri_address + region.prp_prinfo.pri_size
         }
         return nil
