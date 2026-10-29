@@ -24,7 +24,7 @@
 | `mac_key` | 按 Enter、方向鍵、字母鍵及 Command 等組合鍵 |
 | `mac_record_start` / `mac_record_status` / `mac_record_stop` | 錄製主螢幕影片到本機 MOV 檔，單次最長 120 秒 |
 
-滑鼠座標使用**最近一次 `mac_screenshot` 影像的像素座標**。螢幕解析度變動後，請先重新截圖。錄影檔存於 `.build/recordings/`，此目錄不會進入 Git；錄影工具回傳的檔案路徑可供本機查看或後續處理。影片沒有額外錄製麥克風或系統音訊。
+滑鼠座標使用**最近一次 `mac_screenshot` 影像的像素座標**。螢幕解析度變動後，請先重新截圖。使用 MacControl.app 時錄影檔存於 `~/Movies/MacControl/`，從原始碼建置時存於 `.build/recordings/`（不會進入 Git）；錄影工具回傳的檔案路徑可供本機查看或後續處理。影片沒有額外錄製麥克風或系統音訊。
 
 `mac_screenshot`、`mac_mouse`、`mac_scroll`、`mac_type_text`、`mac_key` 和 `mac_ui_tree` 都可以加上 `app` 參數，填執行中、有 Dock 圖示的 App 名稱或 bundle ID（例如 `TextEdit` 或 `com.apple.TextEdit`）。名稱同時符合多個 App 時，會選目前在前景的那個；都不在前景就回報錯誤並列出候選，請改用 bundle ID。`mac_screenshot`、`mac_mouse`、`mac_scroll`、`mac_type_text` 和 `mac_key` 會先把該 App 切到前景，送出前再確認一次；如果焦點已經被其他 App 搶走，就不會送出任何輸入，並回報錯誤。`mac_mouse` 指定 `app` 時，如果上一張截圖不是在該 App 位於前景時拍的，或它的視窗之後移動或改變了大小，或那個位置上是其他 App，也不會點擊；`mac_scroll` 在游標位於其他 App 上時也不會捲動。`mac_ui_tree` 指定 `app` 時只讀取，不會切換前景 App。代理在終端機裡執行時，焦點常在兩次工具呼叫之間回到終端機，所以建議一律指定 `app`。iTerm2 等終端機在輔助使用文字裡用 NUL 代表寬字元的補位和空白格：寬字元後的補位會移除，其他 NUL 轉成空格，每行結尾的空白會去掉。
 

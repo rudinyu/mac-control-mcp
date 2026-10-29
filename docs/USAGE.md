@@ -128,7 +128,7 @@ Returns the Accessibility tree of the app's focused window as JSON, with each el
 | `mac_record_status` | `recording_id`, required | Reports `recording`, `ready`, or `failed`, with the file path once ready |
 | `mac_record_stop` | `recording_id`, required | Stops early |
 
-Only one recording runs at a time. Files are QuickTime MOV, saved in `.build/recordings/` inside the clone. Recordings have no audio. After `mac_record_stop`, the file may need a moment before `mac_record_status` reports `ready`.
+Only one recording runs at a time. Files are QuickTime MOV, saved in `~/Movies/MacControl/` with MacControl.app, or in `.build/recordings/` inside the clone for a source build. Only your account can open the folder. Recordings have no audio. After `mac_record_stop`, the file may need a moment before `mac_record_status` reports `ready`.
 
 ## Troubleshooting
 
@@ -150,6 +150,6 @@ Only one recording runs at a time. Files are QuickTime MOV, saved in `.build/rec
 
 - Screenshots, recordings, and UI tree values send what is on your screen to the agent's model. Close private windows first.
 - `mac_type_text` briefly puts the text on the system clipboard, where clipboard history tools and Universal Clipboard on your other devices can capture it. Do not have the agent type passwords or other secrets.
-- Recordings stay in `.build/recordings/` inside the clone until you delete them. Delete the ones you no longer need.
+- Recordings stay in `~/Movies/MacControl/` or `.build/recordings/` until you delete them. Delete the ones you no longer need.
 - The server only reads and acts on your desktop. It opens no network port, does not run arbitrary shell commands, and talks only to the client that started it.
 - The agent can click and type anything you could. Keep your client's approval prompts on, and do not let it confirm purchases, deletions, or messages without checking.

@@ -318,9 +318,11 @@ private final class MacControlServer {
         guard !recordings.values.contains(where: { $0.process.isRunning }) else {
             throw ToolFailure("A screen recording is already running.")
         }
-        let directory = URL(fileURLWithPath: CommandLine.arguments[0]).standardizedFileURL
-            .deletingLastPathComponent().appendingPathComponent("recordings", isDirectory: true)
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let directory = Self.recordingsFolder()
+        // Only this user may read recordings; screencapture creates the file with the ordinary umask.
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true,
+                                                attributes: [.posixPermissions: 0o700])
+        try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: directory.path)
         let id = UUID().uuidString
         let path = directory.appendingPathComponent("\(id).mov")
         let process = Process()
@@ -338,6 +340,18 @@ private final class MacControlServer {
             throw ToolFailure("Unknown recording_id.")
         }
         return (id, entry)
+    }
+
+    // Inside MacControl.app, recordings go to ~/Movies/MacControl: the bundle is shared by every account,
+    // is replaced on update, and writing into it breaks its signature. Removing MacControl keeps them.
+    // A source build keeps .build/recordings.
+    private static func recordingsFolder() -> URL {
+        let executable = URL(fileURLWithPath: CommandLine.arguments[0]).standardizedFileURL
+        if executable.path.contains(".app/Contents/") {
+            return FileManager.default.homeDirectoryForCurrentUser
+                .appendingPathComponent("Movies/MacControl", isDirectory: true)
+        }
+        return executable.deletingLastPathComponent().appendingPathComponent("recordings", isDirectory: true)
     }
 
     private func recordStatus(_ args: [String: Any]) throws -> String {

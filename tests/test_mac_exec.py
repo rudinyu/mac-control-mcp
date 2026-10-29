@@ -249,6 +249,23 @@ class SettingsTests(unittest.TestCase):
             with self.subTest(folder=folder):
                 self.check_refused("MAC_EXEC_READONLY_DIRS", MAC_EXEC_READONLY_DIRS=folder)
 
+    def test_read_only_folder_inside_the_workspace_is_refused(self):
+        workspace = make_temp("mac-exec-ws-")
+        try:
+            os.mkdir(os.path.join(workspace, "shared"))
+            self.check_refused("inside the workspace", MAC_EXEC_WORKSPACE=workspace,
+                               MAC_EXEC_READONLY_DIRS=os.path.join(workspace, "shared"))
+        finally:
+            shutil.rmtree(workspace)
+
+    def test_audit_log_inside_the_workspace_is_refused(self):
+        workspace = make_temp("mac-exec-ws-")
+        try:
+            self.check_refused("MAC_EXEC_AUDIT_LOG", MAC_EXEC_WORKSPACE=workspace,
+                               MAC_EXEC_AUDIT_LOG=os.path.join(workspace, "logs", "audit.log"))
+        finally:
+            shutil.rmtree(workspace)
+
 
 class HostExecTests(unittest.TestCase):
     def setUp(self):
@@ -315,6 +332,28 @@ class HostExecTests(unittest.TestCase):
         finally:
             server.close()
 
+    def test_audit_log_links_are_not_followed(self):
+        folder = make_temp("mac-exec-log-")
+        try:
+            target = os.path.join(folder, "other.txt")
+            with open(target, "w", encoding="utf-8") as f:
+                f.write("keep")
+            log = os.path.join(folder, "audit.log")
+            os.symlink(target, log)
+            marker = os.path.join(folder, "ran")
+            server = Server(MAC_EXEC_ALLOW_HOST="1", MAC_EXEC_AUDIT_LOG=log)
+            try:
+                is_error, text = server.call("host_exec", command=f"touch '{marker}'", reason="testing audit links")
+                self.assertTrue(is_error)
+                self.assertIn("audit log", text)
+                self.assertFalse(os.path.exists(marker))
+                with open(target, encoding="utf-8") as f:
+                    self.assertEqual(f.read(), "keep")
+            finally:
+                server.close()
+        finally:
+            shutil.rmtree(folder)
+
 
 @unittest.skipUnless(docker_ready(), "Docker or the mac-exec-sandbox image is not available")
 class SandboxTests(unittest.TestCase):
@@ -369,6 +408,25 @@ class SandboxTests(unittest.TestCase):
                 server.close()
         finally:
             shutil.rmtree(shared)
+
+    def test_read_only_folder_is_checked_again_before_each_run(self):
+        folder = make_temp("mac-exec-ro-")
+        try:
+            os.mkdir(os.path.join(folder, "real"))
+            link = os.path.join(folder, "shared")
+            os.symlink(os.path.join(folder, "real"), link)
+            server = Server(MAC_EXEC_READONLY_DIRS=link)
+            try:
+                self.assertEqual(server.ok("sandbox_exec", command="echo first")["exit_code"], 0)
+                os.remove(link)
+                os.symlink(os.path.expanduser("~/.ssh"), link)
+                is_error, text = server.call("sandbox_exec", command="ls /mnt/readonly/shared")
+                self.assertTrue(is_error)
+                self.assertIn("can no longer be shared", text)
+            finally:
+                server.close()
+        finally:
+            shutil.rmtree(folder)
 
     def test_commands_are_audited(self):
         self.server.ok("sandbox_exec", command="echo audited")

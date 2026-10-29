@@ -20,11 +20,21 @@ private struct Settings {
     let home: URL
     let workspace: URL
     let readOnlyDirs: [URL]
+    let project: URL
     let allowHost: Bool
     let image: String
     let runtime: ContainerRuntime?
     let auditLog: URL
     let problems: [String]
+
+    // A read-only folder inside the workspace could be replaced with a link by the sandbox between runs,
+    // so it may not be there; it is visible under /workspace anyway.
+    static func readOnlyRejection(_ folder: URL, home: URL, project: URL, workspace: URL) -> String? {
+        if let reason = mountRejection(folder, home: home, protected: [project]) { return reason }
+        let path = resolvedPath(folder), root = resolvedPath(workspace)
+        if isSame(path, orInside: root) { return "\(path) is inside the workspace \(root), which the sandbox can change." }
+        return nil
+    }
 
     static func load() -> Settings {
         let env = ProcessInfo.processInfo.environment
@@ -61,7 +71,7 @@ private struct Settings {
         for entry in (env["MAC_EXEC_READONLY_DIRS"] ?? "").split(separator: ":") where !entry.isEmpty {
             let folder = expand(String(entry))
             var isDirectory: ObjCBool = false
-            if let reason = mountRejection(folder, home: home, protected: [project]) {
+            if let reason = readOnlyRejection(folder, home: home, project: project, workspace: workspace) {
                 problems.append("MAC_EXEC_READONLY_DIRS entry \(folder.path) cannot be shared: \(reason)")
             } else if !FileManager.default.fileExists(atPath: folder.path, isDirectory: &isDirectory) || !isDirectory.boolValue {
                 problems.append("MAC_EXEC_READONLY_DIRS entry \(folder.path) is not a folder.")
@@ -69,15 +79,20 @@ private struct Settings {
                 readOnly.append(folder)
             }
         }
+        let auditLog = expand(env["MAC_EXEC_AUDIT_LOG"] ?? "~/Library/Logs/mac-exec/audit.log")
+        // The sandbox can write the workspace, so a log there could be replaced with a link to another file.
+        if isSame(resolvedPath(auditLog), orInside: resolvedPath(workspace)) {
+            problems.append("MAC_EXEC_AUDIT_LOG \(auditLog.path) is inside the workspace, which the sandbox can change; choose a log outside it.")
+        }
         if ContainerRuntime.requestedKind(env) == nil {
             problems.append("MAC_EXEC_RUNTIME is \"\(env["MAC_EXEC_RUNTIME"] ?? "")\"; use docker or apple.")
         }
         return Settings(
-            home: home, workspace: workspace, readOnlyDirs: readOnly,
+            home: home, workspace: workspace, readOnlyDirs: readOnly, project: project,
             allowHost: env["MAC_EXEC_ALLOW_HOST"] == "1",
             image: env["MAC_EXEC_IMAGE"] ?? defaultImage,
             runtime: ContainerRuntime.find(env),
-            auditLog: expand(env["MAC_EXEC_AUDIT_LOG"] ?? "~/Library/Logs/mac-exec/audit.log"),
+            auditLog: auditLog,
             problems: problems
         )
     }
@@ -274,12 +289,12 @@ private final class MacExecServer {
         do {
             try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true,
                                                     attributes: [.posixPermissions: 0o700])
-            if !FileManager.default.fileExists(atPath: settings.auditLog.path) {
-                FileManager.default.createFile(atPath: settings.auditLog.path, contents: nil, attributes: [.posixPermissions: 0o600])
-            }
-            let handle = try FileHandle(forWritingTo: settings.auditLog)
-            defer { try? handle.close() }
-            try handle.seekToEnd()
+            // O_NOFOLLOW: never append to another file through a link put in the log's place.
+            let fd = open(settings.auditLog.path, O_WRONLY | O_APPEND | O_CREAT | O_NOFOLLOW | O_CLOEXEC, 0o600)
+            guard fd >= 0 else { throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
+            let handle = FileHandle(fileDescriptor: fd, closeOnDealloc: true)
+            var info = stat()
+            guard fstat(fd, &info) == 0, info.st_mode & S_IFMT == S_IFREG else { throw POSIXError(.EFTYPE) }
             try handle.write(contentsOf: data + Data([0x0a]))
         } catch {
             throw ToolFailure("Could not write the audit log \(settings.auditLog.path): \(error.localizedDescription); nothing was run.")
@@ -343,6 +358,11 @@ private final class MacExecServer {
             var target = folder.lastPathComponent, suffix = 2
             while used.contains(target) { target = "\(folder.lastPathComponent)-\(suffix)"; suffix += 1 }
             used.insert(target)
+            // Check again what the folder resolves to now, since links in its path may have changed since startup.
+            if let reason = Settings.readOnlyRejection(folder, home: settings.home, project: settings.project,
+                                                       workspace: settings.workspace) {
+                throw ToolFailure("MAC_EXEC_READONLY_DIRS entry \(folder.path) can no longer be shared: \(reason) Nothing was run.")
+            }
             readOnly.append((resolvedPath(folder), "/mnt/readonly/\(target)"))
         }
         let arguments = try runtime.runArguments(SandboxRun(name: name, image: settings.image, workspace: root,
