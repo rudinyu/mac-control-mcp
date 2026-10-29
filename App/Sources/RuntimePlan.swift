@@ -129,19 +129,15 @@ enum PrivacyPane {
 }
 
 // A client keeps running the mac-control and mac-exec it started until it is restarted, even after the
-// app is updated. These decide which running servers are older than the files on disk, and whose they are.
+// app is updated. This names the client of a server that is older than the program on disk.
 enum OldServers {
-    // The process started before its program file was last replaced. A second of slack covers rounding.
-    static func isOld(started: Date, programModified: Date) -> Bool {
-        started.addingTimeInterval(1) < programModified
-    }
-
     // Names the client from the server's ancestors, nearest first: the program paths of its parent, its
     // parent's parent, and so on. Claude Desktop starts servers through a helper called disclaimer.
     static func clientName(ancestors: [String]) -> String? {
         for path in ancestors {
             if path.contains("/Claude.app/") { return "Claude Desktop" }
-            if path.contains("/ChatGPT.app/") || path.contains("/Codex.app/") { return "Codex app" }
+            if path.contains("/codex-cli/") || path.contains("/Codex.app/") { return "Codex app" }
+            if path.contains("/ChatGPT.app/") { return "ChatGPT" }
             // The native installer names the program after its version, such as .../claude/versions/2.1.308.
             if path.contains("/claude/versions/") { return "Claude Code" }
             switch (path as NSString).lastPathComponent {

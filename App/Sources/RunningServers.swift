@@ -1,8 +1,9 @@
 import Darwin
 import Foundation
 
-// Finds mac-control and mac-exec processes started from this app that are older than the programs now on
-// disk, which happens when MacControl was updated while a client was running.
+// Finds mac-control and mac-exec processes started from this app that still run a program file that has
+// since been replaced, which happens when MacControl was updated while a client was running. Comparing
+// the file itself, rather than dates, works however the update was copied in.
 enum RunningServers {
     struct Old: Equatable {
         // Client names, such as Claude Desktop, sorted; "unknown" counts servers whose client is not recognized.
@@ -10,21 +11,39 @@ enum RunningServers {
         let unknown: Int
     }
 
+    private struct FileID: Equatable {
+        let device: UInt64
+        let inode: UInt64
+    }
+
     static func old(programs: [URL]) -> Old {
-        var modified: [String: Date] = [:]
+        var current: [String: FileID] = [:]
         for program in programs {
-            if let date = (try? FileManager.default.attributesOfItem(atPath: program.path))?[.modificationDate] as? Date {
-                modified[program.path] = date
-            }
+            let path = program.resolvingSymlinksInPath().path
+            var info = stat()
+            if stat(path, &info) == 0 { current[path] = FileID(device: UInt64(UInt32(bitPattern: info.st_dev)), inode: UInt64(info.st_ino)) }
         }
         var clients = Set<String>(), unknown = 0
         for pid in allPIDs() {
-            guard let path = path(of: pid), let programDate = modified[path], let info = info(of: pid) else { continue }
-            let started = Date(timeIntervalSince1970: TimeInterval(info.pbi_start_tvsec))
-            guard OldServers.isOld(started: started, programModified: programDate) else { continue }
+            guard let path = path(of: pid), let onDisk = current[path],
+                  let running = runningProgram(pid), running != onDisk, let info = info(of: pid) else { continue }
             if let name = OldServers.clientName(ancestors: ancestors(of: info)) { clients.insert(name) } else { unknown += 1 }
         }
         return Old(clients: clients.sorted(), unknown: unknown)
+    }
+
+    // The file the process is running: its lowest mapped file region, which is the program itself.
+    private static func runningProgram(_ pid: pid_t) -> FileID? {
+        var region = proc_regionwithpathinfo()
+        let size = Int32(MemoryLayout<proc_regionwithpathinfo>.size)
+        var address: UInt64 = 0
+        for _ in 0..<64 {
+            guard proc_pidinfo(pid, PROC_PIDREGIONPATHINFO, address, &region, size) == size else { return nil }
+            let stat = region.prp_vip.vip_vi.vi_stat
+            if stat.vst_ino != 0 { return FileID(device: UInt64(stat.vst_dev), inode: stat.vst_ino) }
+            address = region.prp_prinfo.pri_address + region.prp_prinfo.pri_size
+        }
+        return nil
     }
 
     private static func allPIDs() -> [pid_t] {

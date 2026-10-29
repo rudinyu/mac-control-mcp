@@ -41,6 +41,8 @@ MacControl 使用自己管理的 Linux VM 時，macOS 可能會通知「colima�
 
 MacControl 啟動時，以及之後最多每天一次，會到 GitHub 查詢有沒有新版本。它只讀取公開的版本清單，不會送出任何關於你這台 Mac 的資訊；有新版本時，視窗和選單會出現**下載**。
 
+MacControl 會跟著 Mac 的語言設定：偏好語言是繁體中文時顯示中文，其他情況顯示英文。
+
 ## 更新
 
 MacControl 不會自己替換自己。更新步驟：
@@ -51,8 +53,6 @@ MacControl 不會自己替換自己。更新步驟：
 4. 從「應用程式」打開 MacControl。
 
 權限、已連接的客戶端和 sandbox 都會保留，不需要再按「開始設定」。客戶端在重新啟動之前，會繼續執行它當初啟動的 mac-control 和 mac-exec，所以請結束並重開 Claude Desktop 和 Codex App，並開始新的 Claude Code 或 Codex 工作階段。在那之前，MacControl 會列出仍在使用舊版的客戶端，也不會顯示「已就緒」。
-
-MacControl 會跟著 Mac 的語言設定：偏好語言是繁體中文時顯示中文，其他情況顯示英文。
 
 ## 權限
 

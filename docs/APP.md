@@ -41,6 +41,8 @@ If MacControl says macOS is running a protected copy, it was opened straight fro
 
 MacControl checks GitHub for a newer release when it starts and at most once a day. It only reads the public release list and sends nothing about your Mac; when a newer version exists, the window and the menu show **Download**.
 
+MacControl follows your Mac's language: it is in Traditional Chinese when that is your preferred language, and in English otherwise.
+
 ## Updating
 
 MacControl does not replace itself. To update:
@@ -51,8 +53,6 @@ MacControl does not replace itself. To update:
 4. Open MacControl from Applications.
 
 Permissions, connected clients, and the sandbox stay as they are; you do not need to click Set Up again. A client keeps running the mac-control and mac-exec it started until you restart it, so quit and reopen Claude Desktop and the Codex app, and start a new Claude Code or Codex session. Until then, MacControl names the clients that still use the previous version and does not report Ready.
-
-MacControl follows your Mac's language: it is in Traditional Chinese when that is your preferred language, and in English otherwise.
 
 ## Permissions
 

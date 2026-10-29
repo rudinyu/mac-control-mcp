@@ -225,11 +225,10 @@ final class SetupModel: ObservableObject {
     @Published var oldServers = RunningServers.Old(clients: [], unknown: 0)
     var oldServersMessage: String? {
         if oldServers.clients.isEmpty && oldServers.unknown == 0 { return nil }
-        guard !oldServers.clients.isEmpty else {
-            return String(localized: "An agent app still uses the previous version of MacControl. Quit and reopen it, or start a new session.")
-        }
-        let names = ListFormatter.localizedString(byJoining: oldServers.clients)
-        return String(localized: "\(names) still uses the previous version of MacControl. Quit and reopen it, or start a new session.")
+        var names = oldServers.clients
+        if oldServers.unknown > 0 { names.append(String(localized: "another agent app")) }
+        let list = ListFormatter.localizedString(byJoining: names)
+        return String(localized: "Still using the previous version of MacControl: \(list). Quit and reopen these apps, or start a new session.")
     }
 
     func checkOldServers() {
