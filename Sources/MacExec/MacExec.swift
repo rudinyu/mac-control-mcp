@@ -41,6 +41,7 @@ private struct Settings {
 
     // Returns the first leading part of the path that is the workspace or inside it once links are resolved,
     // such as ~/AgentWorkspace/link in ~/AgentWorkspace/link/data, or nil when no part of it is.
+    // The path is standardized first, removing any "..", which is also the path that is later mounted or written.
     static func partInWorkspace(_ url: URL, workspace: URL) -> String? {
         let root = resolvedPath(workspace)
         var prefix = URL(fileURLWithPath: "/")
@@ -99,8 +100,9 @@ private struct Settings {
         // to send the log to another file.
         var auditLogProblem: String?
         if let prefix = Settings.partInWorkspace(auditLog, workspace: workspace) {
-            auditLogProblem = "MAC_EXEC_AUDIT_LOG \(auditLog.path) is in or reached through the workspace (\(prefix)), which the sandbox can change; choose a log outside it."
-            problems.append(auditLogProblem!)
+            let message = "MAC_EXEC_AUDIT_LOG \(auditLog.path) is in or reached through the workspace (\(prefix)), which the sandbox can change; choose a log outside it."
+            auditLogProblem = message
+            problems.append(message)
         }
         if ContainerRuntime.requestedKind(env) == nil {
             problems.append("MAC_EXEC_RUNTIME is \"\(env["MAC_EXEC_RUNTIME"] ?? "")\"; use docker or apple.")
