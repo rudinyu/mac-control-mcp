@@ -40,11 +40,11 @@ Set these in the `env` section of the server's entry in your client configuratio
 | Variable | Default | Meaning |
 | --- | --- | --- |
 | `MAC_EXEC_WORKSPACE` | `~/AgentWorkspace` | The folder shared read-write at `/workspace`. It is created if it does not exist. |
-| `MAC_EXEC_READONLY_DIRS` | none | Extra folders to share read-only, separated by `:`. Each appears at `/mnt/readonly/<folder name>`. A folder may not be inside the workspace, and each one is checked again before every command. |
+| `MAC_EXEC_READONLY_DIRS` | none | Extra folders to share read-only, separated by `:`. Each appears at `/mnt/readonly/<folder name>`. A folder may not be inside the workspace or reached through a link in it, and each one is checked again before every command. |
 | `MAC_EXEC_ALLOW_HOST` | off | Set to `1` to make `host_exec` available. |
 | `MAC_EXEC_IMAGE` | `mac-exec-sandbox:latest` | The Docker image to run. |
 | `MAC_EXEC_DOCKER` | found automatically | Path of the `docker` program, if it is not in a usual place. |
-| `MAC_EXEC_AUDIT_LOG` | `~/Library/Logs/mac-exec/audit.log` | Where commands are logged. It may not be inside the workspace, and the log file itself may not be a link. |
+| `MAC_EXEC_AUDIT_LOG` | `~/Library/Logs/mac-exec/audit.log` | Where commands are logged. It may not be inside the workspace or reached through a link in it, and the log file itself may not be a link. |
 
 Example `.mcp.json` entry that shares a project folder read-only and allows `host_exec`:
 

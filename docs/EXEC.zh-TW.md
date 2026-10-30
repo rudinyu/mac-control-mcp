@@ -40,11 +40,11 @@
 | 變數 | 預設值 | 說明 |
 | --- | --- | --- |
 | `MAC_EXEC_WORKSPACE` | `~/AgentWorkspace` | 以可讀寫方式共用、在容器裡是 `/workspace` 的資料夾。不存在會自動建立。 |
-| `MAC_EXEC_READONLY_DIRS` | 無 | 額外以唯讀方式共用的資料夾，用 `:` 分隔。每個會出現在 `/mnt/readonly/<資料夾名稱>`。資料夾不能在 workspace 裡，每次執行指令前都會重新檢查。 |
+| `MAC_EXEC_READONLY_DIRS` | 無 | 額外以唯讀方式共用的資料夾，用 `:` 分隔。每個會出現在 `/mnt/readonly/<資料夾名稱>`。資料夾不能在 workspace 裡，也不能經由 workspace 裡的連結到達，每次執行指令前都會重新檢查。 |
 | `MAC_EXEC_ALLOW_HOST` | 關閉 | 設成 `1` 才會出現 `host_exec`。 |
 | `MAC_EXEC_IMAGE` | `mac-exec-sandbox:latest` | 要執行的 Docker 映像檔。 |
 | `MAC_EXEC_DOCKER` | 自動尋找 | `docker` 程式的路徑，如果它不在常見的位置。 |
-| `MAC_EXEC_AUDIT_LOG` | `~/Library/Logs/mac-exec/audit.log` | 指令紀錄的位置。不能在 workspace 裡，紀錄檔本身也不能是連結。 |
+| `MAC_EXEC_AUDIT_LOG` | `~/Library/Logs/mac-exec/audit.log` | 指令紀錄的位置。不能在 workspace 裡，也不能經由 workspace 裡的連結到達，紀錄檔本身也不能是連結。 |
 
 `.mcp.json` 範例：唯讀共用一個專案資料夾，並開啟 `host_exec`：
 

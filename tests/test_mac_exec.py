@@ -253,7 +253,7 @@ class SettingsTests(unittest.TestCase):
         workspace = make_temp("mac-exec-ws-")
         try:
             os.mkdir(os.path.join(workspace, "shared"))
-            self.check_refused("inside the workspace", MAC_EXEC_WORKSPACE=workspace,
+            self.check_refused("is in the workspace", MAC_EXEC_WORKSPACE=workspace,
                                MAC_EXEC_READONLY_DIRS=os.path.join(workspace, "shared"))
         finally:
             shutil.rmtree(workspace)
@@ -268,6 +268,38 @@ class SettingsTests(unittest.TestCase):
                 server.close()
         finally:
             shutil.rmtree(parent, ignore_errors=True)
+
+    def test_read_only_folder_reached_through_the_workspace_is_refused(self):
+        workspace, outside = make_temp("mac-exec-ws-"), make_temp("mac-exec-out-")
+        try:
+            os.mkdir(os.path.join(outside, "data"))
+            os.symlink(outside, os.path.join(workspace, "link"))
+            self.check_refused("is in the workspace", MAC_EXEC_WORKSPACE=workspace,
+                               MAC_EXEC_READONLY_DIRS=os.path.join(workspace, "link", "data"))
+        finally:
+            shutil.rmtree(workspace)
+            shutil.rmtree(outside)
+
+    def test_audit_log_reached_through_the_workspace_is_refused(self):
+        workspace, outside = make_temp("mac-exec-ws-"), make_temp("mac-exec-out-")
+        try:
+            os.symlink(outside, os.path.join(workspace, "link"))
+            log = os.path.join(workspace, "link", "audit.log")
+            self.check_refused("reached through the workspace", MAC_EXEC_WORKSPACE=workspace, MAC_EXEC_AUDIT_LOG=log)
+            # host_exec does not depend on the workspace, but it must not run without a safe log either.
+            marker = os.path.join(outside, "ran")
+            server = Server(MAC_EXEC_WORKSPACE=workspace, MAC_EXEC_AUDIT_LOG=log, MAC_EXEC_ALLOW_HOST="1")
+            try:
+                is_error, text = server.call("host_exec", command=f"touch '{marker}'", reason="testing the log check")
+                self.assertTrue(is_error)
+                self.assertIn("reached through the workspace", text)
+                self.assertFalse(os.path.exists(marker))
+                self.assertFalse(os.path.exists(os.path.join(outside, "audit.log")))
+            finally:
+                server.close()
+        finally:
+            shutil.rmtree(workspace)
+            shutil.rmtree(outside)
 
     def test_audit_log_inside_the_workspace_is_refused(self):
         workspace = make_temp("mac-exec-ws-")

@@ -25,14 +25,29 @@ private struct Settings {
     let image: String
     let runtime: ContainerRuntime?
     let auditLog: URL
+    // Set when the audit log may not be used; every command, host_exec included, is then refused.
+    let auditLogProblem: String?
     let problems: [String]
 
-    // A read-only folder inside the workspace is refused: the sandbox could replace it with a link between
-    // runs, and it is visible under /workspace anyway.
+    // A read-only folder in the workspace, or reached through it, is refused: the sandbox could replace it,
+    // or a link on the way to it, between runs. A folder inside the workspace is visible under /workspace anyway.
     static func readOnlyRejection(_ folder: URL, home: URL, project: URL, workspace: URL) -> String? {
         if let reason = mountRejection(folder, home: home, protected: [project]) { return reason }
-        let path = resolvedPath(folder), root = resolvedPath(workspace)
-        if isSame(path, orInside: root) { return "\(path) is inside the workspace \(root), which the sandbox can change." }
+        if let prefix = partInWorkspace(folder, workspace: workspace) {
+            return "\(prefix) is in the workspace \(resolvedPath(workspace)), which the sandbox can change."
+        }
+        return nil
+    }
+
+    // Returns the first leading part of the path that is the workspace or inside it once links are resolved,
+    // such as ~/AgentWorkspace/link in ~/AgentWorkspace/link/data, or nil when no part of it is.
+    static func partInWorkspace(_ url: URL, workspace: URL) -> String? {
+        let root = resolvedPath(workspace)
+        var prefix = URL(fileURLWithPath: "/")
+        for component in url.standardizedFileURL.pathComponents.dropFirst() {
+            prefix.appendPathComponent(component)
+            if isSame(resolvedPath(prefix), orInside: root) { return prefix.path }
+        }
         return nil
     }
 
@@ -80,9 +95,12 @@ private struct Settings {
             }
         }
         let auditLog = expand(env["MAC_EXEC_AUDIT_LOG"] ?? "~/Library/Logs/mac-exec/audit.log")
-        // The sandbox can write the workspace, so a log there could be replaced with a link to another file.
-        if isSame(resolvedPath(auditLog), orInside: resolvedPath(workspace)) {
-            problems.append("MAC_EXEC_AUDIT_LOG \(auditLog.path) is inside the workspace, which the sandbox can change; choose a log outside it.")
+        // The sandbox can write the workspace, so a log there, or a link on the way to it, could be replaced
+        // to send the log to another file.
+        var auditLogProblem: String?
+        if let prefix = Settings.partInWorkspace(auditLog, workspace: workspace) {
+            auditLogProblem = "MAC_EXEC_AUDIT_LOG \(auditLog.path) is in or reached through the workspace (\(prefix)), which the sandbox can change; choose a log outside it."
+            problems.append(auditLogProblem!)
         }
         if ContainerRuntime.requestedKind(env) == nil {
             problems.append("MAC_EXEC_RUNTIME is \"\(env["MAC_EXEC_RUNTIME"] ?? "")\"; use docker or apple.")
@@ -92,7 +110,7 @@ private struct Settings {
             allowHost: env["MAC_EXEC_ALLOW_HOST"] == "1",
             image: env["MAC_EXEC_IMAGE"] ?? defaultImage,
             runtime: ContainerRuntime.find(env),
-            auditLog: auditLog,
+            auditLog: auditLog, auditLogProblem: auditLogProblem,
             problems: problems
         )
     }
@@ -279,6 +297,7 @@ private final class MacExecServer {
 
     // Every command is logged before it runs. If the log cannot be written, the command does not run.
     private func audit(_ entry: [String: Any]) throws {
+        if let problem = settings.auditLogProblem { throw ToolFailure("\(problem) Nothing was run.") }
         var record = entry
         record["time"] = ISO8601DateFormatter().string(from: Date())
         if let client { record["client"] = client }
