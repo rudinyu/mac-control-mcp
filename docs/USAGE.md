@@ -10,7 +10,7 @@ You normally do not call these tools yourself. You describe a task, and the agen
 
 1. **`mac_status`**: checks permissions and reports the frontmost app.
 2. **`mac_screenshot`**: shows the agent the screen.
-3. **Act**: click with `mac_mouse`, type with `mac_type_text` or `mac_key`, or read controls with `mac_ui_tree`.
+3. **Act**: click with `mac_mouse`, type with `mac_type_text` or `mac_key`, or read controls with `mac_ui_tree` and act on one by its ref with `mac_ax_action`.
 4. **`mac_screenshot` again**: confirms the result before the next step.
 
 Example requests:
@@ -116,8 +116,26 @@ Function keys, punctuation keys, and media keys are not supported. To type punct
 
 Returns the Accessibility tree of the app's focused window as JSON, with each element's role, title, description, and value, plus the element that has keyboard focus. Use it to find buttons and fields by name instead of by pixel position. It reads at most 200 elements, cuts each value to 200 characters, and reports `"truncated": true` when it hits a limit. Password field values are never included. With `app`, it reads that app without bringing it to the front.
 
+Each element that can be acted on also has a `ref`, such as `"ref": "3.12"`, and `actions`, the `mac_ax_action` actions it offers. Reading the tree again for the same app replaces all of that app's refs.
+
 ```json
 {"app": "TextEdit", "max_depth": 6}
+```
+
+### `mac_ax_action`
+
+| Parameter | Type | Notes |
+| --- | --- | --- |
+| `ref` | string, required | A ref from the latest `mac_ui_tree` of the app |
+| `action` | string, required | `press`, `show_menu`, `increment`, `decrement`, `confirm`, `cancel`, `raise`, `set_value`, or `focus` |
+| `value` | string, up to 2000 characters | The text for `set_value`; not allowed with other actions |
+| `app` | string | If given, must be the ref's app |
+
+Acts on the element through Accessibility, so it works without coordinates, does not move the pointer, does not bring the app to the front, and does not use the clipboard. Before sending, it checks that the app has not quit or relaunched, that the element still exists with the same role, and that it still offers the action. Password fields cannot be set. Success means the app accepted the action, not that it did what was expected, so read `mac_ui_tree` again to check. After `set_value`, the field is read back, and a field that does not show the new text is reported as an error; many web fields need `mac_type_text` instead.
+
+```json
+{"ref": "3.12", "action": "press", "app": "Calculator"}
+{"ref": "3.4", "action": "set_value", "value": "Meeting notes", "app": "TextEdit"}
 ```
 
 ### `mac_record_start`, `mac_record_status`, `mac_record_stop`
@@ -142,6 +160,8 @@ Only one recording runs at a time. Files are QuickTime MOV, saved in `~/Movies/M
 | `Could not determine which app has focus` | Accessibility could not report the focused app. Check the Accessibility permission. |
 | `Call mac_screenshot before mac_mouse` or coordinates rejected | Take a screenshot first, and use coordinates from that image. |
 | `… was not steadily in front for the last mac_screenshot`, `… window moved, resized, or changed`, or `… is not over …` | Nothing was clicked. Take a new screenshot with the same `app`, then click using its coordinates. |
+| `Unknown or expired ref`, `… no longer exists or has changed`, or `… has quit or relaunched since mac_ui_tree` | Nothing was sent. Read `mac_ui_tree` again and use a ref from it. |
+| `… may or may not have happened` | The app did not confirm the action. Read `mac_ui_tree` to see whether it happened before trying again. |
 | Clicks land in the wrong place | The screen changed after the screenshot. Take a new one, and pass `app` so the server can check. |
 | Text or a click went to the agent's own window or another app | `app` was not passed. Always pass it. |
 | The tools do not appear in the client | Restart the client, then check the server path in its configuration. In Claude Code, run `/mcp`. |

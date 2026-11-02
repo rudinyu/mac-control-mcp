@@ -53,8 +53,8 @@ class MCPProtocolTests(unittest.TestCase):
         self.assertEqual(
             {tool["name"] for tool in listed},
             {
-                "mac_status", "mac_screenshot", "mac_request_screen_recording", "mac_ui_tree", "mac_record_start", "mac_record_status",
-                "mac_record_stop", "mac_mouse", "mac_scroll", "mac_type_text", "mac_key",
+                "mac_status", "mac_screenshot", "mac_request_screen_recording", "mac_ui_tree", "mac_ax_action", "mac_record_start",
+                "mac_record_status", "mac_record_stop", "mac_mouse", "mac_scroll", "mac_type_text", "mac_key",
             },
         )
 
@@ -114,6 +114,29 @@ class MCPProtocolTests(unittest.TestCase):
         text = response["result"]["content"][0]["text"]
         self.assertIn("dy", text)
         self.assertIn("vertical", text)
+
+    def test_08_ax_action_refuses_bad_arguments_and_unknown_refs(self):
+        # All of these fail before Accessibility permission is checked, so they hold on any machine.
+        for arguments, expected in [
+            ({"ref": "1.1", "action": "launch"}, "Invalid action"),
+            ({"ref": "1.1", "action": "set_value"}, "needs value"),
+            ({"ref": "1.1", "action": "press", "value": "x"}, "only used with set_value"),
+            ({"ref": "", "action": "press"}, "ref must be"),
+            ({"ref": 7, "action": "press"}, "ref must be"),
+            ({"ref": "999.1", "action": "press"}, "Unknown or expired ref 999.1"),
+            ({"ref": "999.1", "action": "set_value", "value": "x", "app": "No Such App 7f3c"}, "Unknown or expired ref"),
+        ]:
+            with self.subTest(arguments=arguments):
+                response = self.request("tools/call", {"name": "mac_ax_action", "arguments": arguments})
+                self.assertTrue(response["result"]["isError"])
+                self.assertIn(expected, response["result"]["content"][0]["text"])
+
+    def test_09_ax_action_schema(self):
+        listed = {tool["name"]: tool for tool in self.request("tools/list")["result"]["tools"]}
+        schema = listed["mac_ax_action"]["inputSchema"]
+        self.assertEqual(schema["required"], ["ref", "action"])
+        self.assertEqual(schema["properties"]["app"]["type"], "string")
+        self.assertIn("set_value", schema["properties"]["action"]["enum"])
 
     def test_05_unknown_method_is_json_rpc_error(self):
         response = self.request("unknown/method")
