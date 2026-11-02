@@ -965,7 +965,8 @@ private final class MacControlServer {
         return owner
     }
 
-    private func describeElement(_ element: AXUIElement, depth: Int, remaining: inout Int, owner: AXOwner?) -> [String: Any] {
+    private func describeElement(_ element: AXUIElement, depth: Int, remaining: inout Int, owner: AXOwner?,
+                                 alwaysRef: Bool = false) -> [String: Any] {
         remaining -= 1
         let role = shortString(attribute(element, kAXRoleAttribute as CFString)) ?? "unknown"
         var result: [String: Any] = ["role": role]
@@ -983,7 +984,7 @@ private final class MacControlServer {
         if let owner, role != "unknown" {
             let actions = availableActions(element, role: role)
             // Web content offers show_menu and focus on nearly every node, so they alone do not earn a ref.
-            if actions.contains(where: { $0 != "show_menu" && $0 != "focus" }) || hidden > 0 {
+            if alwaysRef || actions.contains(where: { $0 != "show_menu" && $0 != "focus" }) || hidden > 0 {
                 result["ref"] = ref(for: element, role: role, owner: owner)
                 result["actions"] = actions
             }
@@ -1062,14 +1063,13 @@ private final class MacControlServer {
         let text = try optionalText("text")
         guard role != nil || text != nil else { throw ToolFailure("Give role, text, or both.") }
         guard args["exact"] == nil || args["exact"] is Bool else { throw ToolFailure("exact must be true or false.") }
-        // AXButton and button name the same role.
-        let bareRole = role.map { $0.lowercased().hasPrefix("ax") ? String($0.dropFirst(2)) : $0 }
-        return SearchQuery(role: bareRole, text: text, exact: args["exact"] as? Bool ?? false)
+        return SearchQuery(role: role, text: text, exact: args["exact"] as? Bool ?? false)
     }
 
-    private func matches(_ element: AXUIElement, _ query: SearchQuery) -> Bool {
-        guard let role = attribute(element, kAXRoleAttribute as CFString) as? String else { return false }
-        if let wanted = query.role, String(role.dropFirst(role.hasPrefix("AX") ? 2 : 0)).caseInsensitiveCompare(wanted) != .orderedSame {
+    private func matches(_ element: AXUIElement, role: String, _ query: SearchQuery) -> Bool {
+        // AXButton and button name the same role.
+        if let wanted = query.role, role.caseInsensitiveCompare(wanted) != .orderedSame,
+           role.caseInsensitiveCompare("AX" + wanted) != .orderedSame {
             return false
         }
         guard let text = query.text else { return true }
@@ -1096,7 +1096,19 @@ private final class MacControlServer {
         return roots.isEmpty ? [appElement] : roots
     }
 
-    // Depth-first search in document order. complete is false when a limit or the deadline cut it short.
+    // Reads an attribute the search depends on. nil with readable true means the element simply has none;
+    // readable false means the app did not answer, so the search cannot claim to have seen everything.
+    private func searchAttribute(_ element: AXUIElement, _ name: String) -> (value: CFTypeRef?, readable: Bool) {
+        var value: CFTypeRef?
+        switch AXUIElementCopyAttributeValue(element, name as CFString, &value) {
+        case .success: return (value, true)
+        case .noValue, .attributeUnsupported: return (nil, true)
+        default: return (nil, false)
+        }
+    }
+
+    // Depth-first search in document order. complete is false when a limit, the deadline, or an element that
+    // could not be read cut it short, so a missing match is only certain when complete is true.
     private func search(_ roots: [AXUIElement], _ query: SearchQuery, limit: Int, deadline: Date) -> (found: [AXUIElement], complete: Bool) {
         var stack = roots.reversed().map { ($0, 0) }
         var found: [AXUIElement] = []
@@ -1105,11 +1117,14 @@ private final class MacControlServer {
         while let (element, depth) = stack.popLast() {
             if visited >= searchNodeLimit || Date() >= deadline { return (found, false) }
             visited += 1
-            if matches(element, query) {
+            let role = searchAttribute(element, kAXRoleAttribute)
+            let childList = searchAttribute(element, kAXChildrenAttribute)
+            if !role.readable || !childList.readable { complete = false }
+            if let role = role.value as? String, matches(element, role: role, query) {
                 found.append(element)
                 if found.count >= limit { return (found, complete && stack.isEmpty) }
             }
-            guard let children = attribute(element, kAXChildrenAttribute as CFString) as? [AXUIElement], !children.isEmpty else { continue }
+            guard let children = childList.value as? [AXUIElement], !children.isEmpty else { continue }
             if depth >= searchDepthLimit {
                 complete = false
                 continue
@@ -1129,11 +1144,12 @@ private final class MacControlServer {
         return (app, app.processIdentifier, nil)
     }
 
+    // Every match gets a ref, even one with no action of its own, so it can be read below or waited on.
     private func describeMatches(_ found: [AXUIElement], pid: pid_t) -> [[String: Any]] {
         let owner = refOwner(pid, fresh: false)
         return found.map { element in
             var remaining = 1
-            return describeElement(element, depth: 0, remaining: &remaining, owner: owner)
+            return describeElement(element, depth: 0, remaining: &remaining, owner: owner, alwaysRef: true)
         }
     }
 
@@ -1160,6 +1176,10 @@ private final class MacControlServer {
         let deadline = started.addingTimeInterval(seconds)
         var sawIncomplete = false
         repeat {
+            var rootRole: CFTypeRef?
+            if let root = scope.root, case .invalidUIElement = AXUIElementCopyAttributeValue(root.element, kAXRoleAttribute as CFString, &rootRole) {
+                throw ToolFailure("The root element went away while waiting. Call mac_ui_tree again.", .staleRef)
+            }
             // Windows are looked up on every try, so a dialog that opens in a new window is found.
             let result = search(searchRoots(scope.pid, root: scope.root), query, limit: 20, deadline: deadline)
             if state == "present", !result.found.isEmpty {
