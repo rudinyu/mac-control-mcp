@@ -11,6 +11,8 @@ private let supportedProtocolVersions: Set<String> = [
 private struct ToolFailure: Error, CustomStringConvertible {
     let description: String
     let kind: FailureKind
+    // More fields for the error's JSON part, such as the menus and sheets an action opened.
+    var details: [String: Any] = [:]
     init(_ description: String, _ kind: FailureKind = .invalidArgs) {
         self.description = description
         self.kind = kind
@@ -262,7 +264,7 @@ private final class MacControlServer {
         ],
         [
             "name": "mac_ax_action",
-            "description": "Act on an element through Accessibility, using a ref from mac_ui_tree, mac_find, or mac_wait for its app: press, show_menu, increment, decrement, confirm, cancel, raise, scroll_to_visible, set_value (with value), focus, select, deselect, expand, collapse, check, or uncheck. select through uncheck do nothing when the element is already in that state. set_value sends a number to an element that holds one, such as a slider. Does not move the pointer, change which app is in front, or use the clipboard. A ref stops working when the whole mac_ui_tree is read again for that app, the element goes away, or the app quits or relaunches; then nothing is sent. If app is given, it must be the ref's app. The result's JSON part says whether anything was sent (delivered) and whether the element was read back afterwards and shows the result (verified, with the attribute read in checked). select through uncheck, focus, and set_value with text fail with OUTCOME_UNKNOWN when the element reads back differently; set_value with a number, increment, and decrement, and a focus the element does not report, return verified false instead, since a slider can round and a stepper can be at its limit; press, show_menu, confirm, cancel, raise, and scroll_to_visible leave nothing to read, so they are never verified: read mac_ui_tree again to see their result. Requires Accessibility permission.",
+            "description": "Act on an element through Accessibility, using a ref from mac_ui_tree, mac_find, or mac_wait for its app: press, show_menu, increment, decrement, confirm, cancel, raise, scroll_to_visible, set_value (with value), focus, select, deselect, expand, collapse, check, or uncheck. select through uncheck do nothing when the element is already in that state. set_value sends a number to an element that holds one, such as a slider. Does not move the pointer, change which app is in front, or use the clipboard. A ref stops working when the whole mac_ui_tree is read again for that app, the element goes away, or the app quits or relaunches; then nothing is sent. If app is given, it must be the ref's app. The result's JSON part says whether anything was sent (delivered) and whether the element was read back afterwards and shows the result (verified, with the attribute read in checked). select through uncheck, focus, and set_value with text fail with OUTCOME_UNKNOWN when the element reads back differently; set_value with a number, increment, and decrement, and a focus the element does not report, return verified false instead, since a slider can round and a stepper can be at its limit; press, show_menu, confirm, cancel, raise, and scroll_to_visible leave nothing to read, so they are never verified: read mac_ui_tree again to see their result. The JSON part also lists the menus, sheets, dialogs, popovers, panels, and windows the action opened (opened, each with kind, a ref, and its direct children such as menu items, ready for mac_ax_action) and closed (closed, with kind and title); an error from an app that did not answer in time lists them too, as when a button opens a modal dialog. Requires Accessibility permission.",
             "inputSchema": [
                 "type": "object",
                 "properties": [
@@ -403,7 +405,8 @@ private final class MacControlServer {
             } catch {
                 // A failure that is not a ToolFailure comes from a system call whose effect is not known.
                 let kind = (error as? ToolFailure)?.kind ?? .outcomeUnknown
-                let details = ["error": ["code": kind.rawValue, "delivered": kind.delivered, "retry": kind.retry]]
+                let base: [String: Any] = ["code": kind.rawValue, "delivered": kind.delivered, "retry": kind.retry]
+                let details = ["error": base.merging((error as? ToolFailure)?.details ?? [:]) { current, _ in current }]
                 send(result: ["content": [textContent(String(describing: error)), textContent(jsonString(details))],
                               "isError": true], id: id)
             }
@@ -1612,14 +1615,116 @@ private final class MacControlServer {
         return timeval(tv_sec: Int(info.pbi_start_tvsec), tv_usec: Int32(info.pbi_start_tvusec))
     }
 
+    // A menu, sheet, dialog, popover, or window of an app, as seen before and after an action.
+    private struct Surface {
+        let element: AXUIElement
+        let kind: String
+        let title: String?
+    }
+
+    // The app's open surfaces: its windows and their sheets, menus under the app element, menus and popovers
+    // under near, the element acted on, which is where pop-up and context menus and popovers appear, and the
+    // menu or popover near is in.
+    // nil when the app does not answer.
+    private func surfaces(_ pid: pid_t, near: AXUIElement) -> [Surface]? {
+        let appElement = AXUIElementCreateApplication(pid)
+        AXUIElementSetMessagingTimeout(appElement, axMessagingTimeout)
+        var windowsValue: CFTypeRef?
+        let windowsRead = timedOut { AXUIElementCopyAttributeValue(appElement, kAXWindowsAttribute as CFString, &windowsValue) }
+        guard !windowsRead.timedOut else { return nil }
+        func role(_ element: AXUIElement) -> String? { shortString(attribute(element, kAXRoleAttribute as CFString)) }
+        func surface(_ element: AXUIElement, _ kind: String) -> Surface {
+            Surface(element: element, kind: kind, title: shortString(attribute(element, kAXTitleAttribute as CFString)).flatMap { $0.isEmpty ? nil : $0 })
+        }
+        func children(_ element: AXUIElement) -> [AXUIElement] {
+            attribute(element, kAXChildrenAttribute as CFString) as? [AXUIElement] ?? []
+        }
+        var found: [Surface] = []
+        for window in windowsValue as? [AXUIElement] ?? [] {
+            AXUIElementSetMessagingTimeout(window, axMessagingTimeout)
+            let subrole = shortString(attribute(window, kAXSubroleAttribute as CFString))
+            let kind = ["AXDialog": "dialog", "AXSystemDialog": "dialog", "AXFloatingWindow": "panel"][subrole ?? ""] ?? "window"
+            found.append(surface(window, kind))
+            for child in children(window) {
+                switch role(child) {
+                case "AXSheet": found.append(surface(child, "sheet"))
+                case "AXPopover": found.append(surface(child, "popover"))
+                default: break
+                }
+            }
+        }
+        for child in children(appElement) where role(child) == "AXMenu" { found.append(surface(child, "menu")) }
+        // Two levels below the element, as a menu can sit inside a wrapper. A menu item lists its submenu
+        // whether or not it is open, so nothing below a menu or menu item is taken for an open menu.
+        let nearRole = role(near) ?? ""
+        for child in ["AXMenu", "AXMenuItem"].contains(nearRole) ? [] : children(near) where role(child) != "AXMenuItem" {
+            for element in [child] + (["AXMenu", "AXPopover"].contains(role(child) ?? "") ? [] : children(child)) {
+                switch role(element) {
+                case "AXMenu": found.append(surface(element, "menu"))
+                case "AXPopover": found.append(surface(element, "popover"))
+                default: break
+                }
+            }
+        }
+        // The menu or popover the element is in, so choosing a menu item or cancelling a popover reports it closed.
+        var ancestor: AXUIElement? = near
+        for _ in 0..<8 {
+            guard let current = ancestor, let currentRole = role(current), !["AXWindow", "AXApplication"].contains(currentRole) else { break }
+            let parent = elementAttribute(current, kAXParentAttribute as CFString)
+            // A closed menu can still be read, but its parent no longer lists it, so only a listed one is open.
+            if let kind = ["AXMenu": "menu", "AXPopover": "popover"][currentRole],
+               let parent, children(parent).contains(where: { CFEqual($0, current) }) {
+                found.append(surface(current, kind))
+            }
+            ancestor = parent
+        }
+        // A surface found two ways is listed once.
+        return found.enumerated().filter { index, item in !found[..<index].contains { CFEqual($0.element, item.element) } }.map(\.element)
+    }
+
+    // The surfaces in after that were not in before, and the other way round. Each opened one gets a ref and
+    // its direct children, such as a menu's items, so the agent can act on it at once.
+    private func surfaceChanges(before: [Surface], after: [Surface], owner: AXOwner?) -> (opened: [[String: Any]], closed: [[String: Any]]) {
+        let opened = after.filter { item in !before.contains { CFEqual($0.element, item.element) } }.map { item -> [String: Any] in
+            var budget = TreeBudget(remaining: 30, deadline: Date().addingTimeInterval(1))
+            var entry = describeElement(item.element, depth: 1, budget: &budget, owner: owner, alwaysRef: true)
+            entry["kind"] = item.kind
+            return entry
+        }
+        let closed = before.filter { item in !after.contains { CFEqual($0.element, item.element) } }.map { item -> [String: Any] in
+            ["kind": item.kind, "title": item.title ?? NSNull()]
+        }
+        return (opened, closed)
+    }
+
+    // A sentence naming what opened and closed, for the message part of the result.
+    private func surfaceSentence(_ opened: [[String: Any]], _ closed: [[String: Any]]) -> String {
+        func names(_ items: [[String: Any]]) -> String {
+            items.map { item in
+                let kind = item["kind"] as? String ?? "surface"
+                let title = [item["title"], item["description"]].compactMap { $0 as? String }.first { !$0.isEmpty }
+                let name = title.map { "\(kind) \"\($0)\"" } ?? kind
+                return (item["ref"] as? String).map { "\(name) (ref \($0))" } ?? name
+            }.joined(separator: ", ")
+        }
+        var parts: [String] = []
+        if !opened.isEmpty { parts.append("Opened: \(names(opened)); its items are listed in opened, or read below its ref with mac_ui_tree root.") }
+        if !closed.isEmpty { parts.append("Closed: \(names(closed)).") }
+        return parts.isEmpty ? "" : " " + parts.joined(separator: " ")
+    }
+
     // What mac_ax_action did: whether anything was sent, whether the result was read back and matched, and
     // what was read. Nothing is repeated from the element, since its text may be private.
     private struct AXActionOutcome {
-        let message: String
+        var message: String
         let delivered: Bool
         let checked: String?
         let verified: Bool
-        var report: [String: Any] { ["delivered": delivered, "verified": verified, "checked": checked ?? NSNull()] }
+        var opened: [[String: Any]] = []
+        var closed: [[String: Any]] = []
+        var report: [String: Any] {
+            ["delivered": delivered, "verified": verified, "checked": checked ?? NSNull(), "opened": opened, "closed": closed]
+        }
     }
 
     private func axAction(_ args: [String: Any]) throws -> AXActionOutcome {
@@ -1659,6 +1764,8 @@ private final class MacControlServer {
         if action == "set_value", numberValue(ref.element) != nil, asked == nil {
             throw ToolFailure("The \(ref.role) of ref \(refName) holds a number, so set_value needs a finite number such as 5 or 0.5; nothing was sent.")
         }
+        // Surfaces are compared before and after, so a menu, sheet, or dialog the action opened is reported.
+        let surfacesBefore = surfaces(ref.pid, near: ref.element)
         // increment and decrement are checked against the value before them.
         let numberBefore = ["increment", "decrement"].contains(action) ? numberValue(ref.element) : nil
         let error: AXError
@@ -1677,7 +1784,44 @@ private final class MacControlServer {
                 throw ToolFailure("Invalid action \(action).")
             }
         }
-        guard error == .success else { throw axFailure(error, action, refName: refName, appName: name) }
+        guard error == .success else {
+            var failure = axFailure(error, action, refName: refName, appName: name)
+            // An app can hold the reply until a modal dialog the action opened is up, so what opened tells
+            // whether the action happened.
+            if failure.kind == .outcomeUnknown, let before = surfacesBefore, let after = surfaces(ref.pid, near: ref.element) {
+                let changes = surfaceChanges(before: before, after: after, owner: refOwner(ref.pid, fresh: false))
+                if !changes.opened.isEmpty || !changes.closed.isEmpty {
+                    failure = ToolFailure(failure.description + surfaceSentence(changes.opened, changes.closed) + " That suggests \(action) happened.", .outcomeUnknown)
+                    failure.details = ["opened": changes.opened, "closed": changes.closed]
+                }
+            }
+            throw failure
+        }
+        var outcome = try checkAXAction(action: action, ref: ref, refName: refName, name: name, target: target, value: value, asked: asked, numberBefore: numberBefore)
+        // Menus and sheets can take a moment to appear, so actions that open them are given a little time.
+        if let before = surfacesBefore {
+            // A chosen menu item flashes before its menu closes, which takes longer.
+            let checks = ref.role == "AXMenuItem" ? 11 : ["press", "show_menu", "confirm", "cancel"].contains(action) ? 4 : 1
+            var changes: (opened: [[String: Any]], closed: [[String: Any]]) = ([], [])
+            for attempt in 0..<checks {
+                if attempt > 0 { RunLoop.current.run(until: Date().addingTimeInterval(0.1)) }
+                guard let after = surfaces(ref.pid, near: ref.element) else { break }
+                let changed = after.count != before.count || zip(after, before).contains { !CFEqual($0.element, $1.element) }
+                if changed {
+                    changes = surfaceChanges(before: before, after: after, owner: refOwner(ref.pid, fresh: false))
+                    break
+                }
+            }
+            outcome.opened = changes.opened
+            outcome.closed = changes.closed
+            outcome.message += surfaceSentence(changes.opened, changes.closed)
+        }
+        return outcome
+    }
+
+    // Reads the element back after mac_ax_action sent action, and says what it found.
+    private func checkAXAction(action: String, ref: AXRef, refName: String, name: String, target: (attribute: String, value: Bool)?,
+                               value: String?, asked: Double?, numberBefore: Double?) throws -> AXActionOutcome {
         if let target, !settles({ boolState(ref.element, target.attribute) == target.value }) {
             throw ToolFailure("\(name) accepted \(action) for ref \(refName), but the element did not change state, so it may not have been applied. Call mac_ui_tree to check.", .outcomeUnknown)
         }

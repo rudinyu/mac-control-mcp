@@ -219,6 +219,30 @@ A successful result has two text parts, like an error: a message, and a JSON obj
 
 `delivered` is false when nothing was sent because the element was already in that state. `verified` is true only when the attribute named in `checked` was read back and matched. When it is false, read `mac_ui_tree` to see the result.
 
+The result also lists what the action opened and closed, so after pressing a pop-up button or choosing `show_menu` you can pick a menu item at once:
+
+```json
+{"result": {"delivered": true, "verified": false, "checked": null,
+  "opened": [{"kind": "menu", "role": "AXMenu", "ref": "aflg2p.5", "children": [
+    {"role": "AXMenuItem", "title": "Apple", "ref": "aflg2p.2", "actions": ["cancel", "press", "select", "deselect"]}]}],
+  "closed": []}}
+```
+
+| `kind` | What it is |
+| --- | --- |
+| `menu` | A pop-up or context menu, under the element that opened it or under the app |
+| `sheet` | A sheet attached to a window |
+| `dialog` | A window with the `AXDialog` or `AXSystemDialog` subrole, such as an alert |
+| `popover` | A popover |
+| `panel` | A floating window, such as a tool palette |
+| `window` | Any other new window |
+
+Each entry in `opened` has a `ref` and its direct children, up to 30 elements; read below the ref with `mac_ui_tree` `root` for more. Each entry in `closed` has `kind` and `title`. After `press`, `show_menu`, `confirm`, and `cancel`, changes are watched for about 0.3 seconds, and for about a second after an action on a menu item, since the item flashes before its menu closes.
+
+Some apps answer an action that opens a modal dialog only once the dialog is up, so `mac_ax_action` reports `OUTCOME_UNKNOWN`. Its JSON part then lists the dialog under `opened`, which shows that the action happened.
+
+Menus in the menu bar are not covered, since `mac_find` and `mac_ui_tree` give no refs for them. A submenu, which a menu item lists whether or not it is open, is not reported as opened.
+
 ```json
 {"ref": "k3f9q2.12", "action": "press", "app": "Calculator"}
 {"ref": "h5r1zb.4", "action": "set_value", "value": "Meeting notes", "app": "TextEdit"}

@@ -219,6 +219,30 @@ App 停止回應時（例如忙碌或當掉），讀取會在那裡停止，不�
 
 元素已經是要求的狀態而沒有送出任何東西時，`delivered` 是 false。只有讀回 `checked` 所列的屬性而且符合時，`verified` 才是 true；是 false 時，請讀 `mac_ui_tree` 查看結果。
 
+結果也會列出動作開啟和關閉了什麼，所以按下彈出式按鈕或使用 `show_menu` 之後，可以直接選擇選單項目：
+
+```json
+{"result": {"delivered": true, "verified": false, "checked": null,
+  "opened": [{"kind": "menu", "role": "AXMenu", "ref": "aflg2p.5", "children": [
+    {"role": "AXMenuItem", "title": "Apple", "ref": "aflg2p.2", "actions": ["cancel", "press", "select", "deselect"]}]}],
+  "closed": []}}
+```
+
+| `kind` | 是什麼 |
+| --- | --- |
+| `menu` | 彈出式選單或快顯選單，位於開啟它的元素或 App 之下 |
+| `sheet` | 附在視窗上的工作表 |
+| `dialog` | 子角色為 `AXDialog` 或 `AXSystemDialog` 的視窗，例如警告框 |
+| `popover` | 彈出框（popover） |
+| `panel` | 浮動視窗，例如工具面板 |
+| `window` | 其他新視窗 |
+
+`opened` 的每一項都有 `ref` 和它的直接子元素（最多 30 個）；要看更多，就用 `mac_ui_tree` 的 `root` 從該 ref 往下讀。`closed` 的每一項有 `kind` 和 `title`。`press`、`show_menu`、`confirm` 和 `cancel` 之後會觀察變化約 0.3 秒；對選單項目的動作則約 1 秒，因為項目會先閃一下，選單才關閉。
+
+有些 App 要等動作開啟的強制回應對話框出現後才回覆，所以 `mac_ax_action` 會回報 `OUTCOME_UNKNOWN`。這時它的 JSON 會在 `opened` 列出那個對話框，表示動作確實發生了。
+
+選單列的選單不在範圍內，因為 `mac_find` 和 `mac_ui_tree` 不會給它們 ref。子選單不論是否開啟都會列在選單項目下，所以不會被當作已開啟回報。
+
 ```json
 {"ref": "k3f9q2.12", "action": "press", "app": "Calculator"}
 {"ref": "h5r1zb.4", "action": "set_value", "value": "Meeting notes", "app": "TextEdit"}
