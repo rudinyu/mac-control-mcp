@@ -186,7 +186,26 @@ Checks about four times a second, looking up the app's windows each time, so a d
 | `value` | string, up to 2000 characters | The text for `set_value`; not allowed with other actions |
 | `app` | string | If given, must be the ref's app |
 
-Acts on the element through Accessibility, so it works without coordinates, does not move the pointer, does not bring the app to the front, and does not use the clipboard. Before sending, it checks that the app has not quit or relaunched, that the element still exists with the same role, and that it still offers the action. Password fields cannot be set. `select` and `deselect` set whether a row or item is selected; `expand` and `collapse` open or close an outline row or disclosure; `check` and `uncheck` press a checkbox only when it is not already in that state. These four pairs send nothing when the element is already in the asked-for state, and afterwards check that it changed. `scroll_to_visible` scrolls the element into view; it is mostly offered by web content. Success means the app accepted the action, not that it did what was expected, so read `mac_ui_tree` again to check. After `set_value`, the field is read back, and a field that does not show the new text is reported as an error; many web fields need `mac_type_text` instead.
+Acts on the element through Accessibility, so it works without coordinates, does not move the pointer, does not bring the app to the front, and does not use the clipboard. Before sending, it checks that the app has not quit or relaunched, that the element still exists with the same role, and that it still offers the action. Password fields cannot be set. `select` and `deselect` set whether a row or item is selected; `expand` and `collapse` open or close an outline row or disclosure; `check` and `uncheck` press a checkbox only when it is not already in that state. These four pairs send nothing when the element is already in the asked-for state. `scroll_to_visible` scrolls the element into view; it is mostly offered by web content. `set_value` sends a number to an element that holds one, such as a slider or stepper, and refuses text that is not a number there.
+
+After sending, the element is read back where there is something to read:
+
+| Action | Read back | When it does not match |
+| --- | --- | --- |
+| `select`, `deselect`, `expand`, `collapse`, `check`, `uncheck` | The state attribute, such as `AXSelected` | `OUTCOME_UNKNOWN` |
+| `focus` | `AXFocused` | `OUTCOME_UNKNOWN` |
+| `set_value` with text | `AXValue` shows the new text | `OUTCOME_UNKNOWN`; many web fields need `mac_type_text` instead |
+| `set_value` with a number | `AXValue` equals the number | Not verified, since a slider can round to its step |
+| `increment`, `decrement` | `AXValue` went up or down | Not verified, since the element may be at its limit |
+| `press`, `show_menu`, `confirm`, `cancel`, `raise`, `scroll_to_visible` | Nothing; these leave no state on the element | Never verified |
+
+A successful result has two text parts, like an error: a message, and a JSON object that says what was checked. The value read back is never included, since it may be private:
+
+```json
+{"result": {"delivered": true, "verified": true, "checked": "AXSelected"}}
+```
+
+`delivered` is false when nothing was sent because the element was already in that state. `verified` is true only when the attribute named in `checked` was read back and matched. When it is false, read `mac_ui_tree` to see the result.
 
 ```json
 {"ref": "k3f9q2.12", "action": "press", "app": "Calculator"}

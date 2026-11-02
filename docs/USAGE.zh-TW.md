@@ -186,7 +186,26 @@
 | `value` | 字串，最多 2000 個字元 | `set_value` 要設定的文字；其他動作不能使用 |
 | `app` | 字串 | 如果指定，必須是 ref 所屬的 App |
 
-透過輔助使用直接操作元素，所以不需要座標，不會移動游標，不會把 App 切到前景，也不會使用剪貼簿。送出前會確認 App 沒有結束或重新開啟、元素仍然存在且角色相同，而且仍支援該動作。密碼欄位不能設定。`select` 和 `deselect` 設定列或項目是否被選取；`expand` 和 `collapse` 展開或收合大綱列或展開三角形；`check` 和 `uncheck` 只在核取方塊不是要求的狀態時才按下它。這四組動作在元素已經是要求的狀態時不會送出任何東西，送出後也會確認狀態確實改變。`scroll_to_visible` 會把元素捲動到可見範圍，主要由網頁內容提供。成功只代表 App 接受了動作，不代表結果符合預期，請再讀一次 `mac_ui_tree` 確認。`set_value` 之後會讀回欄位內容，沒有顯示新文字就回報錯誤；許多網頁欄位需要改用 `mac_type_text`。
+透過輔助使用直接操作元素，所以不需要座標，不會移動游標，不會把 App 切到前景，也不會使用剪貼簿。送出前會確認 App 沒有結束或重新開啟、元素仍然存在且角色相同，而且仍支援該動作。密碼欄位不能設定。`select` 和 `deselect` 設定列或項目是否被選取；`expand` 和 `collapse` 展開或收合大綱列或展開三角形；`check` 和 `uncheck` 只在核取方塊不是要求的狀態時才按下它。這四組動作在元素已經是要求的狀態時不會送出任何東西。`scroll_to_visible` 會把元素捲動到可見範圍，主要由網頁內容提供。對存放數字的元素（例如滑桿或步進器），`set_value` 會送出數字，不是數字的文字會被拒絕。
+
+送出後，只要元素上有東西可讀，就會讀回來確認：
+
+| 動作 | 讀回什麼 | 不符合時 |
+| --- | --- | --- |
+| `select`、`deselect`、`expand`、`collapse`、`check`、`uncheck` | 狀態屬性，例如 `AXSelected` | `OUTCOME_UNKNOWN` |
+| `focus` | `AXFocused` | `OUTCOME_UNKNOWN` |
+| 文字的 `set_value` | `AXValue` 顯示新文字 | `OUTCOME_UNKNOWN`；許多網頁欄位需要改用 `mac_type_text` |
+| 數字的 `set_value` | `AXValue` 等於該數字 | 不算已確認，因為滑桿可能四捨五入到刻度 |
+| `increment`、`decrement` | `AXValue` 變大或變小 | 不算已確認，因為元素可能已經到上限或下限 |
+| `press`、`show_menu`、`confirm`、`cancel`、`raise`、`scroll_to_visible` | 無；這些動作不會在元素上留下狀態 | 一律不算已確認 |
+
+成功的結果和錯誤一樣有兩段文字：一段訊息，以及說明確認了什麼的 JSON。讀回的值不會出現在結果裡，因為它可能是私人內容：
+
+```json
+{"result": {"delivered": true, "verified": true, "checked": "AXSelected"}}
+```
+
+元素已經是要求的狀態而沒有送出任何東西時，`delivered` 是 false。只有讀回 `checked` 所列的屬性而且符合時，`verified` 才是 true；是 false 時，請讀 `mac_ui_tree` 查看結果。
 
 ```json
 {"ref": "k3f9q2.12", "action": "press", "app": "Calculator"}

@@ -209,6 +209,9 @@ class MCPProtocolTests(unittest.TestCase):
         actions = listed["mac_ax_action"]["inputSchema"]["properties"]["action"]["enum"]
         for action in ("scroll_to_visible", "select", "deselect", "expand", "collapse", "check", "uncheck"):
             self.assertIn(action, actions)
+        description = listed["mac_ax_action"]["description"]
+        for word in ("delivered", "verified", "checked", "OUTCOME_UNKNOWN"):
+            self.assertIn(word, description)
         response = self.request("tools/call", {"name": "mac_ax_action", "arguments": {"ref": "zzzzzz.1", "action": "check"}})
         self.assertIn("Unknown or expired ref", response["result"]["content"][0]["text"])
 

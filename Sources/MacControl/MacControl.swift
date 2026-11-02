@@ -227,7 +227,7 @@ private final class MacControlServer {
         ],
         [
             "name": "mac_ax_action",
-            "description": "Act on an element through Accessibility, using a ref from mac_ui_tree, mac_find, or mac_wait for its app: press, show_menu, increment, decrement, confirm, cancel, raise, scroll_to_visible, set_value (with value), focus, select, deselect, expand, collapse, check, or uncheck. select through uncheck do nothing when the element is already in that state, and are checked afterwards. Does not move the pointer, change which app is in front, or use the clipboard. A ref stops working when the whole mac_ui_tree is read again for that app, the element goes away, or the app quits or relaunches; then nothing is sent. If app is given, it must be the ref's app. Success means the app accepted the action; read mac_ui_tree again to see the result. Requires Accessibility permission.",
+            "description": "Act on an element through Accessibility, using a ref from mac_ui_tree, mac_find, or mac_wait for its app: press, show_menu, increment, decrement, confirm, cancel, raise, scroll_to_visible, set_value (with value), focus, select, deselect, expand, collapse, check, or uncheck. select through uncheck do nothing when the element is already in that state. set_value sends a number to an element that holds one, such as a slider. Does not move the pointer, change which app is in front, or use the clipboard. A ref stops working when the whole mac_ui_tree is read again for that app, the element goes away, or the app quits or relaunches; then nothing is sent. If app is given, it must be the ref's app. The result's JSON part says whether anything was sent (delivered) and whether the element was read back afterwards and shows the result (verified, with the attribute read in checked). select through uncheck, focus, set_value, increment, and decrement are read back, and a contradiction is reported as OUTCOME_UNKNOWN; press, show_menu, confirm, cancel, raise, and scroll_to_visible leave nothing to read, so they are never verified: read mac_ui_tree again to see their result. Requires Accessibility permission.",
             "inputSchema": [
                 "type": "object",
                 "properties": [
@@ -350,7 +350,7 @@ private final class MacControlServer {
                 "protocolVersion": selected,
                 "capabilities": ["tools": [:]],
                 "serverInfo": ["name": "mac-control", "version": serverVersion],
-                "instructions": "Use mac_status first. Use mac_screenshot before mac_mouse; mouse coordinates use the most recent screenshot. When mac_ui_tree or mac_find gives the element a ref, mac_ax_action can act on it without coordinates or focus; use mac_wait to wait for the result. Pass app with the name of the app you are working in to mac_screenshot, mac_mouse, mac_scroll, mac_type_text, and mac_key, so input cannot land in another app. A failed call also returns JSON with code, delivered, and retry; follow retry, and check the app before repeating an action whose delivered is \"unknown\". Ask the user before irreversible actions."
+                "instructions": "Use mac_status first. Use mac_screenshot before mac_mouse; mouse coordinates use the most recent screenshot. When mac_ui_tree or mac_find gives the element a ref, mac_ax_action can act on it without coordinates or focus; use mac_wait to wait for the result. Pass app with the name of the app you are working in to mac_screenshot, mac_mouse, mac_scroll, mac_type_text, and mac_key, so input cannot land in another app. A failed call also returns JSON with code, delivered, and retry; follow retry, and check the app before repeating an action whose delivered is \"unknown\". A mac_ax_action result says whether it was verified; when verified is false, read the app before relying on the result. Ask the user before irreversible actions."
             ], id: id)
         case "ping":
             send(result: [:], id: id)
@@ -393,7 +393,9 @@ private final class MacControlServer {
         case "mac_screenshot": return try screenshot(args)
         case "mac_request_screen_recording": return [textContent(CGRequestScreenCaptureAccess() ? "Screen Recording access is granted." : "Screen Recording access is not granted yet. Complete the macOS permission prompt. \(PermissionHint.screenRecording)")]
         case "mac_ui_tree": return [textContent(try uiTree(args))]
-        case "mac_ax_action": return [textContent(try axAction(args))]
+        case "mac_ax_action":
+            let outcome = try axAction(args)
+            return [textContent(outcome.message), textContent(jsonString(["result": outcome.report]))]
         case "mac_find": return [textContent(try find(args))]
         case "mac_window": return [textContent(try window(args))]
         case "mac_wait": return [textContent(try wait(args))]
@@ -1507,7 +1509,17 @@ private final class MacControlServer {
         return timeval(tv_sec: Int(info.pbi_start_tvsec), tv_usec: Int32(info.pbi_start_tvusec))
     }
 
-    private func axAction(_ args: [String: Any]) throws -> String {
+    // What mac_ax_action did: whether anything was sent, whether the result was read back and matched, and
+    // what was read. Nothing is repeated from the element, since its text may be private.
+    private struct AXActionOutcome {
+        let message: String
+        let delivered: Bool
+        let checked: String?
+        let verified: Bool
+        var report: [String: Any] { ["delivered": delivered, "verified": verified, "checked": checked ?? NSNull()] }
+    }
+
+    private func axAction(_ args: [String: Any]) throws -> AXActionOutcome {
         guard let action = args["action"] as? String, axAllActions.contains(action) else {
             throw ToolFailure("Invalid action. Use \(axAllActions.joined(separator: ", ")).")
         }
@@ -1536,11 +1548,21 @@ private final class MacControlServer {
             target = (kAXValueAttribute, action == "check")
         }
         if let target, boolState(ref.element, target.attribute) == target.value {
-            return "The \(ref.role) ref \(refName) in \(name) is already in that state, so nothing was sent."
+            return AXActionOutcome(message: "The \(ref.role) ref \(refName) in \(name) is already in that state, so nothing was sent.",
+                                   delivered: false, checked: target.attribute, verified: true)
         }
+        if action == "set_value", numberValue(ref.element) != nil, Double(value!.trimmingCharacters(in: .whitespaces)) == nil {
+            throw ToolFailure("The \(ref.role) of ref \(refName) holds a number, so set_value needs a number such as 5 or 0.5; nothing was sent.")
+        }
+        // increment and decrement are checked against the value before them.
+        let numberBefore = ["increment", "decrement"].contains(action) ? numberValue(ref.element) : nil
         let error: AXError
         switch action {
-        case "set_value": error = AXUIElementSetAttributeValue(ref.element, kAXValueAttribute as CFString, value! as CFString)
+        case "set_value":
+            // A slider or stepper holds a number and rejects text, so a number is sent to an element that has one.
+            let number = numberValue(ref.element) != nil ? Double(value!.trimmingCharacters(in: .whitespaces)) : nil
+            let newValue: CFTypeRef = number.map { NSNumber(value: $0) } ?? value! as CFString
+            error = AXUIElementSetAttributeValue(ref.element, kAXValueAttribute as CFString, newValue)
         case "focus": error = AXUIElementSetAttributeValue(ref.element, kAXFocusedAttribute as CFString, kCFBooleanTrue)
         case "check", "uncheck": error = AXUIElementPerformAction(ref.element, kAXPressAction as CFString)
         default:
@@ -1556,13 +1578,48 @@ private final class MacControlServer {
         if let target, !settles({ boolState(ref.element, target.attribute) == target.value }) {
             throw ToolFailure("\(name) accepted \(action) for ref \(refName), but the element did not change state, so it may not have been applied. Call mac_ui_tree to check.", .outcomeUnknown)
         }
-        // Some fields, such as many on web pages, accept a value without taking it. A value that is not text,
-        // such as a slider's number, cannot be compared. The text read back is not repeated, since it may be private.
-        if action == "set_value", let shown = attribute(ref.element, kAXValueAttribute as CFString) as? String,
-           shown.replacingOccurrences(of: "\r\n", with: "\n") != value?.replacingOccurrences(of: "\r\n", with: "\n") {
-            throw ToolFailure("\(name) accepted set_value for ref \(refName), but the field does not show the new text, so it may not have been applied. Call mac_ui_tree to check, or use mac_type_text.", .outcomeUnknown)
+        let sent = "Sent \(action) to \(ref.role) ref \(refName) in \(name)"
+        if let target {
+            return AXActionOutcome(message: "\(sent); it is now in that state.", delivered: true, checked: target.attribute, verified: true)
         }
-        return "Sent \(action) to \(ref.role) ref \(refName) in \(name). Call mac_ui_tree to see the result."
+        switch action {
+        case "set_value":
+            // Some fields, such as many on web pages, accept a value without taking it.
+            let shown = attribute(ref.element, kAXValueAttribute as CFString)
+            if let text = shown as? String {
+                guard text.replacingOccurrences(of: "\r\n", with: "\n") == value!.replacingOccurrences(of: "\r\n", with: "\n") else {
+                    throw ToolFailure("\(name) accepted set_value for ref \(refName), but the field does not show the new text, so it may not have been applied. Call mac_ui_tree to check, or use mac_type_text.", .outcomeUnknown)
+                }
+                return AXActionOutcome(message: "\(sent); the field shows the new text.", delivered: true, checked: kAXValueAttribute, verified: true)
+            }
+            // A slider or stepper can round a number to its step, so a different number is not a contradiction.
+            if let number = shown as? NSNumber, let asked = Double(value!.trimmingCharacters(in: .whitespaces)), number.doubleValue == asked {
+                return AXActionOutcome(message: "\(sent); it shows the new value.", delivered: true, checked: kAXValueAttribute, verified: true)
+            }
+            return AXActionOutcome(message: "\(sent), but its value could not be compared with the one asked for, as when a slider rounds it. Call mac_ui_tree to check.",
+                                   delivered: true, checked: nil, verified: false)
+        case "focus":
+            guard settles({ boolState(ref.element, kAXFocusedAttribute) == true }) else {
+                throw ToolFailure("\(name) accepted focus for ref \(refName), but the element does not report focus, so it may not have been applied. Call mac_ui_tree to check.", .outcomeUnknown)
+            }
+            return AXActionOutcome(message: "\(sent); it now has focus in \(name).", delivered: true, checked: kAXFocusedAttribute, verified: true)
+        case "increment", "decrement":
+            // An element at its limit does not change, so an unchanged value is not a contradiction.
+            if let before = numberBefore, settles({ numberValue(ref.element).map { action == "increment" ? $0 > before : $0 < before } ?? false }) {
+                return AXActionOutcome(message: "\(sent); its value \(action == "increment" ? "went up" : "went down").", delivered: true, checked: kAXValueAttribute, verified: true)
+            }
+            return AXActionOutcome(message: "\(sent), but its value did not change as expected; it may be at its limit. Call mac_ui_tree to check.",
+                                   delivered: true, checked: nil, verified: false)
+        default:
+            // press, show_menu, confirm, cancel, raise, and scroll_to_visible leave no state on the element to read.
+            return AXActionOutcome(message: "\(sent). \(action) leaves no state on the element to check, so call mac_ui_tree to see the result.",
+                                   delivered: true, checked: nil, verified: false)
+        }
+    }
+
+    // The element's value as a number, such as a slider's or stepper's, or nil when it is not one.
+    private func numberValue(_ element: AXUIElement) -> Double? {
+        (attribute(element, kAXValueAttribute as CFString) as? NSNumber)?.doubleValue
     }
 
     private func jsonString(_ value: Any) -> String {
