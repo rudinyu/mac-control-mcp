@@ -124,8 +124,12 @@ class MCPProtocolTests(unittest.TestCase):
             ({"ref": "1.1", "action": "press", "value": "x"}, "only used with set_value"),
             ({"ref": "", "action": "press"}, "ref must be"),
             ({"ref": 7, "action": "press"}, "ref must be"),
-            ({"ref": "999.1", "action": "press"}, "Unknown or expired ref 999.1"),
-            ({"ref": "999.1", "action": "set_value", "value": "x", "app": "No Such App 7f3c"}, "Unknown or expired ref"),
+            ({"ref": "3.12", "action": "press"}, "3.12 is not a ref; no action was sent"),
+            ({"ref": "k3f9q2.0", "action": "press"}, "is not a ref"),
+            ({"ref": "K3F9Q2.1", "action": "press"}, "is not a ref"),
+            ({"ref": "zzzzzz.1", "action": "press"}, "snapshot zzzzzz was not made by this mac-control session"),
+            ({"ref": "zzzzzz.1", "action": "press"}, "Unknown or expired ref zzzzzz.1"),
+            ({"ref": "zzzzzz.1", "action": "set_value", "value": "x", "app": "No Such App 7f3c"}, "Unknown or expired ref"),
         ]:
             with self.subTest(arguments=arguments):
                 response = self.request("tools/call", {"name": "mac_ax_action", "arguments": arguments})
@@ -146,7 +150,8 @@ class MCPProtocolTests(unittest.TestCase):
             ("no_such_tool", {}, "INVALID_ARGS", "fix"),
             ("mac_key", {"key": "launchpad"}, "INVALID_ARGS", "fix"),
             ("mac_key", {"key": "a", "app": "No Such App 7f3c"}, "APP_NOT_FOUND", "fix"),
-            ("mac_ax_action", {"ref": "999.1", "action": "press"}, "STALE_REF", "refresh"),
+            ("mac_ax_action", {"ref": "zzzzzz.1", "action": "press"}, "STALE_REF", "refresh"),
+            ("mac_ax_action", {"ref": "3.12", "action": "press"}, "INVALID_ARGS", "fix"),
             ("mac_record_status", {"recording_id": "missing"}, "INVALID_ARGS", "fix"),
         ]:
             with self.subTest(name=name, arguments=arguments):
@@ -161,13 +166,13 @@ class MCPProtocolTests(unittest.TestCase):
             ("mac_find", {"text": "x" * 201}, "text must be text"),
             ("mac_find", {"text": "Save", "exact": "yes"}, "exact must be"),
             ("mac_find", {"text": "Save", "limit": 51}, "limit must be"),
-            ("mac_find", {"text": "Save", "root": "999.1"}, "Unknown or expired ref 999.1; nothing was searched"),
+            ("mac_find", {"text": "Save", "root": "zzzzzz.1"}, "restarted; nothing was searched"),
             ("mac_find", {"text": "Save", "app": "No Such App 7f3c"}, "No running app"),
             ("mac_wait", {"text": "Save", "state": "gone"}, "state must be"),
             ("mac_wait", {"text": "Save", "timeout_seconds": 31}, "timeout_seconds must be"),
             ("mac_wait", {"text": "Save", "timeout_seconds": 0.1}, "timeout_seconds must be"),
-            ("mac_wait", {"role": "button", "root": "999.1"}, "Unknown or expired ref"),
-            ("mac_ui_tree", {"root": "999.1"}, "Unknown or expired ref 999.1; nothing was read"),
+            ("mac_wait", {"role": "button", "root": "zzzzzz.1"}, "Unknown or expired ref"),
+            ("mac_ui_tree", {"root": "zzzzzz.1"}, "restarted; nothing was read"),
             ("mac_ui_tree", {"root": ""}, "root must be a ref"),
         ]:
             with self.subTest(name=name, arguments=arguments):
@@ -183,7 +188,7 @@ class MCPProtocolTests(unittest.TestCase):
             ({"action": "resize", "width": 0, "height": 10, "app": "Finder"}, "width is out of range"),
             ({"action": "minimize"}, "Give window"),
             ({"action": "list", "window": "1.1"}, "window is not used with list"),
-            ({"action": "focus", "window": "999.1"}, "Unknown or expired ref 999.1; nothing was sent"),
+            ({"action": "focus", "window": "zzzzzz.1"}, "restarted; nothing was sent"),
             ({"action": "list", "app": "No Such App 7f3c"}, "No running app"),
         ]:
             with self.subTest(arguments=arguments):
@@ -196,7 +201,7 @@ class MCPProtocolTests(unittest.TestCase):
         actions = listed["mac_ax_action"]["inputSchema"]["properties"]["action"]["enum"]
         for action in ("scroll_to_visible", "select", "deselect", "expand", "collapse", "check", "uncheck"):
             self.assertIn(action, actions)
-        response = self.request("tools/call", {"name": "mac_ax_action", "arguments": {"ref": "999.1", "action": "check"}})
+        response = self.request("tools/call", {"name": "mac_ax_action", "arguments": {"ref": "zzzzzz.1", "action": "check"}})
         self.assertIn("Unknown or expired ref", response["result"]["content"][0]["text"])
 
     def test_09_ax_action_schema(self):

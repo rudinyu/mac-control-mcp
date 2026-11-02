@@ -117,12 +117,12 @@
 
 以 JSON 回傳該 App 焦點視窗的輔助使用樹，包括每個元素的角色、標題、描述和值，以及目前取得鍵盤焦點的元素。可以用名稱找按鈕和欄位，不必靠像素位置。最多讀 200 個元素，每個值截到 200 個字元，碰到上限時會回報 `"truncated": true`。密碼欄位的內容一律不會回傳。指定 `app` 時只讀取，不會把該 App 切到前景。
 
-可以操作的元素另外會有 `ref`（例如 `"ref": "3.12"`）和 `actions`，也就是它支援的 `mac_ax_action` 動作。因為 `max_depth` 或 200 個元素的上限而沒有列出子元素的元素，會顯示 `more_children`，也會有 `ref`；把這個 ref 當作 `root` 傳入，就能往下讀。同一個 App 重新讀取整棵樹時，該 App 原有的 ref 全部換新；用 `root` 往下讀則會保留。視窗很大時，先用較小的 `max_depth` 讀概況，再往下展開。
+可以操作的元素另外會有 `ref`（例如 `"ref": "k3f9q2.12"`）和 `actions`，也就是它支援的 `mac_ax_action` 動作。因為 `max_depth` 或 200 個元素的上限而沒有列出子元素的元素，會顯示 `more_children`，也會有 `ref`；把這個 ref 當作 `root` 傳入，就能往下讀。ref 由快照 ID、一個點和元素在該快照中的編號組成；結果的 `snapshot` 欄位就是快照 ID。同一個 App 重新讀取整棵樹時會開始新的快照，該 App 先前的 ref 全部失效；用 `root` 往下讀、`mac_find`、`mac_wait` 和 `mac_window list` 則把 ref 加進目前的快照，原有的 ref 仍然有效。快照 ID 是隨機產生的，所以 mac-control 重新啟動前留下的 ref 會被拒絕，不會誤指到別的元素。視窗很大時，先用較小的 `max_depth` 讀概況，再往下展開。
 
 ```json
 {"app": "TextEdit", "max_depth": 6}
 {"app": "Slack", "max_depth": 2}
-{"app": "Slack", "root": "4.7", "max_depth": 6}
+{"app": "Slack", "root": "p8w2kd.7", "max_depth": 6}
 ```
 
 ### `mac_find`
@@ -136,7 +136,7 @@
 | `root` | 字串 | 改在這個 ref 底下搜尋，而不是 App 的所有視窗 |
 | `app` | 字串 | 要搜尋的 App；預設是前景 App |
 
-至少要給 `role` 或 `text`。依螢幕閱讀器的順序搜尋 App 的每個視窗（焦點視窗優先），最多 5000 個元素、40 層、5 秒，比 `mac_ui_tree` 讀得深很多。結果附有 `ref` 和 `actions`，可以直接用於 `mac_ax_action`，而且 App 原有的 ref 仍然有效。`"complete": false` 表示搜尋被截斷，請用 `root` 縮小範圍。不會搜尋選單列裡的選單。密碼欄位的內容一律不會比對或回傳。
+至少要給 `role` 或 `text`。依螢幕閱讀器的順序搜尋 App 的每個視窗（焦點視窗優先），最多 5000 個元素、40 層、5 秒，比 `mac_ui_tree` 讀得深很多。結果附有 `ref` 和 `actions`，可以直接用於 `mac_ax_action`，而且 App 原有的 ref 仍然有效。結果的 `snapshot` 是這些 ref 所屬的快照。`"complete": false` 表示搜尋被截斷，請用 `root` 縮小範圍。不會搜尋選單列裡的選單。密碼欄位的內容一律不會比對或回傳。
 
 ```json
 {"app": "TextEdit", "role": "button", "text": "Save"}
@@ -173,7 +173,7 @@
 
 ```json
 {"action": "list", "app": "TextEdit"}
-{"action": "move", "window": "5.2", "x": 0, "y": 25}
+{"action": "move", "window": "m4c7tj.2", "x": 0, "y": 25}
 {"action": "resize", "app": "TextEdit", "width": 900, "height": 700}
 ```
 
@@ -189,8 +189,8 @@
 透過輔助使用直接操作元素，所以不需要座標，不會移動游標，不會把 App 切到前景，也不會使用剪貼簿。送出前會確認 App 沒有結束或重新開啟、元素仍然存在且角色相同，而且仍支援該動作。密碼欄位不能設定。`select` 和 `deselect` 設定列或項目是否被選取；`expand` 和 `collapse` 展開或收合大綱列或展開三角形；`check` 和 `uncheck` 只在核取方塊不是要求的狀態時才按下它。這四組動作在元素已經是要求的狀態時不會送出任何東西，送出後也會確認狀態確實改變。`scroll_to_visible` 會把元素捲動到可見範圍，主要由網頁內容提供。成功只代表 App 接受了動作，不代表結果符合預期，請再讀一次 `mac_ui_tree` 確認。`set_value` 之後會讀回欄位內容，沒有顯示新文字就回報錯誤；許多網頁欄位需要改用 `mac_type_text`。
 
 ```json
-{"ref": "3.12", "action": "press", "app": "Calculator"}
-{"ref": "3.4", "action": "set_value", "value": "Meeting notes", "app": "TextEdit"}
+{"ref": "k3f9q2.12", "action": "press", "app": "Calculator"}
+{"ref": "h5r1zb.4", "action": "set_value", "value": "Meeting notes", "app": "TextEdit"}
 ```
 
 ### `mac_record_start`、`mac_record_status`、`mac_record_stop`
@@ -233,7 +233,8 @@
 | `Could not determine which app has focus` | 輔助使用無法回報焦點所在的 App。請檢查輔助使用權限。 |
 | `Call mac_screenshot before mac_mouse` 或座標被拒絕 | 先截圖，並使用那張截圖的座標。 |
 | `… was not steadily in front for the last mac_screenshot`、`… window moved, resized, or changed` 或 `… is not over …` | 沒有點擊任何東西。用同一個 `app` 重新截圖，再用新截圖的座標點擊。 |
-| `Unknown or expired ref`、`… no longer exists or has changed` 或 `… has quit or relaunched since mac_ui_tree` | 沒有送出任何動作。重新讀取 `mac_ui_tree`，改用新的 ref。 |
+| `Unknown or expired ref`、`Expired ref … was replaced by snapshot …`、`… no longer exists or has changed` 或 `… has quit or relaunched since mac_ui_tree` | 沒有送出任何動作。重新讀取 `mac_ui_tree`，改用新的 ref。 |
+| `… is not a ref` | 這個值不是 ref 的格式（例如 `k3f9q2.12`）；舊版 mac-control 的 ref 長得像 `3.12`，已經不能用。重新讀取 `mac_ui_tree`，改用其中的 ref。 |
 | `… may or may not have happened` | App 沒有確認動作是否完成。先讀取 `mac_ui_tree` 確認，再決定要不要重試。 |
 | 點擊位置不對 | 截圖之後畫面變了。重新截圖，並指定 `app`，讓伺服器可以檢查。 |
 | 文字或點擊跑到代理自己的視窗或其他 App | 沒有指定 `app`。一定要指定。 |

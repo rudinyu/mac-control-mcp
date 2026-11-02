@@ -117,12 +117,12 @@ Function keys, punctuation keys, and media keys are not supported. To type punct
 
 Returns the Accessibility tree of the app's focused window as JSON, with each element's role, title, description, and value, plus the element that has keyboard focus. Use it to find buttons and fields by name instead of by pixel position. It reads at most 200 elements, cuts each value to 200 characters, and reports `"truncated": true` when it hits a limit. Password field values are never included. With `app`, it reads that app without bringing it to the front.
 
-Each element that can be acted on also has a `ref`, such as `"ref": "3.12"`, and `actions`, the `mac_ax_action` actions it offers. An element whose children were not listed, because of `max_depth` or the 200-element limit, shows `more_children` and also has a `ref`. Pass that ref as `root` to read below it. Reading the whole tree again for the same app replaces all of that app's refs. Reading below a `root` keeps them. For a large window, read it with a small `max_depth` first, then drill in.
+Each element that can be acted on also has a `ref`, such as `"ref": "k3f9q2.12"`, and `actions`, the `mac_ax_action` actions it offers. An element whose children were not listed, because of `max_depth` or the 200-element limit, shows `more_children` and also has a `ref`. Pass that ref as `root` to read below it. A ref is the snapshot ID, a dot, and the element's number in that snapshot; the result's `snapshot` field names the snapshot. Reading the whole tree again for the same app starts a new snapshot and retires all of that app's earlier refs. Reading below a `root`, `mac_find`, `mac_wait`, and `mac_window list` add refs to the current snapshot, so earlier refs keep working. Snapshot IDs are random, so a ref kept from before mac-control restarted is refused instead of naming another element. For a large window, read it with a small `max_depth` first, then drill in.
 
 ```json
 {"app": "TextEdit", "max_depth": 6}
 {"app": "Slack", "max_depth": 2}
-{"app": "Slack", "root": "4.7", "max_depth": 6}
+{"app": "Slack", "root": "p8w2kd.7", "max_depth": 6}
 ```
 
 ### `mac_find`
@@ -136,7 +136,7 @@ Each element that can be acted on also has a `ref`, such as `"ref": "3.12"`, and
 | `root` | string | A ref to search below, instead of all of the app's windows |
 | `app` | string | App to search; default is the frontmost app |
 
-Give `role`, `text`, or both. Searches every window of the app, the focused one first, in screen-reader order, up to 5000 elements and 40 levels deep, for at most 5 seconds. That is much further than `mac_ui_tree` reads. Matches come back with their `ref` and `actions`, ready for `mac_ax_action`, and the app's existing refs keep working. `"complete": false` means the search was cut short; narrow it with `root`. Menus in the menu bar are not searched. Password field values are never matched or returned.
+Give `role`, `text`, or both. Searches every window of the app, the focused one first, in screen-reader order, up to 5000 elements and 40 levels deep, for at most 5 seconds. That is much further than `mac_ui_tree` reads. Matches come back with their `ref` and `actions`, ready for `mac_ax_action`, and the app's existing refs keep working. The result's `snapshot` names the snapshot the refs belong to. `"complete": false` means the search was cut short; narrow it with `root`. Menus in the menu bar are not searched. Password field values are never matched or returned.
 
 ```json
 {"app": "TextEdit", "role": "button", "text": "Save"}
@@ -173,7 +173,7 @@ Checks about four times a second, looking up the app's windows each time, so a d
 
 ```json
 {"action": "list", "app": "TextEdit"}
-{"action": "move", "window": "5.2", "x": 0, "y": 25}
+{"action": "move", "window": "m4c7tj.2", "x": 0, "y": 25}
 {"action": "resize", "app": "TextEdit", "width": 900, "height": 700}
 ```
 
@@ -189,8 +189,8 @@ Checks about four times a second, looking up the app's windows each time, so a d
 Acts on the element through Accessibility, so it works without coordinates, does not move the pointer, does not bring the app to the front, and does not use the clipboard. Before sending, it checks that the app has not quit or relaunched, that the element still exists with the same role, and that it still offers the action. Password fields cannot be set. `select` and `deselect` set whether a row or item is selected; `expand` and `collapse` open or close an outline row or disclosure; `check` and `uncheck` press a checkbox only when it is not already in that state. These four pairs send nothing when the element is already in the asked-for state, and afterwards check that it changed. `scroll_to_visible` scrolls the element into view; it is mostly offered by web content. Success means the app accepted the action, not that it did what was expected, so read `mac_ui_tree` again to check. After `set_value`, the field is read back, and a field that does not show the new text is reported as an error; many web fields need `mac_type_text` instead.
 
 ```json
-{"ref": "3.12", "action": "press", "app": "Calculator"}
-{"ref": "3.4", "action": "set_value", "value": "Meeting notes", "app": "TextEdit"}
+{"ref": "k3f9q2.12", "action": "press", "app": "Calculator"}
+{"ref": "h5r1zb.4", "action": "set_value", "value": "Meeting notes", "app": "TextEdit"}
 ```
 
 ### `mac_record_start`, `mac_record_status`, `mac_record_stop`
@@ -233,7 +233,8 @@ When a tool fails, the result has two text parts: a message for people, and a JS
 | `Could not determine which app has focus` | Accessibility could not report the focused app. Check the Accessibility permission. |
 | `Call mac_screenshot before mac_mouse` or coordinates rejected | Take a screenshot first, and use coordinates from that image. |
 | `… was not steadily in front for the last mac_screenshot`, `… window moved, resized, or changed`, or `… is not over …` | Nothing was clicked. Take a new screenshot with the same `app`, then click using its coordinates. |
-| `Unknown or expired ref`, `… no longer exists or has changed`, or `… has quit or relaunched since mac_ui_tree` | Nothing was sent. Read `mac_ui_tree` again and use a ref from it. |
+| `Unknown or expired ref`, `Expired ref … was replaced by snapshot …`, `… no longer exists or has changed`, or `… has quit or relaunched since mac_ui_tree` | Nothing was sent. Read `mac_ui_tree` again and use a ref from it. |
+| `… is not a ref` | The value is not shaped like a ref, such as `k3f9q2.12`; refs from earlier versions of mac-control look like `3.12` and no longer work. Read `mac_ui_tree` and use a ref from it. |
 | `… may or may not have happened` | The app did not confirm the action. Read `mac_ui_tree` to see whether it happened before trying again. |
 | Clicks land in the wrong place | The screen changed after the screenshot. Take a new one, and pass `app` so the server can check. |
 | Text or a click went to the agent's own window or another app | `app` was not passed. Always pass it. |
