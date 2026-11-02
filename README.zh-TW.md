@@ -44,7 +44,7 @@
 sh scripts/ci.sh
 ```
 
-這會編譯 `.build/mac-control-mcp` 和 `.build/terminal-text-tests`，執行終端機文字清理的單元測試，以及不操作桌面的 MCP 協定測試。GitHub Actions 使用同一份腳本。
+這會編譯 `.build/mac-control-mcp` 和 `.build/terminal-text-tests`，執行終端機文字清理的單元測試，以及不操作桌面的 MCP 協定測試。測試只在 Mac 上執行，不在 GitHub Actions 上執行。
 
 若要在每次 commit 前自動跑同樣的檢查，clone 之後執行一次以下命令，啟用專案的 Git hook：
 

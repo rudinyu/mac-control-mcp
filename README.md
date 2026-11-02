@@ -46,7 +46,7 @@ Requires macOS with the Xcode Command Line Tools, Swift, and Python 3.
 sh scripts/ci.sh
 ```
 
-This builds `.build/mac-control-mcp` and `.build/terminal-text-tests`, runs the terminal text unit tests, and runs MCP protocol tests that do not control the desktop. GitHub Actions runs the same script.
+This builds `.build/mac-control-mcp` and `.build/terminal-text-tests`, runs the terminal text unit tests, and runs MCP protocol tests that do not control the desktop. Tests run only on a Mac, not on GitHub Actions.
 
 To run the same checks before every commit, enable the project's Git hook once after cloning:
 

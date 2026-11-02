@@ -5,7 +5,8 @@
 #   NOTARY_KEY_P8_BASE64      base64 of the App Store Connect API key (AuthKey_<id>.p8)
 #   NOTARY_KEY_ID             its key ID
 #   NOTARY_ISSUER_ID          its issuer ID
-# Without them the tag is only checked and tested, and the release is published from a Mac that holds the
+# Tests are not run here; they run on a Mac with sh scripts/ci.sh and the pre-commit hook before tagging.
+# Without the secrets the tag is only checked, and the release is published from a Mac that holds the
 # Developer ID key: sh scripts/build-app.sh --sign, sh scripts/notarize.sh, then gh release create.
 name: Release
 
@@ -29,12 +30,9 @@ jobs:
           version=$(/usr/libexec/PlistBuddy -c "Print CFBundleShortVersionString" App/Info.plist)
           [ "v$version" = "$GITHUB_REF_NAME" ] || { echo "Tag $GITHUB_REF_NAME does not match App/Info.plist version $version" >&2; exit 1; }
 
-      - name: Test
-        run: sh scripts/ci.sh
-
       - name: Note that the release is published locally
         if: env.SIGNING != 'true'
-        run: echo "::notice::No signing secrets in this repository, so $GITHUB_REF_NAME is checked and tested here and published from a Mac with the Developer ID key."
+        run: echo "::notice::No signing secrets in this repository, so $GITHUB_REF_NAME is only checked here and is published from a Mac with the Developer ID key."
 
       - name: Import the signing certificate and notary key into a temporary keychain
         if: env.SIGNING == 'true'

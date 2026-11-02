@@ -28,6 +28,6 @@ sh "$project_dir/scripts/check-localization.sh"
 "$project_dir/.build/app-logic-tests"
 python3 "$project_dir/tests/test_protocol.py" "$project_dir/.build/mac-control-mcp"
 python3 "$project_dir/tests/test_init_agents.py"
-# Sandbox tests are skipped when Docker or the sandbox image is not available, as on GitHub Actions.
+# Sandbox tests are skipped when Docker or the sandbox image is not available.
 # The host_exec tests run real, harmless commands such as echo and sleep on this Mac.
 python3 "$project_dir/tests/test_mac_exec.py" "$project_dir/.build/mac-exec-mcp"
