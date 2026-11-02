@@ -132,6 +132,27 @@ class MCPProtocolTests(unittest.TestCase):
                 self.assertTrue(response["result"]["isError"])
                 self.assertIn(expected, response["result"]["content"][0]["text"])
 
+    def error_details(self, name, arguments):
+        response = self.request("tools/call", {"name": name, "arguments": arguments})
+        self.assertTrue(response["result"]["isError"])
+        content = response["result"]["content"]
+        self.assertEqual(len(content), 2)
+        return json.loads(content[1]["text"])["error"]
+
+    def test_10_errors_carry_code_delivery_and_retry(self):
+        # None of these reach Accessibility, so they behave the same with or without permission.
+        for name, arguments, code, retry in [
+            ("mac_scroll", {"dy": -5}, "INVALID_ARGS", "fix"),
+            ("no_such_tool", {}, "INVALID_ARGS", "fix"),
+            ("mac_key", {"key": "launchpad"}, "INVALID_ARGS", "fix"),
+            ("mac_key", {"key": "a", "app": "No Such App 7f3c"}, "APP_NOT_FOUND", "fix"),
+            ("mac_ax_action", {"ref": "999.1", "action": "press"}, "STALE_REF", "refresh"),
+            ("mac_record_status", {"recording_id": "missing"}, "INVALID_ARGS", "fix"),
+        ]:
+            with self.subTest(name=name, arguments=arguments):
+                details = self.error_details(name, arguments)
+                self.assertEqual(details, {"code": code, "delivered": False, "retry": retry})
+
     def test_09_ax_action_schema(self):
         listed = {tool["name"]: tool for tool in self.request("tools/list")["result"]["tools"]}
         schema = listed["mac_ax_action"]["inputSchema"]
