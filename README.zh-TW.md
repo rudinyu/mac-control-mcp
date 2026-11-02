@@ -20,7 +20,8 @@
 | `mac_ui_tree` | 讀取前景 App（或用 `app` 指定的 App）的輔助使用元素，遮蔽密碼欄位內容 |
 | `mac_find` | 依角色和文字搜尋 App 的視窗，回傳 ref |
 | `mac_wait` | 等到符合的元素出現或消失 |
-| `mac_ax_action` | 用 ref 按下、設定或聚焦元素，不移動游標，也不切換前景 App |
+| `mac_ax_action` | 用 ref 按下、設定、聚焦、選取、展開或勾選元素，不移動游標，也不切換前景 App |
+| `mac_window` | 列出視窗，以及聚焦、移動、調整大小、最小化或還原視窗 |
 | `mac_mouse` | 移動、點擊、雙擊、右鍵點擊、拖曳 |
 | `mac_scroll` | 垂直或水平捲動 |
 | `mac_type_text` | 暫時放入文字並模擬 Command-V，輸入 Unicode 文字後還原剪貼簿 |

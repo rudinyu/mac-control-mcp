@@ -157,16 +157,36 @@ Checks about four times a second, looking up the app's windows each time, so a d
 {"app": "Safari", "role": "progressindicator", "state": "absent", "timeout_seconds": 20}
 ```
 
+### `mac_window`
+
+| Parameter | Type | Notes |
+| --- | --- | --- |
+| `action` | string, required | `list`, `focus`, `move`, `resize`, `minimize`, or `restore` |
+| `window` | string | A window ref from `list`, `mac_find`, or `mac_ui_tree` |
+| `x`, `y` | number | For `move`: the new top-left corner |
+| `width`, `height` | number | For `resize` |
+| `app` | string | For `list`, the app to list; otherwise, act on this app's focused window when `window` is left out |
+
+`list` returns each window's app, title, `frame`, `minimized`, `main`, and `focused`, and a `ref`. Without `app` it lists the windows of every app with a Dock icon, up to 100. Frames are in screen points, the units of `main_display` in `mac_status`, not the pixels of `mac_screenshot`.
+
+`focus` restores a minimized window, raises it, and brings its app to the front. `move` and `resize` return the window with `as_requested`, which is `false` when the app placed or sized it differently, for example to keep it on screen. A window whose size is fixed is refused with `ACTION_UNSUPPORTED`. `minimize` and `restore` send nothing when the window is already in that state. With Stage Manager on, macOS can ignore them; the tool then reports `OUTCOME_UNKNOWN`.
+
+```json
+{"action": "list", "app": "TextEdit"}
+{"action": "move", "window": "5.2", "x": 0, "y": 25}
+{"action": "resize", "app": "TextEdit", "width": 900, "height": 700}
+```
+
 ### `mac_ax_action`
 
 | Parameter | Type | Notes |
 | --- | --- | --- |
 | `ref` | string, required | A ref from `mac_ui_tree`, `mac_find`, or `mac_wait`, still current for the app |
-| `action` | string, required | `press`, `show_menu`, `increment`, `decrement`, `confirm`, `cancel`, `raise`, `set_value`, or `focus` |
+| `action` | string, required | `press`, `show_menu`, `increment`, `decrement`, `confirm`, `cancel`, `raise`, `scroll_to_visible`, `set_value`, `focus`, `select`, `deselect`, `expand`, `collapse`, `check`, or `uncheck` |
 | `value` | string, up to 2000 characters | The text for `set_value`; not allowed with other actions |
 | `app` | string | If given, must be the ref's app |
 
-Acts on the element through Accessibility, so it works without coordinates, does not move the pointer, does not bring the app to the front, and does not use the clipboard. Before sending, it checks that the app has not quit or relaunched, that the element still exists with the same role, and that it still offers the action. Password fields cannot be set. Success means the app accepted the action, not that it did what was expected, so read `mac_ui_tree` again to check. After `set_value`, the field is read back, and a field that does not show the new text is reported as an error; many web fields need `mac_type_text` instead.
+Acts on the element through Accessibility, so it works without coordinates, does not move the pointer, does not bring the app to the front, and does not use the clipboard. Before sending, it checks that the app has not quit or relaunched, that the element still exists with the same role, and that it still offers the action. Password fields cannot be set. `select` and `deselect` set whether a row or item is selected; `expand` and `collapse` open or close an outline row or disclosure; `check` and `uncheck` press a checkbox only when it is not already in that state. These four pairs send nothing when the element is already in the asked-for state, and afterwards check that it changed. `scroll_to_visible` scrolls the element into view; it is mostly offered by web content. Success means the app accepted the action, not that it did what was expected, so read `mac_ui_tree` again to check. After `set_value`, the field is read back, and a field that does not show the new text is reported as an error; many web fields need `mac_type_text` instead.
 
 ```json
 {"ref": "3.12", "action": "press", "app": "Calculator"}

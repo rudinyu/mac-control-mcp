@@ -53,7 +53,7 @@ class MCPProtocolTests(unittest.TestCase):
         self.assertEqual(
             {tool["name"] for tool in listed},
             {
-                "mac_status", "mac_screenshot", "mac_request_screen_recording", "mac_ui_tree", "mac_ax_action", "mac_find", "mac_wait", "mac_record_start",
+                "mac_status", "mac_screenshot", "mac_request_screen_recording", "mac_ui_tree", "mac_ax_action", "mac_find", "mac_wait", "mac_window", "mac_record_start",
                 "mac_record_status", "mac_record_stop", "mac_mouse", "mac_scroll", "mac_type_text", "mac_key",
             },
         )
@@ -174,6 +174,30 @@ class MCPProtocolTests(unittest.TestCase):
                 response = self.request("tools/call", {"name": name, "arguments": arguments})
                 self.assertTrue(response["result"]["isError"])
                 self.assertIn(expected, response["result"]["content"][0]["text"])
+
+    def test_12_window_refuses_bad_arguments_before_reading(self):
+        for arguments, expected in [
+            ({"action": "close"}, "Invalid action"),
+            ({"action": "move", "app": "Finder"}, "Missing or invalid x"),
+            ({"action": "move", "x": 1, "y": 2, "width": 3}, "width is not used with move"),
+            ({"action": "resize", "width": 0, "height": 10, "app": "Finder"}, "width is out of range"),
+            ({"action": "minimize"}, "Give window"),
+            ({"action": "list", "window": "1.1"}, "window is not used with list"),
+            ({"action": "focus", "window": "999.1"}, "Unknown or expired ref 999.1; nothing was sent"),
+            ({"action": "list", "app": "No Such App 7f3c"}, "No running app"),
+        ]:
+            with self.subTest(arguments=arguments):
+                response = self.request("tools/call", {"name": "mac_window", "arguments": arguments})
+                self.assertTrue(response["result"]["isError"])
+                self.assertIn(expected, response["result"]["content"][0]["text"])
+
+    def test_13_ax_action_lists_every_action(self):
+        listed = {tool["name"]: tool for tool in self.request("tools/list")["result"]["tools"]}
+        actions = listed["mac_ax_action"]["inputSchema"]["properties"]["action"]["enum"]
+        for action in ("scroll_to_visible", "select", "deselect", "expand", "collapse", "check", "uncheck"):
+            self.assertIn(action, actions)
+        response = self.request("tools/call", {"name": "mac_ax_action", "arguments": {"ref": "999.1", "action": "check"}})
+        self.assertIn("Unknown or expired ref", response["result"]["content"][0]["text"])
 
     def test_09_ax_action_schema(self):
         listed = {tool["name"]: tool for tool in self.request("tools/list")["result"]["tools"]}

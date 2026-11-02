@@ -20,7 +20,8 @@ The repository also contains **mac-exec**, a separate MCP server that runs comma
 | `mac_ui_tree` | Reads Accessibility elements of the frontmost app, or of the app named by `app`, with password field values hidden |
 | `mac_find` | Searches an app's windows for elements by role and text, returning refs |
 | `mac_wait` | Waits until a matching element appears or goes away |
-| `mac_ax_action` | Presses, sets the value of, or focuses an element by its ref, without moving the pointer or changing the front app |
+| `mac_ax_action` | Presses, sets, focuses, selects, expands, or checks an element by its ref, without moving the pointer or changing the front app |
+| `mac_window` | Lists windows, and focuses, moves, resizes, minimizes, or restores one |
 | `mac_mouse` | Moves, clicks, double-clicks, right-clicks, and drags |
 | `mac_scroll` | Scrolls vertically or horizontally |
 | `mac_type_text` | Types Unicode text by placing it on the clipboard and pressing Command-V, then restores the clipboard |
