@@ -120,6 +120,7 @@ class MCPProtocolTests(unittest.TestCase):
         for arguments, expected in [
             ({"ref": "1.1", "action": "launch"}, "Invalid action"),
             ({"ref": "1.1", "action": "set_value"}, "needs value"),
+            ({"ref": "1.1", "action": "set_value", "value": "x" * 2001}, "up to 2000 characters"),
             ({"ref": "1.1", "action": "press", "value": "x"}, "only used with set_value"),
             ({"ref": "", "action": "press"}, "ref must be"),
             ({"ref": 7, "action": "press"}, "ref must be"),
