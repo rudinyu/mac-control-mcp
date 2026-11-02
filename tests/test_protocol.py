@@ -53,7 +53,7 @@ class MCPProtocolTests(unittest.TestCase):
         self.assertEqual(
             {tool["name"] for tool in listed},
             {
-                "mac_status", "mac_screenshot", "mac_request_screen_recording", "mac_ui_tree", "mac_ax_action", "mac_record_start",
+                "mac_status", "mac_screenshot", "mac_request_screen_recording", "mac_ui_tree", "mac_ax_action", "mac_find", "mac_wait", "mac_record_start",
                 "mac_record_status", "mac_record_stop", "mac_mouse", "mac_scroll", "mac_type_text", "mac_key",
             },
         )
@@ -152,6 +152,28 @@ class MCPProtocolTests(unittest.TestCase):
             with self.subTest(name=name, arguments=arguments):
                 details = self.error_details(name, arguments)
                 self.assertEqual(details, {"code": code, "delivered": False, "retry": retry})
+
+    def test_11_find_and_wait_refuse_bad_queries_before_reading(self):
+        # All of these fail before Accessibility permission is checked.
+        for name, arguments, expected in [
+            ("mac_find", {}, "Give role, text, or both"),
+            ("mac_find", {"role": ""}, "role must be text"),
+            ("mac_find", {"text": "x" * 201}, "text must be text"),
+            ("mac_find", {"text": "Save", "exact": "yes"}, "exact must be"),
+            ("mac_find", {"text": "Save", "limit": 51}, "limit must be"),
+            ("mac_find", {"text": "Save", "root": "999.1"}, "Unknown or expired ref 999.1; nothing was searched"),
+            ("mac_find", {"text": "Save", "app": "No Such App 7f3c"}, "No running app"),
+            ("mac_wait", {"text": "Save", "state": "gone"}, "state must be"),
+            ("mac_wait", {"text": "Save", "timeout_seconds": 31}, "timeout_seconds must be"),
+            ("mac_wait", {"text": "Save", "timeout_seconds": 0.1}, "timeout_seconds must be"),
+            ("mac_wait", {"role": "button", "root": "999.1"}, "Unknown or expired ref"),
+            ("mac_ui_tree", {"root": "999.1"}, "Unknown or expired ref 999.1; nothing was read"),
+            ("mac_ui_tree", {"root": ""}, "root must be a ref"),
+        ]:
+            with self.subTest(name=name, arguments=arguments):
+                response = self.request("tools/call", {"name": name, "arguments": arguments})
+                self.assertTrue(response["result"]["isError"])
+                self.assertIn(expected, response["result"]["content"][0]["text"])
 
     def test_09_ax_action_schema(self):
         listed = {tool["name"]: tool for tool in self.request("tools/list")["result"]["tools"]}

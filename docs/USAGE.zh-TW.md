@@ -112,21 +112,56 @@
 | 參數 | 型別 | 說明 |
 | --- | --- | --- |
 | `max_depth` | 整數，0 到 8 | 讀取深度；預設 5 |
+| `root` | 字串 | 改從這個 ref 往下讀，而不是焦點視窗 |
 | `app` | 字串 | 要讀取的 App；預設是前景 App |
 
 以 JSON 回傳該 App 焦點視窗的輔助使用樹，包括每個元素的角色、標題、描述和值，以及目前取得鍵盤焦點的元素。可以用名稱找按鈕和欄位，不必靠像素位置。最多讀 200 個元素，每個值截到 200 個字元，碰到上限時會回報 `"truncated": true`。密碼欄位的內容一律不會回傳。指定 `app` 時只讀取，不會把該 App 切到前景。
 
-可以操作的元素另外會有 `ref`（例如 `"ref": "3.12"`）和 `actions`，也就是它支援的 `mac_ax_action` 動作。同一個 App 重新讀取時，該 App 原有的 ref 全部換新。
+可以操作的元素另外會有 `ref`（例如 `"ref": "3.12"`）和 `actions`，也就是它支援的 `mac_ax_action` 動作。因為 `max_depth` 或 200 個元素的上限而沒有列出子元素的元素，會顯示 `more_children`，也會有 `ref`；把這個 ref 當作 `root` 傳入，就能往下讀。同一個 App 重新讀取整棵樹時，該 App 原有的 ref 全部換新；用 `root` 往下讀則會保留。視窗很大時，先用較小的 `max_depth` 讀概況，再往下展開。
 
 ```json
 {"app": "TextEdit", "max_depth": 6}
+{"app": "Slack", "max_depth": 2}
+{"app": "Slack", "root": "4.7", "max_depth": 6}
+```
+
+### `mac_find`
+
+| 參數 | 型別 | 說明 |
+| --- | --- | --- |
+| `role` | 字串 | 例如 `button` 或 `AXTextField`；`AX` 前綴和大小寫都不影響 |
+| `text` | 字串 | 比對標題、描述或值，不分大小寫和重音符號 |
+| `exact` | 布林值 | 比對完整文字，而不是部分文字 |
+| `limit` | 整數，1 到 50 | 最多回傳幾個結果；預設 20 |
+| `root` | 字串 | 改在這個 ref 底下搜尋，而不是 App 的所有視窗 |
+| `app` | 字串 | 要搜尋的 App；預設是前景 App |
+
+至少要給 `role` 或 `text`。依螢幕閱讀器的順序搜尋 App 的每個視窗（焦點視窗優先），最多 5000 個元素、40 層、5 秒，比 `mac_ui_tree` 讀得深很多。結果附有 `ref` 和 `actions`，可以直接用於 `mac_ax_action`，而且 App 原有的 ref 仍然有效。`"complete": false` 表示搜尋被截斷，請用 `root` 縮小範圍。不會搜尋選單列裡的選單。密碼欄位的內容一律不會比對或回傳。
+
+```json
+{"app": "TextEdit", "role": "button", "text": "Save"}
+```
+
+### `mac_wait`
+
+| 參數 | 型別 | 說明 |
+| --- | --- | --- |
+| `role`、`text`、`exact`、`root`、`app` | | 與 `mac_find` 相同 |
+| `state` | `present` 或 `absent` | 等到符合的元素出現（預設），或等到全部消失 |
+| `timeout_seconds` | 數字，0.5 到 30 | 最多等多久；預設 10 |
+
+大約每秒檢查四次，每次都重新查詢 App 的視窗，所以在新視窗開啟的對話框也找得到。`present` 會在元素一出現時就回傳結果和 ref。`absent` 要等到完整搜尋都找不到才回傳。時間到了就以 `TIMEOUT` 失敗。動作之後用它來等，例如等表單出現或進度指示消失，不必一直重讀 `mac_ui_tree`。
+
+```json
+{"app": "TextEdit", "role": "sheet", "timeout_seconds": 5}
+{"app": "Safari", "role": "progressindicator", "state": "absent", "timeout_seconds": 20}
 ```
 
 ### `mac_ax_action`
 
 | 參數 | 型別 | 說明 |
 | --- | --- | --- |
-| `ref` | 字串，必填 | 該 App 最近一次 `mac_ui_tree` 的 ref |
+| `ref` | 字串，必填 | 來自 `mac_ui_tree`、`mac_find` 或 `mac_wait`，而且對該 App 仍然有效的 ref |
 | `action` | 字串，必填 | `press`、`show_menu`、`increment`、`decrement`、`confirm`、`cancel`、`raise`、`set_value` 或 `focus` |
 | `value` | 字串，最多 2000 個字元 | `set_value` 要設定的文字；其他動作不能使用 |
 | `app` | 字串 | 如果指定，必須是 ref 所屬的 App |
@@ -162,7 +197,7 @@
 | --- | --- | --- |
 | `fix` | 修改參數或參數指的對象，例如先打開 App | `INVALID_ARGS`、`APP_NOT_FOUND`、`APP_AMBIGUOUS`、`ACTION_UNSUPPORTED` |
 | `refresh` | 重新執行 `mac_screenshot` 或 `mac_ui_tree`，改用新的座標或 ref | `STALE_SCREENSHOT`、`STALE_REF` |
-| `safe` | 可以原樣再呼叫一次 | `FOCUS_LOST`、`APP_UNRESPONSIVE`、`BUSY`、`INTERNAL` |
+| `safe` | 可以原樣再呼叫一次 | `FOCUS_LOST`、`APP_UNRESPONSIVE`、`BUSY`、`INTERNAL`、`TIMEOUT` |
 | `user` | 需要使用者處理：授予權限、解鎖 Mac 或修正設定 | `PERMISSION_DENIED`、`SCREEN_LOCKED`、`SETUP_PROBLEM`、`CLIPBOARD_UNSAFE` |
 | `check` | 動作可能已經發生；先確認再決定要不要重做 | `OUTCOME_UNKNOWN` |
 

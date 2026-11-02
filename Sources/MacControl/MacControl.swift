@@ -34,6 +34,7 @@ private enum FailureKind: String {
     case appUnresponsive = "APP_UNRESPONSIVE"
     case busy = "BUSY"
     case internalError = "INTERNAL"
+    case timeout = "TIMEOUT"
     case outcomeUnknown = "OUTCOME_UNKNOWN"
 
     // Only an action that was sent without confirmation can have reached the app.
@@ -48,7 +49,7 @@ private enum FailureKind: String {
         // Take a new mac_screenshot or mac_ui_tree and use what it returns.
         case .staleScreenshot, .staleRef: return "refresh"
         // The same call can be repeated.
-        case .focusLost, .appUnresponsive, .busy, .internalError: return "safe"
+        case .focusLost, .appUnresponsive, .busy, .internalError, .timeout: return "safe"
         // Look at the app before repeating anything.
         case .outcomeUnknown: return "check"
         }
@@ -92,6 +93,17 @@ private struct AXRef {
     let role: String
 }
 
+// The app and generation new refs belong to.
+private struct AXOwner {
+    let pid: pid_t
+    let start: timeval
+    let generation: Int
+}
+
+// mac_find and mac_wait stop after this many elements or this depth, so a huge app cannot stall them.
+private let searchNodeLimit = 5000
+private let searchDepthLimit = 40
+
 // mac_ax_action names and the Accessibility actions they perform. set_value and focus set attributes instead.
 private let axActionNames: [String: String] = [
     "press": kAXPressAction, "show_menu": kAXShowMenuAction,
@@ -105,8 +117,11 @@ private final class MacControlServer {
     private var lastCapture: CaptureSize?
     private var recordings: [String: Recording] = [:]
     private var axRefs: [String: AXRef] = [:]
+    // Each app's current ref generation. A full mac_ui_tree starts a new one; mac_find, mac_wait, and reading
+    // below a root ref add refs to it, so refs from the tree keep working.
+    private var axApps: [pid_t: AXOwner] = [:]
     private var axGeneration = 0
-    private var axRefCount = 0
+    private var axRefCounts: [Int: Int] = [:]
 
     private let tools: [[String: Any]] = [
         [
@@ -127,17 +142,50 @@ private final class MacControlServer {
         ],
         [
             "name": "mac_ui_tree",
-            "description": "Read a limited Accessibility tree for the focused window and focused element of an app: the named app if app is given, otherwise the frontmost app. Does not change which app is in front. Password field values are excluded. Elements that can be acted on carry a ref and their actions for mac_ax_action; reading the tree again for the same app replaces its refs. Requires Accessibility permission.",
+            "description": "Read a limited Accessibility tree for the focused window and focused element of an app: the named app if app is given, otherwise the frontmost app. Does not change which app is in front. Password field values are excluded. Elements that can be acted on carry a ref and their actions for mac_ax_action. An element whose children are not listed shows more_children and a ref; pass that ref as root to read below it. Reading the whole tree again for the same app replaces its refs; reading below a root keeps them. For a large window, read with a small max_depth first, then drill in with root. Requires Accessibility permission.",
             "inputSchema": [
                 "type": "object",
-                "properties": ["max_depth": ["type": "integer", "minimum": 0, "maximum": 8], "app": appProperty],
+                "properties": [
+                    "max_depth": ["type": "integer", "minimum": 0, "maximum": 8],
+                    "root": ["type": "string", "description": "A ref to read below instead of the focused window."],
+                    "app": appProperty
+                ],
+                "additionalProperties": false
+            ],
+            "annotations": ["readOnlyHint": true]
+        ],
+        [
+            "name": "mac_find",
+            "description": "Search all windows of an app, or below a root ref, for elements by role (such as button or AXTextField) and/or text in their title, description, or value (case-insensitive; exact for a whole-text match). Searches much deeper than mac_ui_tree, up to 5000 elements, and returns up to limit matches with refs for mac_ax_action, keeping the app's existing refs. complete is false when the search was cut short. Does not change which app is in front. Requires Accessibility permission.",
+            "inputSchema": [
+                "type": "object",
+                "properties": [
+                    "role": ["type": "string"], "text": ["type": "string"], "exact": ["type": "boolean"],
+                    "limit": ["type": "integer", "minimum": 1, "maximum": 50],
+                    "root": ["type": "string"], "app": appProperty
+                ],
+                "additionalProperties": false
+            ],
+            "annotations": ["readOnlyHint": true]
+        ],
+        [
+            "name": "mac_wait",
+            "description": "Wait until an element matching role and/or text (as in mac_find) is present, or until none is left (state absent), checking about four times a second for up to timeout_seconds (default 10). Use it after an action instead of polling with mac_ui_tree, such as waiting for a dialog or for a spinner to go away. Returns the matches with refs when present; reports TIMEOUT otherwise. Does not change which app is in front. Requires Accessibility permission.",
+            "inputSchema": [
+                "type": "object",
+                "properties": [
+                    "role": ["type": "string"], "text": ["type": "string"], "exact": ["type": "boolean"],
+                    "state": ["type": "string", "enum": ["present", "absent"]],
+                    "timeout_seconds": ["type": "number", "minimum": 0.5, "maximum": 30],
+                    "root": ["type": "string"], "app": appProperty
+                ],
                 "additionalProperties": false
             ],
             "annotations": ["readOnlyHint": true]
         ],
         [
             "name": "mac_ax_action",
-            "description": "Act on an element through Accessibility, using a ref from the latest mac_ui_tree of its app: press, show_menu, increment, decrement, confirm, cancel, raise, set_value (with value), or focus. Does not move the pointer, change which app is in front, or use the clipboard. A ref stops working when mac_ui_tree is read again for that app, the element goes away, or the app quits or relaunches; then nothing is sent. If app is given, it must be the ref's app. Success means the app accepted the action; read mac_ui_tree again to see the result. Requires Accessibility permission.",
+            "description": "Act on an element through Accessibility, using a ref from mac_ui_tree, mac_find, or mac_wait for its app: press, show_menu, increment, decrement, confirm, cancel, raise, set_value (with value), or focus. Does not move the pointer, change which app is in front, or use the clipboard. A ref stops working when the whole mac_ui_tree is read again for that app, the element goes away, or the app quits or relaunches; then nothing is sent. If app is given, it must be the ref's app. Success means the app accepted the action; read mac_ui_tree again to see the result. Requires Accessibility permission.",
             "inputSchema": [
                 "type": "object",
                 "properties": [
@@ -260,7 +308,7 @@ private final class MacControlServer {
                 "protocolVersion": selected,
                 "capabilities": ["tools": [:]],
                 "serverInfo": ["name": "mac-control", "version": serverVersion],
-                "instructions": "Use mac_status first. Use mac_screenshot before mac_mouse; mouse coordinates use the most recent screenshot. When mac_ui_tree gives the element a ref, mac_ax_action can act on it without coordinates or focus. Pass app with the name of the app you are working in to mac_screenshot, mac_mouse, mac_scroll, mac_type_text, and mac_key, so input cannot land in another app. A failed call also returns JSON with code, delivered, and retry; follow retry, and check the app before repeating an action whose delivered is \"unknown\". Ask the user before irreversible actions."
+                "instructions": "Use mac_status first. Use mac_screenshot before mac_mouse; mouse coordinates use the most recent screenshot. When mac_ui_tree or mac_find gives the element a ref, mac_ax_action can act on it without coordinates or focus; use mac_wait to wait for the result. Pass app with the name of the app you are working in to mac_screenshot, mac_mouse, mac_scroll, mac_type_text, and mac_key, so input cannot land in another app. A failed call also returns JSON with code, delivered, and retry; follow retry, and check the app before repeating an action whose delivered is \"unknown\". Ask the user before irreversible actions."
             ], id: id)
         case "ping":
             send(result: [:], id: id)
@@ -304,6 +352,8 @@ private final class MacControlServer {
         case "mac_request_screen_recording": return [textContent(CGRequestScreenCaptureAccess() ? "Screen Recording access is granted." : "Screen Recording access is not granted yet. Complete the macOS permission prompt. \(PermissionHint.screenRecording)")]
         case "mac_ui_tree": return [textContent(try uiTree(args))]
         case "mac_ax_action": return [textContent(try axAction(args))]
+        case "mac_find": return [textContent(try find(args))]
+        case "mac_wait": return [textContent(try wait(args))]
         case "mac_record_start": return [textContent(try recordStart(args))]
         case "mac_record_status": return [textContent(try recordStatus(args))]
         case "mac_record_stop": return [textContent(try recordStop(args))]
@@ -858,37 +908,64 @@ private final class MacControlServer {
     private func uiTree(_ args: [String: Any]) throws -> String {
         let depth = try args["max_depth"].map { _ in try number(args, "max_depth") } ?? 5
         guard depth.rounded() == depth, depth >= 0, depth <= 8 else { throw ToolFailure("max_depth must be 0 to 8.") }
+        var remaining = 200
+        guard args["root"] != nil else {
+            let app = try appToRead(args)
+            let pid = app.processIdentifier
+            let owner = refOwner(pid, fresh: true)
+            let appElement = AXUIElementCreateApplication(pid)
+            // Elements obtained through the app element use its timeout, so a hung app cannot stall the tree.
+            AXUIElementSetMessagingTimeout(appElement, axMessagingTimeout)
+            let root = elementAttribute(appElement, kAXFocusedWindowAttribute as CFString)
+                ?? elementAttribute(appElement, kAXMainWindowAttribute as CFString)
+                ?? appElement
+            let tree = describeElement(root, depth: Int(depth), remaining: &remaining, owner: owner)
+            let focused = elementAttribute(appElement, kAXFocusedUIElementAttribute as CFString).map {
+                var focusRemaining = 20
+                return describeElement($0, depth: 1, remaining: &focusRemaining, owner: owner)
+            }
+            return jsonString(["app": app.localizedName ?? "Unknown", "bundle_id": app.bundleIdentifier ?? "",
+                               "focused": focused ?? NSNull(), "tree": tree, "truncated": remaining == 0])
+        }
+        // Reading below a ref keeps the app's refs, so the agent can map a large window first and then open
+        // one part of it.
+        let ref = try resolveRef(args, key: "root", outcome: "nothing was read")
+        let app = NSRunningApplication(processIdentifier: ref.pid)
+        let tree = describeElement(ref.element, depth: Int(depth), remaining: &remaining, owner: refOwner(ref.pid, fresh: false))
+        return jsonString(["app": app?.localizedName ?? "Unknown", "bundle_id": app?.bundleIdentifier ?? "",
+                           "root": args["root"] ?? NSNull(), "tree": tree, "truncated": remaining == 0])
+    }
+
+    // The app named by app, otherwise the frontmost app. A stale NSWorkspace answer is acceptable here
+    // because reading sends no input.
+    private func appToRead(_ args: [String: Any]) throws -> NSRunningApplication {
         let target = try targetApp(args)
         try requireAccessibility()
-        // A stale NSWorkspace answer is acceptable here because reading the tree sends no input.
         guard let app = target ?? focusedApp() ?? NSWorkspace.shared.frontmostApplication else {
             throw ToolFailure("No frontmost app found.", .internalError)
         }
-        let pid = app.processIdentifier
-        // Also release the refs of apps that have quit, so a long session does not keep their elements.
-        axRefs = axRefs.filter { $0.value.pid != pid && NSRunningApplication(processIdentifier: $0.value.pid) != nil }
-        axGeneration += 1
-        axRefCount = 0
-        // Without the start time a ref could not tell a relaunched app apart, so the tree then has no refs.
-        let owner = processStart(pid).map { (pid: pid, start: $0, prefix: "\(axGeneration).") }
-        let appElement = AXUIElementCreateApplication(pid)
-        // Elements obtained through the app element use its timeout, so a hung app cannot stall the tree.
-        AXUIElementSetMessagingTimeout(appElement, axMessagingTimeout)
-        let root = elementAttribute(appElement, kAXFocusedWindowAttribute as CFString)
-            ?? elementAttribute(appElement, kAXMainWindowAttribute as CFString)
-            ?? appElement
-        var remaining = 200
-        let tree = describeElement(root, depth: Int(depth), remaining: &remaining, owner: owner)
-        let focused = elementAttribute(appElement, kAXFocusedUIElementAttribute as CFString).map {
-            var focusRemaining = 20
-            return describeElement($0, depth: 1, remaining: &focusRemaining, owner: owner)
-        }
-        return jsonString(["app": app.localizedName ?? "Unknown", "bundle_id": app.bundleIdentifier ?? "",
-                           "focused": focused ?? NSNull(), "tree": tree, "truncated": remaining == 0])
+        return app
     }
 
-    private func describeElement(_ element: AXUIElement, depth: Int, remaining: inout Int,
-                                 owner: (pid: pid_t, start: timeval, prefix: String)?) -> [String: Any] {
+    // The owner for new refs in an app: a new generation when fresh, otherwise the app's current one. Without
+    // the start time a ref could not tell a relaunched app apart, so there are then no refs.
+    private func refOwner(_ pid: pid_t, fresh: Bool) -> AXOwner? {
+        guard let start = processStart(pid) else { return nil }
+        if !fresh, let current = axApps[pid], current.start.tv_sec == start.tv_sec, current.start.tv_usec == start.tv_usec {
+            return current
+        }
+        // Also release the refs of apps that have quit, so a long session does not keep their elements.
+        let running = { (pid: pid_t) in NSRunningApplication(processIdentifier: pid) != nil }
+        axRefs = axRefs.filter { $0.value.pid != pid && running($0.value.pid) }
+        axApps = axApps.filter { $0.key != pid && running($0.key) }
+        axRefCounts = axRefCounts.filter { generation in axApps.values.contains { $0.generation == generation.key } }
+        axGeneration += 1
+        let owner = AXOwner(pid: pid, start: start, generation: axGeneration)
+        axApps[pid] = owner
+        return owner
+    }
+
+    private func describeElement(_ element: AXUIElement, depth: Int, remaining: inout Int, owner: AXOwner?) -> [String: Any] {
         remaining -= 1
         let role = shortString(attribute(element, kAXRoleAttribute as CFString)) ?? "unknown"
         var result: [String: Any] = ["role": role]
@@ -897,15 +974,21 @@ private final class MacControlServer {
         if !isSecure(element, role: role), let value = shortString(attribute(element, kAXValueAttribute as CFString)) {
             result["value"] = value
         }
+        let expand = depth > 0 && remaining > 0
+        // Children not listed here can be read with this element's ref as root.
+        var hidden: CFIndex = 0
+        if !expand, AXUIElementGetAttributeValueCount(element, kAXChildrenAttribute as CFString, &hidden) == .success, hidden > 0 {
+            result["more_children"] = hidden
+        }
         if let owner, role != "unknown" {
             let actions = availableActions(element, role: role)
             // Web content offers show_menu and focus on nearly every node, so they alone do not earn a ref.
-            if actions.contains(where: { $0 != "show_menu" && $0 != "focus" }) {
+            if actions.contains(where: { $0 != "show_menu" && $0 != "focus" }) || hidden > 0 {
                 result["ref"] = ref(for: element, role: role, owner: owner)
                 result["actions"] = actions
             }
         }
-        if depth > 0, remaining > 0, let children = attribute(element, kAXChildrenAttribute as CFString) as? [AXUIElement] {
+        if expand, let children = attribute(element, kAXChildrenAttribute as CFString) as? [AXUIElement] {
             var entries: [[String: Any]] = []
             for child in children {
                 if remaining == 0 { break }
@@ -916,15 +999,188 @@ private final class MacControlServer {
         return result
     }
 
-    // The same element can appear in the tree and as the focused element; it keeps one ref.
-    private func ref(for element: AXUIElement, role: String, owner: (pid: pid_t, start: timeval, prefix: String)) -> String {
-        if let existing = axRefs.first(where: { $0.key.hasPrefix(owner.prefix) && CFEqual($0.value.element, element) }) {
+    // An element found again, by another read or as the focused element, keeps its ref.
+    private func ref(for element: AXUIElement, role: String, owner: AXOwner) -> String {
+        let prefix = "\(owner.generation)."
+        if let existing = axRefs.first(where: { $0.key.hasPrefix(prefix) && CFEqual($0.value.element, element) }) {
             return existing.key
         }
-        axRefCount += 1
-        let name = owner.prefix + String(axRefCount)
+        axRefCounts[owner.generation, default: 0] += 1
+        let name = prefix + String(axRefCounts[owner.generation]!)
         axRefs[name] = AXRef(element: element, pid: owner.pid, processStart: owner.start, role: role)
         return name
+    }
+
+    // Looks up the ref in args[key] and checks that it still names the same kind of element in the same
+    // running app. outcome says what did not happen when it does not, such as "no action was sent".
+    private func resolveRef(_ args: [String: Any], key: String, outcome: String) throws -> AXRef {
+        guard let refName = args[key] as? String, !refName.isEmpty else {
+            throw ToolFailure("\(key) must be a ref from mac_ui_tree.")
+        }
+        guard let ref = axRefs[refName] else {
+            throw ToolFailure("Unknown or expired ref \(refName); \(outcome). Call mac_ui_tree again and use a ref from it.", .staleRef)
+        }
+        let target = try targetApp(args)
+        try requireAccessibility()
+        let name = NSRunningApplication(processIdentifier: ref.pid)?.localizedName ?? "The app"
+        if let target, target.processIdentifier != ref.pid {
+            throw ToolFailure("Ref \(refName) belongs to \(name), not \(target.localizedName ?? "that app"); \(outcome).")
+        }
+        guard let start = processStart(ref.pid), start.tv_sec == ref.processStart.tv_sec, start.tv_usec == ref.processStart.tv_usec else {
+            axRefs = axRefs.filter { $0.value.pid != ref.pid }
+            throw ToolFailure("\(name) has quit or relaunched since mac_ui_tree; \(outcome). Call mac_ui_tree again.", .staleRef)
+        }
+        AXUIElementSetMessagingTimeout(ref.element, axMessagingTimeout)
+        // Read the role again, so an element that went away, or that the app reused for another kind of
+        // control, is refused.
+        var roleValue: CFTypeRef?
+        switch AXUIElementCopyAttributeValue(ref.element, kAXRoleAttribute as CFString, &roleValue) {
+        case .success where roleValue as? String == ref.role: return ref
+        case .apiDisabled: throw ToolFailure("Accessibility permission is missing. \(PermissionHint.accessibility)", .permissionDenied)
+        case .cannotComplete: throw ToolFailure("\(name) did not answer; \(outcome). Try again.", .appUnresponsive)
+        default:
+            axRefs[refName] = nil
+            throw ToolFailure("The element of ref \(refName) no longer exists or has changed; \(outcome). Call mac_ui_tree again.", .staleRef)
+        }
+    }
+
+    private struct SearchQuery {
+        let role: String?
+        let text: String?
+        let exact: Bool
+    }
+
+    private func searchQuery(_ args: [String: Any]) throws -> SearchQuery {
+        func optionalText(_ key: String) throws -> String? {
+            guard let raw = args[key] else { return nil }
+            guard let text = (raw as? String)?.trimmingCharacters(in: .whitespacesAndNewlines), !text.isEmpty, text.count <= 200 else {
+                throw ToolFailure("\(key) must be text of 1 to 200 characters.")
+            }
+            return text
+        }
+        let role = try optionalText("role")
+        let text = try optionalText("text")
+        guard role != nil || text != nil else { throw ToolFailure("Give role, text, or both.") }
+        guard args["exact"] == nil || args["exact"] is Bool else { throw ToolFailure("exact must be true or false.") }
+        // AXButton and button name the same role.
+        let bareRole = role.map { $0.lowercased().hasPrefix("ax") ? String($0.dropFirst(2)) : $0 }
+        return SearchQuery(role: bareRole, text: text, exact: args["exact"] as? Bool ?? false)
+    }
+
+    private func matches(_ element: AXUIElement, _ query: SearchQuery) -> Bool {
+        guard let role = attribute(element, kAXRoleAttribute as CFString) as? String else { return false }
+        if let wanted = query.role, String(role.dropFirst(role.hasPrefix("AX") ? 2 : 0)).caseInsensitiveCompare(wanted) != .orderedSame {
+            return false
+        }
+        guard let text = query.text else { return true }
+        var fields = [kAXTitleAttribute, kAXDescriptionAttribute]
+        if !isSecure(element, role: role) { fields.append(kAXValueAttribute) }
+        return fields.contains { name in
+            let raw = attribute(element, name as CFString)
+            guard let field = raw as? String ?? (raw as? NSNumber)?.stringValue else { return false }
+            let options: String.CompareOptions = [.caseInsensitive, .diacriticInsensitive]
+            return query.exact ? field.compare(text, options: options) == .orderedSame : field.range(of: text, options: options) != nil
+        }
+    }
+
+    // The roots to search: the ref's element, or every window of the app with the focused one first.
+    private func searchRoots(_ pid: pid_t, root: AXRef?) -> [AXUIElement] {
+        if let root { return [root.element] }
+        let appElement = AXUIElementCreateApplication(pid)
+        AXUIElementSetMessagingTimeout(appElement, axMessagingTimeout)
+        var roots: [AXUIElement] = elementAttribute(appElement, kAXFocusedWindowAttribute as CFString).map { [$0] } ?? []
+        for window in attribute(appElement, kAXWindowsAttribute as CFString) as? [AXUIElement] ?? []
+        where !roots.contains(where: { CFEqual($0, window) }) {
+            roots.append(window)
+        }
+        return roots.isEmpty ? [appElement] : roots
+    }
+
+    // Depth-first search in document order. complete is false when a limit or the deadline cut it short.
+    private func search(_ roots: [AXUIElement], _ query: SearchQuery, limit: Int, deadline: Date) -> (found: [AXUIElement], complete: Bool) {
+        var stack = roots.reversed().map { ($0, 0) }
+        var found: [AXUIElement] = []
+        var visited = 0
+        var complete = true
+        while let (element, depth) = stack.popLast() {
+            if visited >= searchNodeLimit || Date() >= deadline { return (found, false) }
+            visited += 1
+            if matches(element, query) {
+                found.append(element)
+                if found.count >= limit { return (found, complete && stack.isEmpty) }
+            }
+            guard let children = attribute(element, kAXChildrenAttribute as CFString) as? [AXUIElement], !children.isEmpty else { continue }
+            if depth >= searchDepthLimit {
+                complete = false
+                continue
+            }
+            stack.append(contentsOf: children.reversed().map { ($0, depth + 1) })
+        }
+        return (found, complete)
+    }
+
+    // The app and roots for mac_find and mac_wait: below the root ref if given, otherwise the app's windows.
+    private func searchScope(_ args: [String: Any]) throws -> (app: NSRunningApplication?, pid: pid_t, root: AXRef?) {
+        if args["root"] != nil {
+            let ref = try resolveRef(args, key: "root", outcome: "nothing was searched")
+            return (NSRunningApplication(processIdentifier: ref.pid), ref.pid, ref)
+        }
+        let app = try appToRead(args)
+        return (app, app.processIdentifier, nil)
+    }
+
+    private func describeMatches(_ found: [AXUIElement], pid: pid_t) -> [[String: Any]] {
+        let owner = refOwner(pid, fresh: false)
+        return found.map { element in
+            var remaining = 1
+            return describeElement(element, depth: 0, remaining: &remaining, owner: owner)
+        }
+    }
+
+    private func find(_ args: [String: Any]) throws -> String {
+        let query = try searchQuery(args)
+        let limit = try args["limit"].map { _ in try number(args, "limit") } ?? 20
+        guard limit.rounded() == limit, limit >= 1, limit <= 50 else { throw ToolFailure("limit must be 1 to 50.") }
+        let scope = try searchScope(args)
+        let result = search(searchRoots(scope.pid, root: scope.root), query, limit: Int(limit), deadline: Date().addingTimeInterval(5))
+        return jsonString(["app": scope.app?.localizedName ?? "Unknown", "matches": describeMatches(result.found, pid: scope.pid),
+                           "complete": result.complete])
+    }
+
+    private func wait(_ args: [String: Any]) throws -> String {
+        let query = try searchQuery(args)
+        let state = args["state"] as? String ?? "present"
+        guard args["state"] == nil || ["present", "absent"].contains(args["state"] as? String) else {
+            throw ToolFailure("state must be present or absent.")
+        }
+        let seconds = try args["timeout_seconds"].map { _ in try number(args, "timeout_seconds") } ?? 10
+        guard seconds >= 0.5, seconds <= 30 else { throw ToolFailure("timeout_seconds must be 0.5 to 30.") }
+        let scope = try searchScope(args)
+        let started = Date()
+        let deadline = started.addingTimeInterval(seconds)
+        var sawIncomplete = false
+        repeat {
+            // Windows are looked up on every try, so a dialog that opens in a new window is found.
+            let result = search(searchRoots(scope.pid, root: scope.root), query, limit: 20, deadline: deadline)
+            if state == "present", !result.found.isEmpty {
+                return jsonString(["app": scope.app?.localizedName ?? "Unknown", "state": state,
+                                   "waited_seconds": (Date().timeIntervalSince(started) * 10).rounded() / 10,
+                                   "matches": describeMatches(result.found, pid: scope.pid)])
+            }
+            // An element is only gone when the whole search finished without finding it.
+            if state == "absent", result.found.isEmpty, result.complete {
+                return jsonString(["app": scope.app?.localizedName ?? "Unknown", "state": state,
+                                   "waited_seconds": (Date().timeIntervalSince(started) * 10).rounded() / 10])
+            }
+            sawIncomplete = sawIncomplete || !result.complete
+            if NSRunningApplication(processIdentifier: scope.pid) == nil {
+                throw ToolFailure("The app quit while waiting.", .staleRef)
+            }
+            RunLoop.current.run(until: min(deadline, Date().addingTimeInterval(0.25)))
+        } while Date() < deadline
+        let note = sawIncomplete ? " The app's tree was too large or slow to search fully; narrow it with root." : ""
+        let outcome = state == "present" ? "No matching element appeared" : "A matching element was still there"
+        throw ToolFailure("\(outcome) after \(seconds) seconds.\(note)", .timeout)
     }
 
     // A password field reports AXSecureTextField as its role or, for NSSecureTextField, as its subrole.
@@ -965,36 +1221,10 @@ private final class MacControlServer {
         } else if args["value"] != nil {
             throw ToolFailure("value is only used with set_value.")
         }
-        guard let refName = args["ref"] as? String, !refName.isEmpty else {
-            throw ToolFailure("ref must be a ref from mac_ui_tree.")
-        }
-        guard let ref = axRefs[refName] else {
-            throw ToolFailure("Unknown or expired ref \(refName); no action was sent. Call mac_ui_tree again and use a ref from it.", .staleRef)
-        }
-        let target = try targetApp(args)
-        try requireAccessibility()
+        let ref = try resolveRef(args, key: "ref", outcome: "no action was sent")
         try requireUnlocked()
+        let refName = args["ref"] as? String ?? ""
         let name = NSRunningApplication(processIdentifier: ref.pid)?.localizedName ?? "The app"
-        if let target, target.processIdentifier != ref.pid {
-            throw ToolFailure("Ref \(refName) belongs to \(name), not \(target.localizedName ?? "that app"); no action was sent.")
-        }
-        guard let start = processStart(ref.pid), start.tv_sec == ref.processStart.tv_sec, start.tv_usec == ref.processStart.tv_usec else {
-            axRefs = axRefs.filter { $0.value.pid != ref.pid }
-            throw ToolFailure("\(name) has quit or relaunched since mac_ui_tree; no action was sent. Call mac_ui_tree again.", .staleRef)
-        }
-        AXUIElementSetMessagingTimeout(ref.element, axMessagingTimeout)
-        // Read the role again, so an element that went away, or that the app reused for another kind of
-        // control, is refused before anything is sent.
-        var roleValue: CFTypeRef?
-        let roleError = AXUIElementCopyAttributeValue(ref.element, kAXRoleAttribute as CFString, &roleValue)
-        switch roleError {
-        case .success where roleValue as? String == ref.role: break
-        case .apiDisabled: throw ToolFailure("Accessibility permission is missing. \(PermissionHint.accessibility)", .permissionDenied)
-        case .cannotComplete: throw ToolFailure("\(name) did not answer; no action was sent. Try again.", .appUnresponsive)
-        default:
-            axRefs[refName] = nil
-            throw ToolFailure("The element of ref \(refName) no longer exists or has changed; no action was sent. Call mac_ui_tree again.", .staleRef)
-        }
         guard availableActions(ref.element, role: ref.role).contains(action) else {
             throw ToolFailure("The element of ref \(refName) does not offer \(action) now; no action was sent. Call mac_ui_tree again to see its actions.", .unsupported)
         }
