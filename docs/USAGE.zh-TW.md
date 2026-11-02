@@ -157,16 +157,36 @@
 {"app": "Safari", "role": "progressindicator", "state": "absent", "timeout_seconds": 20}
 ```
 
+### `mac_window`
+
+| 參數 | 型別 | 說明 |
+| --- | --- | --- |
+| `action` | 字串，必填 | `list`、`focus`、`move`、`resize`、`minimize` 或 `restore` |
+| `window` | 字串 | 來自 `list`、`mac_find` 或 `mac_ui_tree` 的視窗 ref |
+| `x`、`y` | 數字 | `move` 用：新的左上角位置 |
+| `width`、`height` | 數字 | `resize` 用 |
+| `app` | 字串 | `list` 時是要列出的 App；其他動作沒有給 `window` 時，操作這個 App 的焦點視窗 |
+
+`list` 回傳每個視窗的 App、標題、`frame`、`minimized`、`main`、`focused` 和 `ref`。沒有給 `app` 時，列出所有有 Dock 圖示的 App 的視窗，最多 100 個。座標單位是螢幕的點，也就是 `mac_status` 裡 `main_display` 的單位，不是 `mac_screenshot` 的像素。
+
+`focus` 會還原最小化的視窗、把它移到最上層，並把它的 App 切到前景。`move` 和 `resize` 會回傳視窗和 `as_requested`；App 把視窗放到或調成不同的位置或大小時（例如為了留在螢幕內），它是 `false`。大小固定的視窗會以 `ACTION_UNSUPPORTED` 拒絕。視窗已經是要求的狀態時，`minimize` 和 `restore` 不會送出任何東西。開啟「幕前調度」（Stage Manager）時，macOS 可能會忽略這兩個動作，工具會回報 `OUTCOME_UNKNOWN`。
+
+```json
+{"action": "list", "app": "TextEdit"}
+{"action": "move", "window": "5.2", "x": 0, "y": 25}
+{"action": "resize", "app": "TextEdit", "width": 900, "height": 700}
+```
+
 ### `mac_ax_action`
 
 | 參數 | 型別 | 說明 |
 | --- | --- | --- |
 | `ref` | 字串，必填 | 來自 `mac_ui_tree`、`mac_find` 或 `mac_wait`，而且對該 App 仍然有效的 ref |
-| `action` | 字串，必填 | `press`、`show_menu`、`increment`、`decrement`、`confirm`、`cancel`、`raise`、`set_value` 或 `focus` |
+| `action` | 字串，必填 | `press`、`show_menu`、`increment`、`decrement`、`confirm`、`cancel`、`raise`、`scroll_to_visible`、`set_value`、`focus`、`select`、`deselect`、`expand`、`collapse`、`check` 或 `uncheck` |
 | `value` | 字串，最多 2000 個字元 | `set_value` 要設定的文字；其他動作不能使用 |
 | `app` | 字串 | 如果指定，必須是 ref 所屬的 App |
 
-透過輔助使用直接操作元素，所以不需要座標，不會移動游標，不會把 App 切到前景，也不會使用剪貼簿。送出前會確認 App 沒有結束或重新開啟、元素仍然存在且角色相同，而且仍支援該動作。密碼欄位不能設定。成功只代表 App 接受了動作，不代表結果符合預期，請再讀一次 `mac_ui_tree` 確認。`set_value` 之後會讀回欄位內容，沒有顯示新文字就回報錯誤；許多網頁欄位需要改用 `mac_type_text`。
+透過輔助使用直接操作元素，所以不需要座標，不會移動游標，不會把 App 切到前景，也不會使用剪貼簿。送出前會確認 App 沒有結束或重新開啟、元素仍然存在且角色相同，而且仍支援該動作。密碼欄位不能設定。`select` 和 `deselect` 設定列或項目是否被選取；`expand` 和 `collapse` 展開或收合大綱列或展開三角形；`check` 和 `uncheck` 只在核取方塊不是要求的狀態時才按下它。這四組動作在元素已經是要求的狀態時不會送出任何東西，送出後也會確認狀態確實改變。`scroll_to_visible` 會把元素捲動到可見範圍，主要由網頁內容提供。成功只代表 App 接受了動作，不代表結果符合預期，請再讀一次 `mac_ui_tree` 確認。`set_value` 之後會讀回欄位內容，沒有顯示新文字就回報錯誤；許多網頁欄位需要改用 `mac_type_text`。
 
 ```json
 {"ref": "3.12", "action": "press", "app": "Calculator"}

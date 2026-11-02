@@ -108,8 +108,21 @@ private let searchDepthLimit = 40
 private let axActionNames: [String: String] = [
     "press": kAXPressAction, "show_menu": kAXShowMenuAction,
     "increment": kAXIncrementAction, "decrement": kAXDecrementAction,
-    "confirm": kAXConfirmAction, "cancel": kAXCancelAction, "raise": kAXRaiseAction
+    "confirm": kAXConfirmAction, "cancel": kAXCancelAction, "raise": kAXRaiseAction,
+    "scroll_to_visible": "AXScrollToVisible"
 ]
+// Actions that set a true-or-false attribute, with the attributes to try in order. Outline rows use
+// AXDisclosing; other expandable elements use AXExpanded.
+private let axStateActions: [String: (attributes: [String], value: Bool)] = [
+    "select": (["AXSelected"], true), "deselect": (["AXSelected"], false),
+    "expand": (["AXExpanded", "AXDisclosing"], true), "collapse": (["AXExpanded", "AXDisclosing"], false)
+]
+// Every mac_ax_action action, in the order shown to agents.
+private let axAllActions = ["press", "show_menu", "increment", "decrement", "confirm", "cancel", "raise",
+                            "scroll_to_visible", "set_value", "focus", "select", "deselect", "expand", "collapse",
+                            "check", "uncheck"]
+// Web content offers these on nearly every node, so they alone do not earn a ref.
+private let axWeakActions: Set<String> = ["show_menu", "focus", "scroll_to_visible"]
 // Some menus and pop-ups only return from an action after they close; without a limit the server would hang.
 private let axMessagingTimeout: Float = 2
 
@@ -184,13 +197,28 @@ private final class MacControlServer {
             "annotations": ["readOnlyHint": true]
         ],
         [
+            "name": "mac_window",
+            "description": "List or arrange windows. list returns each window's title, frame in screen points (as in mac_status main_display, not screenshot pixels), state, and a ref; it lists the windows of app, or of every app with a Dock icon when app is left out. focus brings a window and its app to the front, restoring it if minimized. move sets the top-left corner to x, y; resize sets width and height; minimize and restore change whether it is minimized; with Stage Manager on, macOS may ignore them, which is reported as OUTCOME_UNKNOWN. Without window, these act on the focused window of app. move and resize report the frame the app actually took, which can differ from the one asked for. Requires Accessibility permission.",
+            "inputSchema": [
+                "type": "object",
+                "properties": [
+                    "action": ["type": "string", "enum": ["list", "focus", "move", "resize", "minimize", "restore"]],
+                    "window": ["type": "string", "description": "A window ref from mac_window list, mac_find, or mac_ui_tree."],
+                    "x": ["type": "number"], "y": ["type": "number"],
+                    "width": ["type": "number", "minimum": 1], "height": ["type": "number", "minimum": 1],
+                    "app": appProperty
+                ],
+                "required": ["action"], "additionalProperties": false
+            ]
+        ],
+        [
             "name": "mac_ax_action",
-            "description": "Act on an element through Accessibility, using a ref from mac_ui_tree, mac_find, or mac_wait for its app: press, show_menu, increment, decrement, confirm, cancel, raise, set_value (with value), or focus. Does not move the pointer, change which app is in front, or use the clipboard. A ref stops working when the whole mac_ui_tree is read again for that app, the element goes away, or the app quits or relaunches; then nothing is sent. If app is given, it must be the ref's app. Success means the app accepted the action; read mac_ui_tree again to see the result. Requires Accessibility permission.",
+            "description": "Act on an element through Accessibility, using a ref from mac_ui_tree, mac_find, or mac_wait for its app: press, show_menu, increment, decrement, confirm, cancel, raise, scroll_to_visible, set_value (with value), focus, select, deselect, expand, collapse, check, or uncheck. select through uncheck do nothing when the element is already in that state, and are checked afterwards. Does not move the pointer, change which app is in front, or use the clipboard. A ref stops working when the whole mac_ui_tree is read again for that app, the element goes away, or the app quits or relaunches; then nothing is sent. If app is given, it must be the ref's app. Success means the app accepted the action; read mac_ui_tree again to see the result. Requires Accessibility permission.",
             "inputSchema": [
                 "type": "object",
                 "properties": [
                     "ref": ["type": "string"],
-                    "action": ["type": "string", "enum": ["press", "show_menu", "increment", "decrement", "confirm", "cancel", "raise", "set_value", "focus"]],
+                    "action": ["type": "string", "enum": axAllActions],
                     "value": ["type": "string", "maxLength": 2000],
                     "app": appProperty
                 ],
@@ -353,6 +381,7 @@ private final class MacControlServer {
         case "mac_ui_tree": return [textContent(try uiTree(args))]
         case "mac_ax_action": return [textContent(try axAction(args))]
         case "mac_find": return [textContent(try find(args))]
+        case "mac_window": return [textContent(try window(args))]
         case "mac_wait": return [textContent(try wait(args))]
         case "mac_record_start": return [textContent(try recordStart(args))]
         case "mac_record_status": return [textContent(try recordStatus(args))]
@@ -983,8 +1012,7 @@ private final class MacControlServer {
         }
         if let owner, role != "unknown" {
             let actions = availableActions(element, role: role)
-            // Web content offers show_menu and focus on nearly every node, so they alone do not earn a ref.
-            if alwaysRef || actions.contains(where: { $0 != "show_menu" && $0 != "focus" }) || hidden > 0 {
+            if alwaysRef || actions.contains(where: { !axWeakActions.contains($0) }) || hidden > 0 {
                 result["ref"] = ref(for: element, role: role, owner: owner)
                 result["actions"] = actions
             }
@@ -1163,6 +1191,152 @@ private final class MacControlServer {
                            "complete": result.complete])
     }
 
+    private func cgValue<T>(_ element: AXUIElement, _ name: String, _ type: AXValueType, _ empty: T) -> T? {
+        guard let value = attribute(element, name as CFString), CFGetTypeID(value) == AXValueGetTypeID() else { return nil }
+        var result = empty
+        return AXValueGetValue(value as! AXValue, type, &result) ? result : nil
+    }
+
+    private func frame(of window: AXUIElement) -> CGRect? {
+        guard let origin = cgValue(window, kAXPositionAttribute, .cgPoint, CGPoint.zero),
+              let size = cgValue(window, kAXSizeAttribute, .cgSize, CGSize.zero) else { return nil }
+        return CGRect(origin: origin, size: size)
+    }
+
+    private func frameJSON(_ rect: CGRect?) -> Any {
+        guard let rect else { return NSNull() }
+        return ["x": rect.origin.x, "y": rect.origin.y, "width": rect.width, "height": rect.height]
+    }
+
+    private func describeWindow(_ element: AXUIElement, app: NSRunningApplication, appElement: AXUIElement) -> [String: Any] {
+        let focused = elementAttribute(appElement, kAXFocusedWindowAttribute as CFString)
+        var result: [String: Any] = [
+            "app": app.localizedName ?? "Unknown", "bundle_id": app.bundleIdentifier ?? "",
+            "title": shortString(attribute(element, kAXTitleAttribute as CFString)) ?? "",
+            "frame": frameJSON(frame(of: element)),
+            "minimized": boolState(element, kAXMinimizedAttribute) ?? false,
+            "main": boolState(element, kAXMainAttribute) ?? false,
+            "focused": focused.map { CFEqual($0, element) } ?? false
+        ]
+        if let owner = refOwner(app.processIdentifier, fresh: false) {
+            result["ref"] = ref(for: element, role: kAXWindowRole, owner: owner)
+        }
+        return result
+    }
+
+    private func window(_ args: [String: Any]) throws -> String {
+        let actions = ["list", "focus", "move", "resize", "minimize", "restore"]
+        guard let action = args["action"] as? String, actions.contains(action) else {
+            throw ToolFailure("Invalid action. Use \(actions.joined(separator: ", ")).")
+        }
+        // Only the arguments of the chosen action are allowed, so a mistyped call does nothing.
+        let needed: [String: [String]] = ["move": ["x", "y"], "resize": ["width", "height"]]
+        for key in ["x", "y", "width", "height"] where args[key] != nil && !(needed[action] ?? []).contains(key) {
+            throw ToolFailure("\(key) is not used with \(action).")
+        }
+        var numbers: [String: Double] = [:]
+        for key in needed[action] ?? [] {
+            let value = try number(args, key)
+            guard abs(value) <= 100_000, key == "x" || key == "y" || value >= 1 else {
+                throw ToolFailure("\(key) is out of range.")
+            }
+            numbers[key] = value
+        }
+        if action == "list" {
+            guard args["window"] == nil else { throw ToolFailure("window is not used with list.") }
+            let apps: [NSRunningApplication]
+            if args["app"] != nil {
+                apps = [try targetApp(args)!]
+            } else {
+                apps = NSWorkspace.shared.runningApplications.filter { $0.activationPolicy == .regular && !$0.isTerminated }
+            }
+            try requireAccessibility()
+            var windows: [[String: Any]] = []
+            for app in apps where windows.count < 100 {
+                let appElement = AXUIElementCreateApplication(app.processIdentifier)
+                AXUIElementSetMessagingTimeout(appElement, axMessagingTimeout)
+                for element in attribute(appElement, kAXWindowsAttribute as CFString) as? [AXUIElement] ?? [] where windows.count < 100 {
+                    windows.append(describeWindow(element, app: app, appElement: appElement))
+                }
+            }
+            return jsonString(["windows": windows, "truncated": windows.count >= 100])
+        }
+        guard args["window"] != nil || args["app"] != nil else {
+            throw ToolFailure("Give window, a ref from mac_window list, or app to use its focused window.")
+        }
+        let element: AXUIElement
+        let pid: pid_t
+        let refName: String
+        if args["window"] != nil {
+            let ref = try resolveRef(args, key: "window", outcome: "nothing was sent")
+            guard ref.role == kAXWindowRole else {
+                throw ToolFailure("Ref \(args["window"] as? String ?? "") has role \(ref.role), not AXWindow. Use a ref from mac_window list.")
+            }
+            (element, pid, refName) = (ref.element, ref.pid, args["window"] as? String ?? "")
+        } else {
+            let app = try targetApp(args)!
+            try requireAccessibility()
+            let appElement = AXUIElementCreateApplication(app.processIdentifier)
+            AXUIElementSetMessagingTimeout(appElement, axMessagingTimeout)
+            guard let focused = elementAttribute(appElement, kAXFocusedWindowAttribute as CFString)
+                    ?? elementAttribute(appElement, kAXMainWindowAttribute as CFString) else {
+                throw ToolFailure("\(app.localizedName ?? "The app") has no focused window. Use mac_window list and pass a window ref.", .appNotFound)
+            }
+            AXUIElementSetMessagingTimeout(focused, axMessagingTimeout)
+            (element, pid, refName) = (focused, app.processIdentifier, "")
+        }
+        try requireUnlocked()
+        guard let app = NSRunningApplication(processIdentifier: pid) else {
+            throw ToolFailure("The app has quit; nothing was sent.", .staleRef)
+        }
+        let name = app.localizedName ?? "The app"
+        let label = refName.isEmpty ? "the focused window" : "window \(refName)"
+        let appElement = AXUIElementCreateApplication(pid)
+        func set(_ attribute: String, _ value: CFTypeRef) throws {
+            guard isSettable(element, attribute as CFString) else {
+                throw ToolFailure("\(name) does not let \(label) be changed this way (\(attribute) is fixed); nothing was sent.", .unsupported)
+            }
+            let error = AXUIElementSetAttributeValue(element, attribute as CFString, value)
+            guard error == .success else { throw axFailure(error, action, refName: refName, appName: name) }
+        }
+        switch action {
+        case "focus":
+            if boolState(element, kAXMinimizedAttribute) == true { try set(kAXMinimizedAttribute, kCFBooleanFalse) }
+            let raised = AXUIElementPerformAction(element, kAXRaiseAction as CFString)
+            guard raised == .success else { throw axFailure(raised, "focus", refName: refName, appName: name) }
+            try bringToFront(app)
+            guard settles({ elementAttribute(appElement, kAXFocusedWindowAttribute as CFString).map { CFEqual($0, element) } ?? false }) else {
+                throw ToolFailure("\(name) came to the front, but \(label) did not become its focused window. Call mac_window list to check.", .outcomeUnknown)
+            }
+        case "move", "resize":
+            var point = CGPoint(x: numbers["x"] ?? 0, y: numbers["y"] ?? 0)
+            var size = CGSize(width: numbers["width"] ?? 0, height: numbers["height"] ?? 0)
+            let value = action == "move" ? AXValueCreate(.cgPoint, &point) : AXValueCreate(.cgSize, &size)
+            guard let value else { throw ToolFailure("Could not create the window \(action == "move" ? "position" : "size"); nothing was sent.", .internalError) }
+            try set(action == "move" ? kAXPositionAttribute : kAXSizeAttribute, value)
+        case "minimize", "restore":
+            let wanted = action == "minimize"
+            if boolState(element, kAXMinimizedAttribute) == wanted {
+                return "\(label.prefix(1).uppercased() + label.dropFirst()) of \(name) is already \(wanted ? "minimized" : "not minimized"), so nothing was sent."
+            }
+            try set(kAXMinimizedAttribute, wanted ? kCFBooleanTrue : kCFBooleanFalse)
+            // The Dock animation takes a moment.
+            guard settles({ boolState(element, kAXMinimizedAttribute) == wanted }) || settles({ boolState(element, kAXMinimizedAttribute) == wanted }) else {
+                throw ToolFailure("\(name) accepted \(action) for \(label), but it has not changed yet. Call mac_window list to check.", .outcomeUnknown)
+            }
+        default: break
+        }
+        var result = describeWindow(element, app: app, appElement: appElement)
+        result["action"] = action
+        if action == "move" || action == "resize", let actual = frame(of: element) {
+            let asked = action == "move"
+                ? (abs(actual.origin.x - numbers["x"]!) <= 1 && abs(actual.origin.y - numbers["y"]!) <= 1)
+                : (abs(actual.width - numbers["width"]!) <= 1 && abs(actual.height - numbers["height"]!) <= 1)
+            result["as_requested"] = asked
+        }
+        return jsonString(result)
+    }
+
     private func wait(_ args: [String: Any]) throws -> String {
         let query = try searchQuery(args)
         let state = args["state"] as? String ?? "present"
@@ -1220,7 +1394,49 @@ private final class MacControlServer {
         var actions = axActionNames.filter { native.contains($0.value) }.keys.sorted()
         if !isSecure(element, role: role), isSettable(element, kAXValueAttribute as CFString) { actions.append("set_value") }
         if isSettable(element, kAXFocusedAttribute as CFString) { actions.append("focus") }
+        for name in ["select", "deselect", "expand", "collapse"]
+        where axStateActions[name]!.attributes.contains(where: { isSettable(element, $0 as CFString) }) {
+            actions.append(name)
+        }
+        // A checkbox is checked by pressing it, so check and uncheck press only when the state differs.
+        if role == "AXCheckBox", native.contains(kAXPressAction) { actions += ["check", "uncheck"] }
         return actions
+    }
+
+    // A true-or-false attribute, or nil when it cannot be read. A checkbox's value is 0, 1, or 2 for mixed.
+    private func boolState(_ element: AXUIElement, _ name: String) -> Bool? {
+        let value = attribute(element, name as CFString)
+        if let flag = value as? Bool { return flag }
+        guard let number = value as? NSNumber, number.intValue == 0 || number.intValue == 1 else { return nil }
+        return number.intValue == 1
+    }
+
+    // Some apps update state after the action returns, as when a row animates open.
+    private func settles(_ check: () -> Bool) -> Bool {
+        for _ in 0..<10 {
+            if check() { return true }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.05))
+        }
+        return check()
+    }
+
+    // The failure for an Accessibility call that did not succeed. what names the action in messages.
+    private func axFailure(_ error: AXError, _ what: String, refName: String, appName: String) -> ToolFailure {
+        switch error {
+        case .actionUnsupported, .attributeUnsupported, .notImplemented:
+            return ToolFailure("\(appName) reported that the element of ref \(refName) does not support \(what), so it was not done.", .unsupported)
+        case .illegalArgument:
+            return ToolFailure("\(appName) rejected \(what) for ref \(refName), so it was not done.", .unsupported)
+        case .invalidUIElement:
+            axRefs[refName] = nil
+            return ToolFailure("The element of ref \(refName) no longer exists; nothing was sent. Call mac_ui_tree again.", .staleRef)
+        case .apiDisabled:
+            return ToolFailure("Accessibility permission is missing. \(PermissionHint.accessibility)", .permissionDenied)
+        case .cannotComplete:
+            return ToolFailure("\(appName) did not answer in time, so \(what) may or may not have happened. Call mac_ui_tree to check before trying again.", .outcomeUnknown)
+        default:
+            return ToolFailure("\(what) returned Accessibility error \(error.rawValue), so it may or may not have happened. Call mac_ui_tree to check before trying again.", .outcomeUnknown)
+        }
     }
 
     private func processStart(_ pid: pid_t) -> timeval? {
@@ -1231,9 +1447,8 @@ private final class MacControlServer {
     }
 
     private func axAction(_ args: [String: Any]) throws -> String {
-        guard let action = args["action"] as? String,
-              axActionNames[action] != nil || action == "set_value" || action == "focus" else {
-            throw ToolFailure("Invalid action. Use press, show_menu, increment, decrement, confirm, cancel, raise, set_value, or focus.")
+        guard let action = args["action"] as? String, axAllActions.contains(action) else {
+            throw ToolFailure("Invalid action. Use \(axAllActions.joined(separator: ", ")).")
         }
         let value = args["value"] as? String
         if action == "set_value" {
@@ -1248,27 +1463,28 @@ private final class MacControlServer {
         guard availableActions(ref.element, role: ref.role).contains(action) else {
             throw ToolFailure("The element of ref \(refName) does not offer \(action) now; no action was sent. Call mac_ui_tree again to see its actions.", .unsupported)
         }
+        // For a state action, the attribute to read back and the state wanted.
+        var target: (attribute: String, value: Bool)?
+        if let state = axStateActions[action] {
+            target = state.attributes.first(where: { isSettable(ref.element, $0 as CFString) }).map { ($0, state.value) }
+        } else if action == "check" || action == "uncheck" {
+            target = (kAXValueAttribute, action == "check")
+        }
+        if let target, boolState(ref.element, target.attribute) == target.value {
+            return "The \(ref.role) ref \(refName) in \(name) is already in that state, so nothing was sent."
+        }
         let error: AXError
         switch action {
         case "set_value": error = AXUIElementSetAttributeValue(ref.element, kAXValueAttribute as CFString, value! as CFString)
         case "focus": error = AXUIElementSetAttributeValue(ref.element, kAXFocusedAttribute as CFString, kCFBooleanTrue)
+        case "check", "uncheck": error = AXUIElementPerformAction(ref.element, kAXPressAction as CFString)
+        case _ where target != nil:
+            error = AXUIElementSetAttributeValue(ref.element, target!.attribute as CFString, target!.value ? kCFBooleanTrue : kCFBooleanFalse)
         default: error = AXUIElementPerformAction(ref.element, axActionNames[action]! as CFString)
         }
-        switch error {
-        case .success: break
-        case .actionUnsupported, .attributeUnsupported, .notImplemented:
-            throw ToolFailure("\(name) reported that the element of ref \(refName) does not support \(action), so it was not done.", .unsupported)
-        case .illegalArgument:
-            throw ToolFailure("\(name) rejected \(action) for ref \(refName), so it was not done.", .unsupported)
-        case .invalidUIElement:
-            axRefs[refName] = nil
-            throw ToolFailure("The element of ref \(refName) no longer exists; no action was sent. Call mac_ui_tree again.", .staleRef)
-        case .apiDisabled:
-            throw ToolFailure("Accessibility permission is missing. \(PermissionHint.accessibility)", .permissionDenied)
-        case .cannotComplete:
-            throw ToolFailure("\(name) did not answer in time, so \(action) may or may not have happened. Call mac_ui_tree to check before trying again.", .outcomeUnknown)
-        default:
-            throw ToolFailure("\(action) returned Accessibility error \(error.rawValue), so it may or may not have happened. Call mac_ui_tree to check before trying again.", .outcomeUnknown)
+        guard error == .success else { throw axFailure(error, action, refName: refName, appName: name) }
+        if let target, !settles({ boolState(ref.element, target.attribute) == target.value }) {
+            throw ToolFailure("\(name) accepted \(action) for ref \(refName), but the element did not change state, so it may not have been applied. Call mac_ui_tree to check.", .outcomeUnknown)
         }
         // Some fields, such as many on web pages, accept a value without taking it. A value that is not text,
         // such as a slider's number, cannot be compared. The text read back is not repeated, since it may be private.
