@@ -127,8 +127,16 @@ class MCPProtocolTests(unittest.TestCase):
             ({"ref": "3.12", "action": "press"}, "3.12 is not a ref; no action was sent"),
             ({"ref": "k3f9q2.0", "action": "press"}, "is not a ref"),
             ({"ref": "K3F9Q2.1", "action": "press"}, "is not a ref"),
-            ({"ref": "zzzzzz.1", "action": "press"}, "snapshot zzzzzz was not made by this mac-control session"),
-            ({"ref": "zzzzzz.1", "action": "press"}, "Unknown or expired ref zzzzzz.1"),
+            ({"ref": "k3f9q2.012", "action": "press"}, "is not a ref"),
+            ({"ref": "3k9f2q.1", "action": "press"}, "is not a ref"),
+            ({"ref": "k3f9q.1", "action": "press"}, "is not a ref"),
+            ({"ref": "k3f9q2.1.1", "action": "press"}, "is not a ref"),
+            ({"ref": "k3f9q2.", "action": "press"}, "is not a ref"),
+            ({"ref": "k3f9q2.99999999999999999999", "action": "press"}, "is not a ref"),
+            ({"ref": "k3f9q2.１", "action": "press"}, "is not a ref"),
+            ({"ref": "x" * 500, "action": "press"}, "x" * 40 + "… is not a ref"),
+            # The server never makes this ID before a full mac_ui_tree, and no test reads one.
+            ({"ref": "zzzzzz.1", "action": "press"}, "Unknown or expired ref zzzzzz.1: snapshot zzzzzz is unknown"),
             ({"ref": "zzzzzz.1", "action": "set_value", "value": "x", "app": "No Such App 7f3c"}, "Unknown or expired ref"),
         ]:
             with self.subTest(arguments=arguments):
@@ -166,13 +174,13 @@ class MCPProtocolTests(unittest.TestCase):
             ("mac_find", {"text": "x" * 201}, "text must be text"),
             ("mac_find", {"text": "Save", "exact": "yes"}, "exact must be"),
             ("mac_find", {"text": "Save", "limit": 51}, "limit must be"),
-            ("mac_find", {"text": "Save", "root": "zzzzzz.1"}, "restarted; nothing was searched"),
+            ("mac_find", {"text": "Save", "root": "zzzzzz.1"}, "replaced long ago; nothing was searched"),
             ("mac_find", {"text": "Save", "app": "No Such App 7f3c"}, "No running app"),
             ("mac_wait", {"text": "Save", "state": "gone"}, "state must be"),
             ("mac_wait", {"text": "Save", "timeout_seconds": 31}, "timeout_seconds must be"),
             ("mac_wait", {"text": "Save", "timeout_seconds": 0.1}, "timeout_seconds must be"),
             ("mac_wait", {"role": "button", "root": "zzzzzz.1"}, "Unknown or expired ref"),
-            ("mac_ui_tree", {"root": "zzzzzz.1"}, "restarted; nothing was read"),
+            ("mac_ui_tree", {"root": "zzzzzz.1"}, "replaced long ago; nothing was read"),
             ("mac_ui_tree", {"root": ""}, "root must be a ref"),
         ]:
             with self.subTest(name=name, arguments=arguments):
@@ -188,7 +196,7 @@ class MCPProtocolTests(unittest.TestCase):
             ({"action": "resize", "width": 0, "height": 10, "app": "Finder"}, "width is out of range"),
             ({"action": "minimize"}, "Give window"),
             ({"action": "list", "window": "1.1"}, "window is not used with list"),
-            ({"action": "focus", "window": "zzzzzz.1"}, "restarted; nothing was sent"),
+            ({"action": "focus", "window": "zzzzzz.1"}, "replaced long ago; nothing was sent"),
             ({"action": "list", "app": "No Such App 7f3c"}, "No running app"),
         ]:
             with self.subTest(arguments=arguments):

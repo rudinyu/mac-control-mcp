@@ -106,7 +106,7 @@ private func parseRef(_ name: String) -> (snapshot: String, element: Int)? {
     let parts = name.split(separator: ".", omittingEmptySubsequences: false)
     guard parts.count == 2, parts[0].count == 6, let first = parts[0].first, first.isASCII, first.isLowercase,
           parts[0].allSatisfy({ $0.isASCII && ($0.isLowercase || $0.isNumber) }),
-          parts[1].allSatisfy({ $0.isASCII && $0.isNumber }), let element = Int(parts[1]), element > 0 else { return nil }
+          parts[1].first != "0", parts[1].allSatisfy({ $0.isASCII && $0.isNumber }), let element = Int(parts[1]), element > 0 else { return nil }
     return (String(parts[0]), element)
 }
 
@@ -1091,7 +1091,7 @@ private final class MacControlServer {
             throw ToolFailure("\(key) must be a ref from mac_ui_tree.")
         }
         guard let parsed = parseRef(refName) else {
-            throw ToolFailure("\(refName) is not a ref; \(outcome). Refs look like k3f9q2.12; use one from mac_ui_tree, mac_find, mac_wait, or mac_window list.")
+            throw ToolFailure("\(refName.count > 40 ? refName.prefix(40) + "…" : refName) is not a ref; \(outcome). Refs look like k3f9q2.12; use one from mac_ui_tree, mac_find, mac_wait, or mac_window list.")
         }
         guard let ref = axRefs[refName] else {
             let snapshot = parsed.snapshot
@@ -1102,7 +1102,7 @@ private final class MacControlServer {
                 let detail = parsed.element <= axRefCounts[snapshot, default: 0] ? "that element no longer exists" : "it has no element \(parsed.element)"
                 throw ToolFailure("Unknown or expired ref \(refName): snapshot \(snapshot) is current, but \(detail); \(outcome). Call mac_ui_tree again.", .staleRef)
             }
-            throw ToolFailure("Unknown or expired ref \(refName): snapshot \(snapshot) was not made by this mac-control session, as when it is from before mac-control restarted; \(outcome). Call mac_ui_tree again and use a ref from it.", .staleRef)
+            throw ToolFailure("Unknown or expired ref \(refName): snapshot \(snapshot) is unknown to this mac-control session, as when it is from before mac-control restarted or was replaced long ago; \(outcome). Call mac_ui_tree again and use a ref from it.", .staleRef)
         }
         let target = try targetApp(args)
         try requireAccessibility()
@@ -1113,6 +1113,7 @@ private final class MacControlServer {
         guard let start = processStart(ref.pid), start.tv_sec == ref.processStart.tv_sec, start.tv_usec == ref.processStart.tv_usec else {
             axRefs = axRefs.filter { $0.value.pid != ref.pid }
             if let owner = axApps.removeValue(forKey: ref.pid) {
+                axRefCounts[owner.snapshot] = nil
                 retire(owner.snapshot, "belongs to an earlier run of the app, which has since quit or relaunched")
             }
             throw ToolFailure("\(name) has quit or relaunched since mac_ui_tree; \(outcome). Call mac_ui_tree again.", .staleRef)
