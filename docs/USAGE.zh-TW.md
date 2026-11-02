@@ -186,14 +186,14 @@
 | `value` | 字串，最多 2000 個字元 | `set_value` 要設定的文字；其他動作不能使用 |
 | `app` | 字串 | 如果指定，必須是 ref 所屬的 App |
 
-透過輔助使用直接操作元素，所以不需要座標，不會移動游標，不會把 App 切到前景，也不會使用剪貼簿。送出前會確認 App 沒有結束或重新開啟、元素仍然存在且角色相同，而且仍支援該動作。密碼欄位不能設定。`select` 和 `deselect` 設定列或項目是否被選取；`expand` 和 `collapse` 展開或收合大綱列或展開三角形；`check` 和 `uncheck` 只在核取方塊不是要求的狀態時才按下它。這四組動作在元素已經是要求的狀態時不會送出任何東西。`scroll_to_visible` 會把元素捲動到可見範圍，主要由網頁內容提供。對存放數字的元素（例如滑桿或步進器），`set_value` 會送出數字，不是數字的文字會被拒絕。
+透過輔助使用直接操作元素，所以不需要座標，不會移動游標，不會把 App 切到前景，也不會使用剪貼簿。送出前會確認 App 沒有結束或重新開啟、元素仍然存在且角色相同，而且仍支援該動作。密碼欄位不能設定。`select` 和 `deselect` 設定列或項目是否被選取；`expand` 和 `collapse` 展開或收合大綱列或展開三角形；`check` 和 `uncheck` 只在核取方塊不是要求的狀態時才按下它。這四組動作在元素已經是要求的狀態時不會送出任何東西。`scroll_to_visible` 會把元素捲動到可見範圍，主要由網頁內容提供。對存放數字的元素（例如滑桿或步進器），`set_value` 會送出數字，有限十進位數字以外的值會被拒絕。
 
 送出後，只要元素上有東西可讀，就會讀回來確認：
 
 | 動作 | 讀回什麼 | 不符合時 |
 | --- | --- | --- |
 | `select`、`deselect`、`expand`、`collapse`、`check`、`uncheck` | 狀態屬性，例如 `AXSelected` | `OUTCOME_UNKNOWN` |
-| `focus` | `AXFocused` | `OUTCOME_UNKNOWN` |
+| `focus` | `AXFocused` | 讀到 false 時為 `OUTCOME_UNKNOWN`；元素不回報焦點時（部分網頁元素如此）不算已確認 |
 | 文字的 `set_value` | `AXValue` 顯示新文字 | `OUTCOME_UNKNOWN`；許多網頁欄位需要改用 `mac_type_text` |
 | 數字的 `set_value` | `AXValue` 等於該數字 | 不算已確認，因為滑桿可能四捨五入到刻度 |
 | `increment`、`decrement` | `AXValue` 變大或變小 | 不算已確認，因為元素可能已經到上限或下限 |

@@ -186,14 +186,14 @@ Checks about four times a second, looking up the app's windows each time, so a d
 | `value` | string, up to 2000 characters | The text for `set_value`; not allowed with other actions |
 | `app` | string | If given, must be the ref's app |
 
-Acts on the element through Accessibility, so it works without coordinates, does not move the pointer, does not bring the app to the front, and does not use the clipboard. Before sending, it checks that the app has not quit or relaunched, that the element still exists with the same role, and that it still offers the action. Password fields cannot be set. `select` and `deselect` set whether a row or item is selected; `expand` and `collapse` open or close an outline row or disclosure; `check` and `uncheck` press a checkbox only when it is not already in that state. These four pairs send nothing when the element is already in the asked-for state. `scroll_to_visible` scrolls the element into view; it is mostly offered by web content. `set_value` sends a number to an element that holds one, such as a slider or stepper, and refuses text that is not a number there.
+Acts on the element through Accessibility, so it works without coordinates, does not move the pointer, does not bring the app to the front, and does not use the clipboard. Before sending, it checks that the app has not quit or relaunched, that the element still exists with the same role, and that it still offers the action. Password fields cannot be set. `select` and `deselect` set whether a row or item is selected; `expand` and `collapse` open or close an outline row or disclosure; `check` and `uncheck` press a checkbox only when it is not already in that state. These four pairs send nothing when the element is already in the asked-for state. `scroll_to_visible` scrolls the element into view; it is mostly offered by web content. `set_value` sends a number to an element that holds one, such as a slider or stepper, and refuses anything other than a finite decimal number there.
 
 After sending, the element is read back where there is something to read:
 
 | Action | Read back | When it does not match |
 | --- | --- | --- |
 | `select`, `deselect`, `expand`, `collapse`, `check`, `uncheck` | The state attribute, such as `AXSelected` | `OUTCOME_UNKNOWN` |
-| `focus` | `AXFocused` | `OUTCOME_UNKNOWN` |
+| `focus` | `AXFocused` | `OUTCOME_UNKNOWN` when it reads false; not verified when the element does not report focus, as some web elements do not |
 | `set_value` with text | `AXValue` shows the new text | `OUTCOME_UNKNOWN`; many web fields need `mac_type_text` instead |
 | `set_value` with a number | `AXValue` equals the number | Not verified, since a slider can round to its step |
 | `increment`, `decrement` | `AXValue` went up or down | Not verified, since the element may be at its limit |
