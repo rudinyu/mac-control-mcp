@@ -133,6 +133,17 @@ private struct TreeBudget {
     }
 }
 
+// An Accessibility call that fails with cannotComplete only counts as the app not answering when it took at
+// least this long; apps also return that error at once for other reasons.
+private let axSlowCall: TimeInterval = 1
+
+// Whether an Accessibility call failed because the app did not answer in time.
+private func timedOut(_ call: () -> AXError) -> (error: AXError, timedOut: Bool) {
+    let started = Date()
+    let error = call()
+    return (error, error == .cannotComplete && Date().timeIntervalSince(started) >= axSlowCall)
+}
+
 // mac_ui_tree reads at most this many elements, for at most this long, so a huge or slow app cannot stall it.
 private let treeElementLimit = 200
 private let treeTimeLimit: TimeInterval = 5
@@ -987,7 +998,7 @@ private final class MacControlServer {
             AXUIElementSetMessagingTimeout(appElement, axMessagingTimeout)
             // An app that does not answer for its focused window is busy, so nothing more is asked of it.
             var windowValue: CFTypeRef?
-            if AXUIElementCopyAttributeValue(appElement, kAXFocusedWindowAttribute as CFString, &windowValue) == .cannotComplete {
+            if timedOut({ AXUIElementCopyAttributeValue(appElement, kAXFocusedWindowAttribute as CFString, &windowValue) }).timedOut {
                 budget.observed = 1
                 budget.unanswered = 1
                 budget.stopped = "app_not_answering"
@@ -1094,15 +1105,18 @@ private final class MacControlServer {
         func read(_ name: String) -> CFTypeRef? {
             guard answered else { return nil }
             var value: CFTypeRef?
-            let error = AXUIElementCopyAttributeValue(element, name as CFString, &value)
-            if error == .cannotComplete { answered = false }
-            return error == .success ? value : nil
+            let call = timedOut { AXUIElementCopyAttributeValue(element, name as CFString, &value) }
+            if call.timedOut { answered = false }
+            return call.error == .success ? value : nil
         }
         let role = shortString(read(kAXRoleAttribute)) ?? "unknown"
         var result: [String: Any] = ["role": role]
         if let title = shortString(read(kAXTitleAttribute)) { result["title"] = title }
         if let description = shortString(read(kAXDescriptionAttribute)) { result["description"] = description }
-        if answered, !isSecure(element, role: role), let value = shortString(read(kAXValueAttribute)) {
+        // A password field reports AXSecureTextField as its role or subrole. The value is read only once the
+        // subrole has been, so an app that stops answering cannot have a password field's value read.
+        let subrole = shortString(read(kAXSubroleAttribute))
+        if answered, role != "AXSecureTextField", subrole != "AXSecureTextField", let value = shortString(read(kAXValueAttribute)) {
             result["value"] = value
         }
         guard answered else {
@@ -1114,16 +1128,17 @@ private final class MacControlServer {
         // this element's ref as root.
         var hidden: CFIndex = 0
         var count: CFIndex = 0
-        switch AXUIElementGetAttributeValueCount(element, kAXChildrenAttribute as CFString, &count) {
+        let counted = timedOut { AXUIElementGetAttributeValueCount(element, kAXChildrenAttribute as CFString, &count) }
+        switch counted.error {
         case .success where count > 0:
             hidden = count
             // The budget is only spent on an element that has children, so a whole tree that ends exactly at
             // the limit is still complete.
             guard depth > 0, budget.allows() else { break }
             var childrenValue: CFTypeRef?
-            let error = AXUIElementCopyAttributeValue(element, kAXChildrenAttribute as CFString, &childrenValue)
-            guard error == .success, let children = childrenValue as? [AXUIElement] else {
-                if error == .cannotComplete {
+            let copied = timedOut { AXUIElementCopyAttributeValue(element, kAXChildrenAttribute as CFString, &childrenValue) }
+            guard copied.error == .success, let children = childrenValue as? [AXUIElement] else {
+                if copied.timedOut {
                     budget.unanswered += 1
                     result["unanswered"] = true
                 }
@@ -1136,7 +1151,7 @@ private final class MacControlServer {
             }
             result["children"] = entries
             hidden = CFIndex(children.count - entries.count)
-        case .cannotComplete:
+        case .cannotComplete where counted.timedOut:
             budget.unanswered += 1
             result["unanswered"] = true
         default: break
