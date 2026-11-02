@@ -1467,6 +1467,10 @@ private final class MacControlServer {
         var target: (attribute: String, value: Bool)?
         if let state = axStateActions[action] {
             target = state.attributes.first(where: { isSettable(ref.element, $0 as CFString) }).map { ($0, state.value) }
+            // The attribute can stop being settable after the check above.
+            guard target != nil else {
+                throw ToolFailure("The element of ref \(refName) does not offer \(action) now; nothing was sent. Call mac_ui_tree again to see its actions.", .unsupported)
+            }
         } else if action == "check" || action == "uncheck" {
             target = (kAXValueAttribute, action == "check")
         }
@@ -1478,9 +1482,14 @@ private final class MacControlServer {
         case "set_value": error = AXUIElementSetAttributeValue(ref.element, kAXValueAttribute as CFString, value! as CFString)
         case "focus": error = AXUIElementSetAttributeValue(ref.element, kAXFocusedAttribute as CFString, kCFBooleanTrue)
         case "check", "uncheck": error = AXUIElementPerformAction(ref.element, kAXPressAction as CFString)
-        case _ where target != nil:
-            error = AXUIElementSetAttributeValue(ref.element, target!.attribute as CFString, target!.value ? kCFBooleanTrue : kCFBooleanFalse)
-        default: error = AXUIElementPerformAction(ref.element, axActionNames[action]! as CFString)
+        default:
+            if let target {
+                error = AXUIElementSetAttributeValue(ref.element, target.attribute as CFString, target.value ? kCFBooleanTrue : kCFBooleanFalse)
+            } else if let native = axActionNames[action] {
+                error = AXUIElementPerformAction(ref.element, native as CFString)
+            } else {
+                throw ToolFailure("Invalid action \(action).")
+            }
         }
         guard error == .success else { throw axFailure(error, action, refName: refName, appName: name) }
         if let target, !settles({ boolState(ref.element, target.attribute) == target.value }) {
