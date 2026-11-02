@@ -148,6 +148,24 @@
 
 一次只能有一個錄影。檔案是 QuickTime MOV，使用 MacControl.app 時存在 `~/Movies/MacControl/`，從原始碼建置時存在 clone 裡的 `.build/recordings/`。只有你的帳號能開啟這個資料夾。錄影不含聲音。呼叫 `mac_record_stop` 之後，檔案可能要稍等一下，`mac_record_status` 才會回報 `ready`。
 
+## 錯誤結果
+
+工具失敗時，結果有兩段文字：一段是給人看的訊息，另一段是給代理讀的 JSON：
+
+```json
+{"error": {"code": "STALE_REF", "delivered": false, "retry": "refresh"}}
+```
+
+`delivered` 為 `false` 表示沒有任何東西送到 App；為 `"unknown"` 表示動作已送出但沒有得到確認。`retry` 說明下一步：
+
+| `retry` | 意思 | 錯誤碼 |
+| --- | --- | --- |
+| `fix` | 修改參數或參數指的對象，例如先打開 App | `INVALID_ARGS`、`APP_NOT_FOUND`、`APP_AMBIGUOUS`、`ACTION_UNSUPPORTED` |
+| `refresh` | 重新執行 `mac_screenshot` 或 `mac_ui_tree`，改用新的座標或 ref | `STALE_SCREENSHOT`、`STALE_REF` |
+| `safe` | 可以原樣再呼叫一次 | `FOCUS_LOST`、`APP_UNRESPONSIVE`、`BUSY`、`INTERNAL` |
+| `user` | 需要使用者處理：授予權限、解鎖 Mac 或修正設定 | `PERMISSION_DENIED`、`SCREEN_LOCKED`、`SETUP_PROBLEM`、`CLIPBOARD_UNSAFE` |
+| `check` | 動作可能已經發生；先確認再決定要不要重做 | `OUTCOME_UNKNOWN` |
+
 ## 疑難排解
 
 | 訊息或現象 | 處理方式 |

@@ -10,7 +10,49 @@ private let supportedProtocolVersions: Set<String> = [
 
 private struct ToolFailure: Error, CustomStringConvertible {
     let description: String
-    init(_ description: String) { self.description = description }
+    let kind: FailureKind
+    init(_ description: String, _ kind: FailureKind = .invalidArgs) {
+        self.description = description
+        self.kind = kind
+    }
+}
+
+// What an agent can do about a failure without reading the message. Every error result carries the code,
+// whether the input or action reached the app, and how to retry.
+private enum FailureKind: String {
+    case invalidArgs = "INVALID_ARGS"
+    case permissionDenied = "PERMISSION_DENIED"
+    case screenLocked = "SCREEN_LOCKED"
+    case setup = "SETUP_PROBLEM"
+    case clipboardUnsafe = "CLIPBOARD_UNSAFE"
+    case appNotFound = "APP_NOT_FOUND"
+    case appAmbiguous = "APP_AMBIGUOUS"
+    case unsupported = "ACTION_UNSUPPORTED"
+    case staleScreenshot = "STALE_SCREENSHOT"
+    case staleRef = "STALE_REF"
+    case focusLost = "FOCUS_LOST"
+    case appUnresponsive = "APP_UNRESPONSIVE"
+    case busy = "BUSY"
+    case internalError = "INTERNAL"
+    case outcomeUnknown = "OUTCOME_UNKNOWN"
+
+    // Only an action that was sent without confirmation can have reached the app.
+    var delivered: Any { self == .outcomeUnknown ? "unknown" : false }
+
+    var retry: String {
+        switch self {
+        // Change the arguments, or what they name, such as launching the app.
+        case .invalidArgs, .appNotFound, .appAmbiguous, .unsupported: return "fix"
+        // Needs the user: a permission, an unlocked screen, or a working setup.
+        case .permissionDenied, .screenLocked, .setup, .clipboardUnsafe: return "user"
+        // Take a new mac_screenshot or mac_ui_tree and use what it returns.
+        case .staleScreenshot, .staleRef: return "refresh"
+        // The same call can be repeated.
+        case .focusLost, .appUnresponsive, .busy, .internalError: return "safe"
+        // Look at the app before repeating anything.
+        case .outcomeUnknown: return "check"
+        }
+    }
 }
 
 private struct CaptureSize {
@@ -218,7 +260,7 @@ private final class MacControlServer {
                 "protocolVersion": selected,
                 "capabilities": ["tools": [:]],
                 "serverInfo": ["name": "mac-control", "version": serverVersion],
-                "instructions": "Use mac_status first. Use mac_screenshot before mac_mouse; mouse coordinates use the most recent screenshot. When mac_ui_tree gives the element a ref, mac_ax_action can act on it without coordinates or focus. Pass app with the name of the app you are working in to mac_screenshot, mac_mouse, mac_scroll, mac_type_text, and mac_key, so input cannot land in another app. Ask the user before irreversible actions."
+                "instructions": "Use mac_status first. Use mac_screenshot before mac_mouse; mouse coordinates use the most recent screenshot. When mac_ui_tree gives the element a ref, mac_ax_action can act on it without coordinates or focus. Pass app with the name of the app you are working in to mac_screenshot, mac_mouse, mac_scroll, mac_type_text, and mac_key, so input cannot land in another app. A failed call also returns JSON with code, delivered, and retry; follow retry, and check the app before repeating an action whose delivered is \"unknown\". Ask the user before irreversible actions."
             ], id: id)
         case "ping":
             send(result: [:], id: id)
@@ -234,7 +276,11 @@ private final class MacControlServer {
                 let content = try callTool(name, arguments)
                 send(result: ["content": content], id: id)
             } catch {
-                send(result: ["content": [["type": "text", "text": String(describing: error)]], "isError": true], id: id)
+                // A failure that is not a ToolFailure comes from a system call whose effect is not known.
+                let kind = (error as? ToolFailure)?.kind ?? .outcomeUnknown
+                let details = ["error": ["code": kind.rawValue, "delivered": kind.delivered, "retry": kind.retry]]
+                send(result: ["content": [textContent(String(describing: error)), textContent(jsonString(details))],
+                              "isError": true], id: id)
             }
         default:
             send(error: -32601, message: "Method not found", id: id)
@@ -304,10 +350,10 @@ private final class MacControlServer {
     private func screenshot(_ args: [String: Any]) throws -> [[String: Any]] {
         let target = try targetApp(args)
         guard CGDisplayBounds(CGMainDisplayID()).width > 0 else {
-            throw ToolFailure("No Mac display is available to this process. Run the MCP host in a logged-in local desktop session.")
+            throw ToolFailure("No Mac display is available to this process. Run the MCP host in a logged-in local desktop session.", .setup)
         }
         guard CGPreflightScreenCaptureAccess() else {
-            throw ToolFailure("Screen Recording permission is missing. \(PermissionHint.screenRecording)")
+            throw ToolFailure("Screen Recording permission is missing. \(PermissionHint.screenRecording)", .permissionDenied)
         }
         if let target {
             try requireAccessibility()
@@ -329,7 +375,7 @@ private final class MacControlServer {
         guard process.terminationStatus == 0,
               let data = try? Data(contentsOf: path),
               let image = NSBitmapImageRep(data: data) else {
-            throw ToolFailure("Screen capture failed. Check Screen Recording permission and that this process runs in a logged-in Mac desktop session.")
+            throw ToolFailure("Screen capture failed. Check Screen Recording permission and that this process runs in a logged-in Mac desktop session.", .setup)
         }
         let bounds = CGDisplayBounds(CGMainDisplayID())
         let after = trusted ? focusedApp() : nil
@@ -348,13 +394,13 @@ private final class MacControlServer {
             throw ToolFailure("duration_seconds must be an integer from 1 to 120.")
         }
         guard CGDisplayBounds(CGMainDisplayID()).width > 0 else {
-            throw ToolFailure("No Mac display is available to this process. Run the MCP host in a logged-in local desktop session.")
+            throw ToolFailure("No Mac display is available to this process. Run the MCP host in a logged-in local desktop session.", .setup)
         }
         guard CGPreflightScreenCaptureAccess() else {
-            throw ToolFailure("Screen Recording permission is missing. \(PermissionHint.screenRecording)")
+            throw ToolFailure("Screen Recording permission is missing. \(PermissionHint.screenRecording)", .permissionDenied)
         }
         guard !recordings.values.contains(where: { $0.process.isRunning }) else {
-            throw ToolFailure("A screen recording is already running.")
+            throw ToolFailure("A screen recording is already running.", .busy)
         }
         let directory = try Self.privateRecordingsFolder()
         let id = UUID().uuidString
@@ -400,14 +446,14 @@ private final class MacControlServer {
         }
         // Check and change the folder through one descriptor, so a link swapped in cannot redirect the chmod.
         let fd = open(directory.path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
-        guard fd >= 0 else { throw ToolFailure("\(directory.path) is not a folder; move it away and try again.") }
+        guard fd >= 0 else { throw ToolFailure("\(directory.path) is not a folder; move it away and try again.", .setup) }
         defer { close(fd) }
         var info = stat()
         guard fstat(fd, &info) == 0, info.st_uid == getuid() else {
-            throw ToolFailure("\(directory.path) is not a folder of yours; move it away and try again.")
+            throw ToolFailure("\(directory.path) is not a folder of yours; move it away and try again.", .setup)
         }
         if info.st_mode & 0o077 != 0, fchmod(fd, 0o700) != 0 {
-            throw ToolFailure("Could not make \(directory.path) private; recordings were not started.")
+            throw ToolFailure("Could not make \(directory.path) private; recordings were not started.", .setup)
         }
         return directory
     }
@@ -446,12 +492,12 @@ private final class MacControlServer {
     }
 
     private func requireUnlocked() throws {
-        if let reason = inputBlockReason() { throw ToolFailure(reason) }
+        if let reason = inputBlockReason() { throw ToolFailure(reason, .screenLocked) }
     }
 
     private func requireAccessibility() throws {
         guard AXIsProcessTrusted() else {
-            throw ToolFailure("Accessibility permission is missing. \(PermissionHint.accessibility)")
+            throw ToolFailure("Accessibility permission is missing. \(PermissionHint.accessibility)", .permissionDenied)
         }
     }
 
@@ -467,14 +513,14 @@ private final class MacControlServer {
             ? apps.filter { $0.localizedName?.caseInsensitiveCompare(query) == .orderedSame }
             : byBundle
         guard !matches.isEmpty else {
-            throw ToolFailure("No running app with a Dock icon matches \"\(query)\". Launch it first.")
+            throw ToolFailure("No running app with a Dock icon matches \"\(query)\". Launch it first.", .appNotFound)
         }
         if matches.count == 1 { return matches[0] }
         if let focused = focusedApp(), let match = matches.first(where: { $0.processIdentifier == focused.processIdentifier }) {
             return match
         }
         let listed = matches.map { "\($0.localizedName ?? "?") (\($0.bundleIdentifier ?? "no bundle ID"), pid \($0.processIdentifier))" }
-        throw ToolFailure("\"\(query)\" matches \(matches.count) running apps: \(listed.joined(separator: ", ")). Use a bundle ID, or quit the extra copies.")
+        throw ToolFailure("\"\(query)\" matches \(matches.count) running apps: \(listed.joined(separator: ", ")). Use a bundle ID, or quit the extra copies.", .appAmbiguous)
     }
 
     // Asks Accessibility rather than NSWorkspace, whose frontmostApplication can be stale without a run loop.
@@ -500,9 +546,9 @@ private final class MacControlServer {
     private func focusFailure(_ target: NSRunningApplication, _ current: NSRunningApplication?) -> ToolFailure {
         let name = target.localizedName ?? "the app"
         guard let current else {
-            return ToolFailure("Could not determine which app has focus, so \(name) could not be confirmed in front; no input was sent. Check Accessibility permission.")
+            return ToolFailure("Could not determine which app has focus, so \(name) could not be confirmed in front; no input was sent. Check Accessibility permission.", .focusLost)
         }
-        return ToolFailure("\(current.localizedName ?? "Another app") has focus instead of \(name); no input was sent.")
+        return ToolFailure("\(current.localizedName ?? "Another app") has focus instead of \(name); no input was sent.", .focusLost)
     }
 
     private func bringToFront(_ app: NSRunningApplication) throws {
@@ -541,10 +587,10 @@ private final class MacControlServer {
     private func requireUnchangedSinceScreenshot(_ app: NSRunningApplication) throws {
         let name = app.localizedName ?? "the app"
         guard let capture = lastCapture, capture.focusedPID == app.processIdentifier else {
-            throw ToolFailure("\(name) was not steadily in front for the last mac_screenshot; no input was sent. Call mac_screenshot with app \"\(name)\" first.")
+            throw ToolFailure("\(name) was not steadily in front for the last mac_screenshot; no input was sent. Call mac_screenshot with app \"\(name)\" first.", .staleScreenshot)
         }
         guard let frame = capture.windowFrame, windowFrame(app) == frame else {
-            throw ToolFailure("\(name)'s window moved, resized, or changed since the last mac_screenshot, or could not be read; no input was sent. Call mac_screenshot with app \"\(name)\" again.")
+            throw ToolFailure("\(name)'s window moved, resized, or changed since the last mac_screenshot, or could not be read; no input was sent. Call mac_screenshot with app \"\(name)\" again.", .staleScreenshot)
         }
     }
 
@@ -564,11 +610,11 @@ private final class MacControlServer {
         guard owner == app.processIdentifier else {
             let name = app.localizedName ?? "the app"
             guard let owner else {
-                throw ToolFailure("Accessibility could not tell which app is under \(what.lowercased()); no input was sent. Check Accessibility permission, or try again.")
+                throw ToolFailure("Accessibility could not tell which app is under \(what.lowercased()); no input was sent. Check Accessibility permission, or try again.", .appUnresponsive)
             }
             // Some panels, such as Open and Save in sandboxed apps, run in a separate process.
             let other = NSRunningApplication(processIdentifier: owner)?.localizedName ?? "another process"
-            throw ToolFailure("\(what) is not over \(name) but over \(other); no input was sent. Use a point inside \(name) from a mac_screenshot taken with app \"\(name)\". If the point is in a panel that \(name) opened, leave out app.")
+            throw ToolFailure("\(what) is not over \(name) but over \(other); no input was sent. Use a point inside \(name) from a mac_screenshot taken with app \"\(name)\". If the point is in a panel that \(name) opened, leave out app.", .staleScreenshot)
         }
     }
 
@@ -595,7 +641,7 @@ private final class MacControlServer {
     }
 
     private func point(_ args: [String: Any], xKey: String = "x", yKey: String = "y") throws -> CGPoint {
-        guard let capture = lastCapture else { throw ToolFailure("Call mac_screenshot before mac_mouse.") }
+        guard let capture = lastCapture else { throw ToolFailure("Call mac_screenshot before mac_mouse.", .staleScreenshot) }
         let x = try number(args, xKey)
         let y = try number(args, yKey)
         guard x >= 0, y >= 0, x < Double(capture.width), y < Double(capture.height) else {
@@ -609,7 +655,7 @@ private final class MacControlServer {
 
     private func postMouse(_ type: CGEventType, at point: CGPoint, button: CGMouseButton = .left, clickCount: Int64 = 1) throws {
         guard let event = CGEvent(mouseEventSource: nil, mouseType: type, mouseCursorPosition: point, mouseButton: button) else {
-            throw ToolFailure("Could not create a mouse event.")
+            throw ToolFailure("Could not create a mouse event.", .internalError)
         }
         event.setIntegerValueField(.mouseEventClickState, value: clickCount)
         event.post(tap: .cghidEventTap)
@@ -676,13 +722,13 @@ private final class MacControlServer {
         let receiver = try confirmFocus(target)
         if let target {
             guard let pointer = CGEvent(source: nil)?.location else {
-                throw ToolFailure("Could not read the pointer position; no input was sent.")
+                throw ToolFailure("Could not read the pointer position; no input was sent.", .internalError)
             }
             try requirePoint(pointer, in: target, what: "The pointer")
         }
         guard let event = CGEvent(scrollWheelEvent2Source: nil, units: .line, wheelCount: 2,
                                   wheel1: Int32(vertical), wheel2: Int32(horizontal), wheel3: 0) else {
-            throw ToolFailure("Could not create a scroll event.")
+            throw ToolFailure("Could not create a scroll event.", .internalError)
         }
         event.post(tap: .cghidEventTap)
         return target == nil ? "Scrolled." : "Scrolled in \(receiver)."
@@ -703,11 +749,11 @@ private final class MacControlServer {
             let copy = NSPasteboardItem()
             for type in original.types {
                 guard let data = original.data(forType: type) else {
-                    throw ToolFailure("Cannot preserve the current clipboard contents; text entry was cancelled.")
+                    throw ToolFailure("Cannot preserve the current clipboard contents; text entry was cancelled.", .clipboardUnsafe)
                 }
                 totalBytes += data.count
                 guard totalBytes <= 40_000_000 else {
-                    throw ToolFailure("The current clipboard is too large to preserve safely; text entry was cancelled.")
+                    throw ToolFailure("The current clipboard is too large to preserve safely; text entry was cancelled.", .clipboardUnsafe)
                 }
                 copy.setData(data, forType: type)
             }
@@ -717,7 +763,7 @@ private final class MacControlServer {
         guard pasteboard.setString(value, forType: .string) else {
             pasteboard.clearContents()
             if !savedItems.isEmpty { pasteboard.writeObjects(savedItems) }
-            throw ToolFailure("Could not put text on the clipboard.")
+            throw ToolFailure("Could not put text on the clipboard.", .internalError)
         }
         let temporaryChangeCount = pasteboard.changeCount
         defer {
@@ -729,7 +775,7 @@ private final class MacControlServer {
         }
         guard let down = CGEvent(keyboardEventSource: nil, virtualKey: 9, keyDown: true),
               let up = CGEvent(keyboardEventSource: nil, virtualKey: 9, keyDown: false) else {
-            throw ToolFailure("Could not create a paste keyboard event.")
+            throw ToolFailure("Could not create a paste keyboard event.", .internalError)
         }
         let receiver = try confirmFocus(target)
         down.flags = .maskCommand
@@ -772,7 +818,7 @@ private final class MacControlServer {
         if names.contains("ctrl") { flags.insert(.maskControl) }
         guard let down = CGEvent(keyboardEventSource: nil, virtualKey: code, keyDown: true),
               let up = CGEvent(keyboardEventSource: nil, virtualKey: code, keyDown: false) else {
-            throw ToolFailure("Could not create a keyboard event.")
+            throw ToolFailure("Could not create a keyboard event.", .internalError)
         }
         let receiver = try confirmFocus(target)
         down.flags = flags
@@ -811,7 +857,7 @@ private final class MacControlServer {
         try requireAccessibility()
         // A stale NSWorkspace answer is acceptable here because reading the tree sends no input.
         guard let app = target ?? focusedApp() ?? NSWorkspace.shared.frontmostApplication else {
-            throw ToolFailure("No frontmost app found.")
+            throw ToolFailure("No frontmost app found.", .internalError)
         }
         let pid = app.processIdentifier
         // Also release the refs of apps that have quit, so a long session does not keep their elements.
@@ -918,7 +964,7 @@ private final class MacControlServer {
             throw ToolFailure("ref must be a ref from mac_ui_tree.")
         }
         guard let ref = axRefs[refName] else {
-            throw ToolFailure("Unknown or expired ref \(refName); no action was sent. Call mac_ui_tree again and use a ref from it.")
+            throw ToolFailure("Unknown or expired ref \(refName); no action was sent. Call mac_ui_tree again and use a ref from it.", .staleRef)
         }
         let target = try targetApp(args)
         try requireAccessibility()
@@ -929,7 +975,7 @@ private final class MacControlServer {
         }
         guard let start = processStart(ref.pid), start.tv_sec == ref.processStart.tv_sec, start.tv_usec == ref.processStart.tv_usec else {
             axRefs = axRefs.filter { $0.value.pid != ref.pid }
-            throw ToolFailure("\(name) has quit or relaunched since mac_ui_tree; no action was sent. Call mac_ui_tree again.")
+            throw ToolFailure("\(name) has quit or relaunched since mac_ui_tree; no action was sent. Call mac_ui_tree again.", .staleRef)
         }
         AXUIElementSetMessagingTimeout(ref.element, axMessagingTimeout)
         // Read the role again, so an element that went away, or that the app reused for another kind of
@@ -938,14 +984,14 @@ private final class MacControlServer {
         let roleError = AXUIElementCopyAttributeValue(ref.element, kAXRoleAttribute as CFString, &roleValue)
         switch roleError {
         case .success where roleValue as? String == ref.role: break
-        case .apiDisabled: throw ToolFailure("Accessibility permission is missing. \(PermissionHint.accessibility)")
-        case .cannotComplete: throw ToolFailure("\(name) did not answer; no action was sent. Try again.")
+        case .apiDisabled: throw ToolFailure("Accessibility permission is missing. \(PermissionHint.accessibility)", .permissionDenied)
+        case .cannotComplete: throw ToolFailure("\(name) did not answer; no action was sent. Try again.", .appUnresponsive)
         default:
             axRefs[refName] = nil
-            throw ToolFailure("The element of ref \(refName) no longer exists or has changed; no action was sent. Call mac_ui_tree again.")
+            throw ToolFailure("The element of ref \(refName) no longer exists or has changed; no action was sent. Call mac_ui_tree again.", .staleRef)
         }
         guard availableActions(ref.element, role: ref.role).contains(action) else {
-            throw ToolFailure("The element of ref \(refName) does not offer \(action) now; no action was sent. Call mac_ui_tree again to see its actions.")
+            throw ToolFailure("The element of ref \(refName) does not offer \(action) now; no action was sent. Call mac_ui_tree again to see its actions.", .unsupported)
         }
         let error: AXError
         switch action {
@@ -956,24 +1002,24 @@ private final class MacControlServer {
         switch error {
         case .success: break
         case .actionUnsupported, .attributeUnsupported, .notImplemented:
-            throw ToolFailure("\(name) reported that the element of ref \(refName) does not support \(action), so it was not done.")
+            throw ToolFailure("\(name) reported that the element of ref \(refName) does not support \(action), so it was not done.", .unsupported)
         case .illegalArgument:
-            throw ToolFailure("\(name) rejected \(action) for ref \(refName), so it was not done.")
+            throw ToolFailure("\(name) rejected \(action) for ref \(refName), so it was not done.", .unsupported)
         case .invalidUIElement:
             axRefs[refName] = nil
-            throw ToolFailure("The element of ref \(refName) no longer exists; no action was sent. Call mac_ui_tree again.")
+            throw ToolFailure("The element of ref \(refName) no longer exists; no action was sent. Call mac_ui_tree again.", .staleRef)
         case .apiDisabled:
-            throw ToolFailure("Accessibility permission is missing. \(PermissionHint.accessibility)")
+            throw ToolFailure("Accessibility permission is missing. \(PermissionHint.accessibility)", .permissionDenied)
         case .cannotComplete:
-            throw ToolFailure("\(name) did not answer in time, so \(action) may or may not have happened. Call mac_ui_tree to check before trying again.")
+            throw ToolFailure("\(name) did not answer in time, so \(action) may or may not have happened. Call mac_ui_tree to check before trying again.", .outcomeUnknown)
         default:
-            throw ToolFailure("\(action) returned Accessibility error \(error.rawValue), so it may or may not have happened. Call mac_ui_tree to check before trying again.")
+            throw ToolFailure("\(action) returned Accessibility error \(error.rawValue), so it may or may not have happened. Call mac_ui_tree to check before trying again.", .outcomeUnknown)
         }
         // Some fields, such as many on web pages, accept a value without taking it. A value that is not text,
         // such as a slider's number, cannot be compared. The text read back is not repeated, since it may be private.
         if action == "set_value", let shown = attribute(ref.element, kAXValueAttribute as CFString) as? String,
            shown.replacingOccurrences(of: "\r\n", with: "\n") != value?.replacingOccurrences(of: "\r\n", with: "\n") {
-            throw ToolFailure("\(name) accepted set_value for ref \(refName), but the field does not show the new text, so it may not have been applied. Call mac_ui_tree to check, or use mac_type_text.")
+            throw ToolFailure("\(name) accepted set_value for ref \(refName), but the field does not show the new text, so it may not have been applied. Call mac_ui_tree to check, or use mac_type_text.", .outcomeUnknown)
         }
         return "Sent \(action) to \(ref.role) ref \(refName) in \(name). Call mac_ui_tree to see the result."
     }

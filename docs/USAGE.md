@@ -148,6 +148,24 @@ Acts on the element through Accessibility, so it works without coordinates, does
 
 Only one recording runs at a time. Files are QuickTime MOV, saved in `~/Movies/MacControl/` with MacControl.app, or in `.build/recordings/` inside the clone for a source build. Only your account can open the folder. Recordings have no audio. After `mac_record_stop`, the file may need a moment before `mac_record_status` reports `ready`.
 
+## Error results
+
+When a tool fails, the result has two text parts: a message for people, and a JSON object for the agent:
+
+```json
+{"error": {"code": "STALE_REF", "delivered": false, "retry": "refresh"}}
+```
+
+`delivered` is `false` when nothing reached the app, and `"unknown"` when an action was sent but not confirmed. `retry` says what to do next:
+
+| `retry` | Meaning | Codes |
+| --- | --- | --- |
+| `fix` | Change the arguments, or what they name, such as launching the app | `INVALID_ARGS`, `APP_NOT_FOUND`, `APP_AMBIGUOUS`, `ACTION_UNSUPPORTED` |
+| `refresh` | Take a new `mac_screenshot` or `mac_ui_tree`, and use its coordinates or refs | `STALE_SCREENSHOT`, `STALE_REF` |
+| `safe` | The same call can be repeated | `FOCUS_LOST`, `APP_UNRESPONSIVE`, `BUSY`, `INTERNAL` |
+| `user` | The user must act: grant a permission, unlock the Mac, or fix the setup | `PERMISSION_DENIED`, `SCREEN_LOCKED`, `SETUP_PROBLEM`, `CLIPBOARD_UNSAFE` |
+| `check` | The action may have happened; look before repeating it | `OUTCOME_UNKNOWN` |
+
 ## Troubleshooting
 
 | Message or symptom | What to do |
