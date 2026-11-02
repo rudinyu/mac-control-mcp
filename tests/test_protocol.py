@@ -209,6 +209,9 @@ class MCPProtocolTests(unittest.TestCase):
         actions = listed["mac_ax_action"]["inputSchema"]["properties"]["action"]["enum"]
         for action in ("scroll_to_visible", "select", "deselect", "expand", "collapse", "check", "uncheck"):
             self.assertIn(action, actions)
+        tree = listed["mac_ui_tree"]["description"]
+        for word in ("complete", "stopped_by", "element_limit", "time_limit", "app_not_answering", "unanswered", "more_children"):
+            self.assertIn(word, tree)
         description = listed["mac_ax_action"]["description"]
         for word in ("delivered", "verified", "checked", "OUTCOME_UNKNOWN"):
             self.assertIn(word, description)

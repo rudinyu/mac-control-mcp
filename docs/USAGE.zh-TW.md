@@ -115,9 +115,21 @@
 | `root` | 字串 | 改從這個 ref 往下讀，而不是焦點視窗 |
 | `app` | 字串 | 要讀取的 App；預設是前景 App |
 
-以 JSON 回傳該 App 焦點視窗的輔助使用樹，包括每個元素的角色、標題、描述和值，以及目前取得鍵盤焦點的元素。可以用名稱找按鈕和欄位，不必靠像素位置。最多讀 200 個元素，每個值截到 200 個字元，碰到上限時會回報 `"truncated": true`。密碼欄位的內容一律不會回傳。指定 `app` 時只讀取，不會把該 App 切到前景。
+以 JSON 回傳該 App 焦點視窗的輔助使用樹，包括每個元素的角色、標題、描述和值，以及目前取得鍵盤焦點的元素。可以用名稱找按鈕和欄位，不必靠像素位置。最多讀 200 個元素、最多 5 秒，每個值截到 200 個字元。密碼欄位的內容一律不會回傳。指定 `app` 時只讀取，不會把該 App 切到前景。
 
-可以操作的元素另外會有 `ref`（例如 `"ref": "k3f9q2.12"`）和 `actions`，也就是它支援的 `mac_ax_action` 動作。因為 `max_depth` 或 200 個元素的上限而沒有列出子元素的元素，會顯示 `more_children`，也會有 `ref`；把這個 ref 當作 `root` 傳入，就能往下讀。ref 由快照 ID、一個點和元素在該快照中的編號組成；結果的 `snapshot` 欄位就是快照 ID。同一個 App 重新讀取整棵樹時會開始新的快照，該 App 先前的 ref 全部失效；用 `root` 往下讀、`mac_find`、`mac_wait` 和 `mac_window list` 則把 ref 加進目前的快照，原有的 ref 仍然有效。快照 ID 是隨機產生的，所以 mac-control 重新啟動前留下的 ref 會被拒絕，不會誤指到別的元素。視窗很大時，先用較小的 `max_depth` 讀概況，再往下展開。
+可以操作的元素另外會有 `ref`（例如 `"ref": "k3f9q2.12"`）和 `actions`，也就是它支援的 `mac_ax_action` 動作。子元素沒有全部列出的元素，會顯示 `more_children`（沒有列出的數量），也會有 `ref`；把這個 ref 當作 `root` 傳入，就能往下讀。原因有兩種：你指定的 `max_depth`，以及讀取提早停止。ref 由快照 ID、一個點和元素在該快照中的編號組成；結果的 `snapshot` 欄位就是快照 ID。同一個 App 重新讀取整棵樹時會開始新的快照，該 App 先前的 ref 全部失效；用 `root` 往下讀、`mac_find`、`mac_wait` 和 `mac_window list` 則把 ref 加進目前的快照，原有的 ref 仍然有效。快照 ID 是隨機產生的，所以 mac-control 重新啟動前留下的 ref 會被拒絕，不會誤指到別的元素。視窗很大時，先用較小的 `max_depth` 讀概況，再往下展開。
+
+結果會說明讀取是否提早停止：
+
+| 欄位 | 意義 |
+| --- | --- |
+| `complete` | 讀完 `max_depth` 以內的所有元素時為 `true`。只因 `max_depth` 而沒有列出的元素不會讓它變成 `false`。 |
+| `truncated` | 讀取提早停止時為 `true` |
+| `stopped_by` | 停止的原因：`element_limit`（200 個元素）、`time_limit`（5 秒）或 `app_not_answering`；沒有提早停止時為 `null` |
+| `elements_read` | 讀了多少個元素 |
+| `unanswered` | App 在 2 秒內沒有回應的元素數，每個都標示 `"unanswered": true` |
+
+App 停止回應時（例如忙碌或當掉），讀取會在那裡停止，不會對剩下的每個元素都等待逾時。已經讀到的元素會保留。從那之後，元素不再列出 `actions`，但子元素沒有全部列出的元素仍然有 `ref`，等 App 恢復回應後可以往下讀。
 
 ```json
 {"app": "TextEdit", "max_depth": 6}

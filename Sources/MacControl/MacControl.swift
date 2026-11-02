@@ -113,6 +113,30 @@ private func parseRef(_ name: String) -> (snapshot: String, element: Int)? {
 // How many replaced snapshots are remembered, so a ref from one is reported as replaced rather than unknown.
 private let retiredSnapshotLimit = 200
 
+// How much of an app mac_ui_tree reads, and why it stopped early. Elements whose children are not all listed
+// carry more_children and a ref, so the agent can read below them with root.
+private struct TreeBudget {
+    var remaining: Int
+    let deadline: Date
+    // "element_limit", "time_limit", or "app_not_answering" once the read was cut short.
+    var stopped: String?
+    var observed = 0
+    // Elements the app did not answer for in time.
+    var unanswered = 0
+
+    // Whether another element may be read, recording why not.
+    mutating func allows() -> Bool {
+        if stopped != nil { return false }
+        // An app that did not answer once is busy, and every further question would wait out the timeout.
+        if unanswered > 0 { stopped = "app_not_answering" } else if remaining <= 0 { stopped = "element_limit" } else if Date() >= deadline { stopped = "time_limit" }
+        return stopped == nil
+    }
+}
+
+// mac_ui_tree reads at most this many elements, for at most this long, so a huge or slow app cannot stall it.
+private let treeElementLimit = 200
+private let treeTimeLimit: TimeInterval = 5
+
 // mac_find and mac_wait stop after this many elements or this depth, so a huge app cannot stall them.
 private let searchNodeLimit = 5000
 private let searchDepthLimit = 40
@@ -169,7 +193,7 @@ private final class MacControlServer {
         ],
         [
             "name": "mac_ui_tree",
-            "description": "Read a limited Accessibility tree for the focused window and focused element of an app: the named app if app is given, otherwise the frontmost app. Does not change which app is in front. Password field values are excluded. Elements that can be acted on carry a ref and their actions for mac_ax_action. An element whose children are not listed shows more_children and a ref; pass that ref as root to read below it. A ref such as k3f9q2.12 names a snapshot (k3f9q2, returned as snapshot) and an element in it. Reading the whole tree again for the same app starts a new snapshot and retires the old refs; reading below a root, mac_find, mac_wait, and mac_window list add to the current snapshot. For a large window, read with a small max_depth first, then drill in with root. Requires Accessibility permission.",
+            "description": "Read a limited Accessibility tree for the focused window and focused element of an app: the named app if app is given, otherwise the frontmost app. Does not change which app is in front. Password field values are excluded. Elements that can be acted on carry a ref and their actions for mac_ax_action. Reads at most 200 elements for at most 5 seconds. An element whose children are not all listed, because of max_depth or because the read stopped early, shows more_children (the number left out) and a ref; pass that ref as root to read below it. complete is false when the read stopped early (stopped_by: element_limit, time_limit, or app_not_answering) or the app did not answer for an element, which is marked unanswered; elements left out only because of max_depth do not make it incomplete. A ref such as k3f9q2.12 names a snapshot (k3f9q2, returned as snapshot) and an element in it. Reading the whole tree again for the same app starts a new snapshot and retires the old refs; reading below a root, mac_find, mac_wait, and mac_window list add to the current snapshot. For a large window, read with a small max_depth first, then drill in with root. Requires Accessibility permission.",
             "inputSchema": [
                 "type": "object",
                 "properties": [
@@ -953,7 +977,7 @@ private final class MacControlServer {
     private func uiTree(_ args: [String: Any]) throws -> String {
         let depth = try args["max_depth"].map { _ in try number(args, "max_depth") } ?? 5
         guard depth.rounded() == depth, depth >= 0, depth <= 8 else { throw ToolFailure("max_depth must be 0 to 8.") }
-        var remaining = 200
+        var budget = TreeBudget(remaining: treeElementLimit, deadline: Date().addingTimeInterval(treeTimeLimit))
         guard args["root"] != nil else {
             let app = try appToRead(args)
             let pid = app.processIdentifier
@@ -961,27 +985,46 @@ private final class MacControlServer {
             let appElement = AXUIElementCreateApplication(pid)
             // Elements obtained through the app element use its timeout, so a hung app cannot stall the tree.
             AXUIElementSetMessagingTimeout(appElement, axMessagingTimeout)
-            let root = elementAttribute(appElement, kAXFocusedWindowAttribute as CFString)
-                ?? elementAttribute(appElement, kAXMainWindowAttribute as CFString)
-                ?? appElement
-            let tree = describeElement(root, depth: Int(depth), remaining: &remaining, owner: owner)
-            let focused = elementAttribute(appElement, kAXFocusedUIElementAttribute as CFString).map {
-                var focusRemaining = 20
-                return describeElement($0, depth: 1, remaining: &focusRemaining, owner: owner)
+            // An app that does not answer for its focused window is busy, so nothing more is asked of it.
+            var windowValue: CFTypeRef?
+            if AXUIElementCopyAttributeValue(appElement, kAXFocusedWindowAttribute as CFString, &windowValue) == .cannotComplete {
+                budget.observed = 1
+                budget.unanswered = 1
+                budget.stopped = "app_not_answering"
+                return jsonString(["app": app.localizedName ?? "Unknown", "bundle_id": app.bundleIdentifier ?? "",
+                                   "snapshot": owner?.snapshot ?? NSNull(), "focused": NSNull(),
+                                   "tree": ["role": "AXApplication", "unanswered": true]].merging(treeStatus(budget)) { $1 })
             }
+            let focusedWindow = windowValue.flatMap { CFGetTypeID($0) == AXUIElementGetTypeID() ? ($0 as! AXUIElement) : nil }
+            let root = focusedWindow ?? elementAttribute(appElement, kAXMainWindowAttribute as CFString) ?? appElement
+            let tree = describeElement(root, depth: Int(depth), budget: &budget, owner: owner)
+            // The focused element has its own small allowance, but not past the time limit.
+            var focusBudget = TreeBudget(remaining: 20, deadline: budget.deadline)
+            let focused = budget.stopped == "time_limit" || budget.unanswered > 0 ? nil : elementAttribute(appElement, kAXFocusedUIElementAttribute as CFString).map {
+                describeElement($0, depth: 1, budget: &focusBudget, owner: owner)
+            }
+            budget.unanswered += focusBudget.unanswered
+            if budget.stopped == nil, let stopped = focusBudget.stopped, stopped != "element_limit" { budget.stopped = stopped }
             return jsonString(["app": app.localizedName ?? "Unknown", "bundle_id": app.bundleIdentifier ?? "",
                                "snapshot": owner?.snapshot ?? NSNull(),
-                               "focused": focused ?? NSNull(), "tree": tree, "truncated": remaining == 0])
+                               "focused": focused ?? NSNull(), "tree": tree].merging(treeStatus(budget)) { $1 })
         }
         // Reading below a ref keeps the app's refs, so the agent can map a large window first and then open
         // one part of it.
         let ref = try resolveRef(args, key: "root", outcome: "nothing was read")
         let app = NSRunningApplication(processIdentifier: ref.pid)
         let owner = refOwner(ref.pid, fresh: false)
-        let tree = describeElement(ref.element, depth: Int(depth), remaining: &remaining, owner: owner)
+        let tree = describeElement(ref.element, depth: Int(depth), budget: &budget, owner: owner)
         return jsonString(["app": app?.localizedName ?? "Unknown", "bundle_id": app?.bundleIdentifier ?? "",
                            "snapshot": owner?.snapshot ?? NSNull(),
-                           "root": args["root"] ?? NSNull(), "tree": tree, "truncated": remaining == 0])
+                           "root": args["root"] ?? NSNull(), "tree": tree].merging(treeStatus(budget)) { $1 })
+    }
+
+    // complete is false when the read stopped early or the app did not answer for some elements; elements
+    // left out only because of max_depth do not count.
+    private func treeStatus(_ budget: TreeBudget) -> [String: Any] {
+        ["complete": budget.stopped == nil && budget.unanswered == 0, "truncated": budget.stopped != nil,
+         "stopped_by": budget.stopped ?? NSNull(), "elements_read": budget.observed, "unanswered": budget.unanswered]
     }
 
     // The app named by app, otherwise the frontmost app. A stale NSWorkspace answer is acceptable here
@@ -1040,36 +1083,76 @@ private final class MacControlServer {
         if axRetired.count > retiredSnapshotLimit { axRetired.removeFirst(axRetired.count - retiredSnapshotLimit) }
     }
 
-    private func describeElement(_ element: AXUIElement, depth: Int, remaining: inout Int, owner: AXOwner?,
+    private func describeElement(_ element: AXUIElement, depth: Int, budget: inout TreeBudget, owner: AXOwner?,
                                  alwaysRef: Bool = false) -> [String: Any] {
-        remaining -= 1
-        let role = shortString(attribute(element, kAXRoleAttribute as CFString)) ?? "unknown"
+        budget.remaining -= 1
+        budget.observed += 1
+        // Elements do not reliably take the timeout of the app element they came from.
+        AXUIElementSetMessagingTimeout(element, axMessagingTimeout)
+        // An app that does not answer in time is likely busy, so nothing more is asked about this element.
+        var answered = true
+        func read(_ name: String) -> CFTypeRef? {
+            guard answered else { return nil }
+            var value: CFTypeRef?
+            let error = AXUIElementCopyAttributeValue(element, name as CFString, &value)
+            if error == .cannotComplete { answered = false }
+            return error == .success ? value : nil
+        }
+        let role = shortString(read(kAXRoleAttribute)) ?? "unknown"
         var result: [String: Any] = ["role": role]
-        if let title = shortString(attribute(element, kAXTitleAttribute as CFString)) { result["title"] = title }
-        if let description = shortString(attribute(element, kAXDescriptionAttribute as CFString)) { result["description"] = description }
-        if !isSecure(element, role: role), let value = shortString(attribute(element, kAXValueAttribute as CFString)) {
+        if let title = shortString(read(kAXTitleAttribute)) { result["title"] = title }
+        if let description = shortString(read(kAXDescriptionAttribute)) { result["description"] = description }
+        if answered, !isSecure(element, role: role), let value = shortString(read(kAXValueAttribute)) {
             result["value"] = value
         }
-        let expand = depth > 0 && remaining > 0
-        // Children not listed here can be read with this element's ref as root.
-        var hidden: CFIndex = 0
-        if !expand, AXUIElementGetAttributeValueCount(element, kAXChildrenAttribute as CFString, &hidden) == .success, hidden > 0 {
-            result["more_children"] = hidden
+        guard answered else {
+            budget.unanswered += 1
+            result["unanswered"] = true
+            return result
         }
-        if let owner, role != "unknown" {
+        // Children not listed here, because of max_depth or because the read stopped early, can be read with
+        // this element's ref as root.
+        var hidden: CFIndex = 0
+        var count: CFIndex = 0
+        switch AXUIElementGetAttributeValueCount(element, kAXChildrenAttribute as CFString, &count) {
+        case .success where count > 0:
+            hidden = count
+            // The budget is only spent on an element that has children, so a whole tree that ends exactly at
+            // the limit is still complete.
+            guard depth > 0, budget.allows() else { break }
+            var childrenValue: CFTypeRef?
+            let error = AXUIElementCopyAttributeValue(element, kAXChildrenAttribute as CFString, &childrenValue)
+            guard error == .success, let children = childrenValue as? [AXUIElement] else {
+                if error == .cannotComplete {
+                    budget.unanswered += 1
+                    result["unanswered"] = true
+                }
+                break
+            }
+            var entries: [[String: Any]] = []
+            for child in children {
+                guard budget.allows() else { break }
+                entries.append(describeElement(child, depth: depth - 1, budget: &budget, owner: owner))
+            }
+            result["children"] = entries
+            hidden = CFIndex(children.count - entries.count)
+        case .cannotComplete:
+            budget.unanswered += 1
+            result["unanswered"] = true
+        default: break
+        }
+        if hidden > 0 { result["more_children"] = hidden }
+        // The ref is given after the children are read, since only then is it known whether some were left out.
+        // Once the app has stopped answering, its actions are not asked for, but an element with children left
+        // out still gets a ref, so they can be read later.
+        if let owner, role != "unknown", budget.unanswered > 0 {
+            if alwaysRef || hidden > 0 { result["ref"] = ref(for: element, role: role, owner: owner) }
+        } else if let owner, role != "unknown" {
             let actions = availableActions(element, role: role)
             if alwaysRef || actions.contains(where: { !axWeakActions.contains($0) }) || hidden > 0 {
                 result["ref"] = ref(for: element, role: role, owner: owner)
                 result["actions"] = actions
             }
-        }
-        if expand, let children = attribute(element, kAXChildrenAttribute as CFString) as? [AXUIElement] {
-            var entries: [[String: Any]] = []
-            for child in children {
-                if remaining == 0 { break }
-                entries.append(describeElement(child, depth: depth - 1, remaining: &remaining, owner: owner))
-            }
-            result["children"] = entries
         }
         return result
     }
@@ -1237,8 +1320,8 @@ private final class MacControlServer {
     private func describeMatches(_ found: [AXUIElement], pid: pid_t) -> [[String: Any]] {
         let owner = refOwner(pid, fresh: false)
         return found.map { element in
-            var remaining = 1
-            return describeElement(element, depth: 0, remaining: &remaining, owner: owner, alwaysRef: true)
+            var budget = TreeBudget(remaining: 1, deadline: .distantFuture)
+            return describeElement(element, depth: 0, budget: &budget, owner: owner, alwaysRef: true)
         }
     }
 

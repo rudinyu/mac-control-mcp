@@ -115,9 +115,21 @@ Function keys, punctuation keys, and media keys are not supported. To type punct
 | `root` | string | A ref to read below, instead of the focused window |
 | `app` | string | App to read; default is the frontmost app |
 
-Returns the Accessibility tree of the app's focused window as JSON, with each element's role, title, description, and value, plus the element that has keyboard focus. Use it to find buttons and fields by name instead of by pixel position. It reads at most 200 elements, cuts each value to 200 characters, and reports `"truncated": true` when it hits a limit. Password field values are never included. With `app`, it reads that app without bringing it to the front.
+Returns the Accessibility tree of the app's focused window as JSON, with each element's role, title, description, and value, plus the element that has keyboard focus. Use it to find buttons and fields by name instead of by pixel position. It reads at most 200 elements for at most 5 seconds, and cuts each value to 200 characters. Password field values are never included. With `app`, it reads that app without bringing it to the front.
 
-Each element that can be acted on also has a `ref`, such as `"ref": "k3f9q2.12"`, and `actions`, the `mac_ax_action` actions it offers. An element whose children were not listed, because of `max_depth` or the 200-element limit, shows `more_children` and also has a `ref`. Pass that ref as `root` to read below it. A ref is the snapshot ID, a dot, and the element's number in that snapshot; the result's `snapshot` field names the snapshot. Reading the whole tree again for the same app starts a new snapshot and retires all of that app's earlier refs. Reading below a `root`, `mac_find`, `mac_wait`, and `mac_window list` add refs to the current snapshot, so earlier refs keep working. Snapshot IDs are random, so a ref kept from before mac-control restarted is refused instead of naming another element. For a large window, read it with a small `max_depth` first, then drill in.
+Each element that can be acted on also has a `ref`, such as `"ref": "k3f9q2.12"`, and `actions`, the `mac_ax_action` actions it offers. An element whose children are not all listed shows `more_children`, the number left out, and also has a `ref`. Pass that ref as `root` to read below it. That happens for two reasons: `max_depth`, which you chose, and the read stopping early.
+
+The result says whether the read stopped early:
+
+| Field | Meaning |
+| --- | --- |
+| `complete` | `true` when everything down to `max_depth` was read. Elements left out only because of `max_depth` do not make it `false`. |
+| `truncated` | `true` when the read stopped early |
+| `stopped_by` | Why it stopped: `element_limit` (200 elements), `time_limit` (5 seconds), or `app_not_answering`; `null` when it did not |
+| `elements_read` | How many elements were read |
+| `unanswered` | How many elements the app did not answer for within 2 seconds. Each is marked `"unanswered": true`. |
+
+When an app stops answering, as a busy or hung app does, the read stops there instead of waiting on every remaining element. Elements already read are kept. After that point, elements no longer list `actions`, but an element with children left out still has a `ref`, so you can read below it once the app responds again. A ref is the snapshot ID, a dot, and the element's number in that snapshot; the result's `snapshot` field names the snapshot. Reading the whole tree again for the same app starts a new snapshot and retires all of that app's earlier refs. Reading below a `root`, `mac_find`, `mac_wait`, and `mac_window list` add refs to the current snapshot, so earlier refs keep working. Snapshot IDs are random, so a ref kept from before mac-control restarted is refused instead of naming another element. For a large window, read it with a small `max_depth` first, then drill in.
 
 ```json
 {"app": "TextEdit", "max_depth": 6}
