@@ -18,7 +18,9 @@ The repository also contains **mac-exec**, a separate MCP server that runs comma
 | `mac_request_screen_recording` | Triggers the macOS Screen Recording permission prompt |
 | `mac_screenshot` | Captures the main display and returns a JPEG to the model |
 | `mac_ui_tree` | Reads Accessibility elements of the frontmost app, or of the app named by `app`, with password field values hidden |
-| `mac_ax_action` | Presses, sets the value of, or focuses an element by its `mac_ui_tree` ref, without moving the pointer or changing the front app |
+| `mac_find` | Searches an app's windows for elements by role and text, returning refs |
+| `mac_wait` | Waits until a matching element appears or goes away |
+| `mac_ax_action` | Presses, sets the value of, or focuses an element by its ref, without moving the pointer or changing the front app |
 | `mac_mouse` | Moves, clicks, double-clicks, right-clicks, and drags |
 | `mac_scroll` | Scrolls vertically or horizontally |
 | `mac_type_text` | Types Unicode text by placing it on the clipboard and pressing Command-V, then restores the clipboard |
@@ -29,7 +31,7 @@ Mouse coordinates are **pixel coordinates in the most recent `mac_screenshot` im
 
 `mac_screenshot`, `mac_mouse`, `mac_scroll`, `mac_type_text`, `mac_key`, and `mac_ui_tree` accept an `app` parameter: the name or bundle ID of a running app with a Dock icon, such as `TextEdit` or `com.apple.TextEdit`. If a name matches several apps, the one in front is chosen; if none of them is in front, the tool reports an error that lists the candidates, and you should use a bundle ID instead. `mac_screenshot`, `mac_mouse`, `mac_scroll`, `mac_type_text`, and `mac_key` bring the app to the front first and check again just before sending. If another app has taken focus by then, no input is sent and the tool reports an error. `mac_mouse` with `app` also refuses to click when the last screenshot was not taken with that app in front, when its window has moved or resized since, or when the point is over another app; `mac_scroll` refuses when the pointer is over another app. With `app`, `mac_ui_tree` only reads and does not change which app is in front. When the agent runs in a terminal, focus often returns to the terminal between tool calls, so always pass `app`.
 
-`mac_ui_tree` gives each element that can be acted on a `ref`, such as `3.12`, with the actions it offers. `mac_ax_action` acts on that exact element through Accessibility. A ref stops working when `mac_ui_tree` is read again for that app, when the element goes away, or when the app quits or relaunches; the tool then sends nothing and asks for a new `mac_ui_tree`. If `app` is given, it must be the ref's app.
+`mac_ui_tree`, `mac_find`, and `mac_wait` give each element that can be acted on a `ref`, such as `3.12`, with the actions it offers. `mac_ax_action` acts on that exact element through Accessibility. In a large window, read `mac_ui_tree` with a small `max_depth`, then pass a ref as `root` to read below it, or use `mac_find`. A ref stops working when the whole `mac_ui_tree` is read again for that app, when the element goes away, or when the app quits or relaunches; the tool then sends nothing and asks for a new `mac_ui_tree`. If `app` is given, it must be the ref's app.
 
 In `mac_ui_tree` output, terminals such as iTerm2 use NUL in Accessibility text both to pad wide characters and to mark blank cells. Padding after a wide character is removed, other NULs become spaces, and blanks at the end of each line are trimmed.
 

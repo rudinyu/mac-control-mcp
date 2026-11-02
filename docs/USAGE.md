@@ -112,21 +112,56 @@ Function keys, punctuation keys, and media keys are not supported. To type punct
 | Parameter | Type | Notes |
 | --- | --- | --- |
 | `max_depth` | integer, 0 to 8 | How deep to read; default 5 |
+| `root` | string | A ref to read below, instead of the focused window |
 | `app` | string | App to read; default is the frontmost app |
 
 Returns the Accessibility tree of the app's focused window as JSON, with each element's role, title, description, and value, plus the element that has keyboard focus. Use it to find buttons and fields by name instead of by pixel position. It reads at most 200 elements, cuts each value to 200 characters, and reports `"truncated": true` when it hits a limit. Password field values are never included. With `app`, it reads that app without bringing it to the front.
 
-Each element that can be acted on also has a `ref`, such as `"ref": "3.12"`, and `actions`, the `mac_ax_action` actions it offers. Reading the tree again for the same app replaces all of that app's refs.
+Each element that can be acted on also has a `ref`, such as `"ref": "3.12"`, and `actions`, the `mac_ax_action` actions it offers. An element whose children were not listed, because of `max_depth` or the 200-element limit, shows `more_children` and also has a `ref`. Pass that ref as `root` to read below it. Reading the whole tree again for the same app replaces all of that app's refs. Reading below a `root` keeps them. For a large window, read it with a small `max_depth` first, then drill in.
 
 ```json
 {"app": "TextEdit", "max_depth": 6}
+{"app": "Slack", "max_depth": 2}
+{"app": "Slack", "root": "4.7", "max_depth": 6}
+```
+
+### `mac_find`
+
+| Parameter | Type | Notes |
+| --- | --- | --- |
+| `role` | string | Such as `button` or `AXTextField`; the `AX` prefix and case do not matter |
+| `text` | string | Matched in the title, description, or value, ignoring case and accents |
+| `exact` | boolean | Match the whole text instead of part of it |
+| `limit` | integer, 1 to 50 | Most matches to return; default 20 |
+| `root` | string | A ref to search below, instead of all of the app's windows |
+| `app` | string | App to search; default is the frontmost app |
+
+Give `role`, `text`, or both. Searches every window of the app, the focused one first, in screen-reader order, up to 5000 elements and 40 levels deep, for at most 5 seconds. That is much further than `mac_ui_tree` reads. Matches come back with their `ref` and `actions`, ready for `mac_ax_action`, and the app's existing refs keep working. `"complete": false` means the search was cut short; narrow it with `root`. Menus in the menu bar are not searched. Password field values are never matched or returned.
+
+```json
+{"app": "TextEdit", "role": "button", "text": "Save"}
+```
+
+### `mac_wait`
+
+| Parameter | Type | Notes |
+| --- | --- | --- |
+| `role`, `text`, `exact`, `root`, `app` | | Same as for `mac_find` |
+| `state` | `present` or `absent` | Wait for a match to appear (default) or for none to be left |
+| `timeout_seconds` | number, 0.5 to 30 | How long to wait; default 10 |
+
+Checks about four times a second, looking up the app's windows each time, so a dialog that opens in a new window is found. With `present`, returns the matches with refs as soon as one appears. With `absent`, it returns only once a full search finds nothing. If time runs out, it fails with `TIMEOUT`. Use it after an action, for example to wait for a sheet to open or for a progress indicator to go away, instead of reading `mac_ui_tree` repeatedly.
+
+```json
+{"app": "TextEdit", "role": "sheet", "timeout_seconds": 5}
+{"app": "Safari", "role": "progressindicator", "state": "absent", "timeout_seconds": 20}
 ```
 
 ### `mac_ax_action`
 
 | Parameter | Type | Notes |
 | --- | --- | --- |
-| `ref` | string, required | A ref from the latest `mac_ui_tree` of the app |
+| `ref` | string, required | A ref from `mac_ui_tree`, `mac_find`, or `mac_wait`, still current for the app |
 | `action` | string, required | `press`, `show_menu`, `increment`, `decrement`, `confirm`, `cancel`, `raise`, `set_value`, or `focus` |
 | `value` | string, up to 2000 characters | The text for `set_value`; not allowed with other actions |
 | `app` | string | If given, must be the ref's app |
@@ -162,7 +197,7 @@ When a tool fails, the result has two text parts: a message for people, and a JS
 | --- | --- | --- |
 | `fix` | Change the arguments, or what they name, such as launching the app | `INVALID_ARGS`, `APP_NOT_FOUND`, `APP_AMBIGUOUS`, `ACTION_UNSUPPORTED` |
 | `refresh` | Take a new `mac_screenshot` or `mac_ui_tree`, and use its coordinates or refs | `STALE_SCREENSHOT`, `STALE_REF` |
-| `safe` | The same call can be repeated | `FOCUS_LOST`, `APP_UNRESPONSIVE`, `BUSY`, `INTERNAL` |
+| `safe` | The same call can be repeated | `FOCUS_LOST`, `APP_UNRESPONSIVE`, `BUSY`, `INTERNAL`, `TIMEOUT` |
 | `user` | The user must act: grant a permission, unlock the Mac, or fix the setup | `PERMISSION_DENIED`, `SCREEN_LOCKED`, `SETUP_PROBLEM`, `CLIPBOARD_UNSAFE` |
 | `check` | The action may have happened; look before repeating it | `OUTCOME_UNKNOWN` |
 
