@@ -105,7 +105,8 @@ private final class MacControlServer {
                     "app": appProperty
                 ],
                 "required": ["ref", "action"], "additionalProperties": false
-            ]
+            ],
+            "annotations": ["readOnlyHint": false, "destructiveHint": true]
         ],
         [
             "name": "mac_record_start",
@@ -813,12 +814,15 @@ private final class MacControlServer {
             throw ToolFailure("No frontmost app found.")
         }
         let pid = app.processIdentifier
-        axRefs = axRefs.filter { $0.value.pid != pid }
+        // Also release the refs of apps that have quit, so a long session does not keep their elements.
+        axRefs = axRefs.filter { $0.value.pid != pid && NSRunningApplication(processIdentifier: $0.value.pid) != nil }
         axGeneration += 1
         axRefCount = 0
         // Without the start time a ref could not tell a relaunched app apart, so the tree then has no refs.
         let owner = processStart(pid).map { (pid: pid, start: $0, prefix: "\(axGeneration).") }
         let appElement = AXUIElementCreateApplication(pid)
+        // Elements obtained through the app element use its timeout, so a hung app cannot stall the tree.
+        AXUIElementSetMessagingTimeout(appElement, axMessagingTimeout)
         let root = elementAttribute(appElement, kAXFocusedWindowAttribute as CFString)
             ?? elementAttribute(appElement, kAXMainWindowAttribute as CFString)
             ?? appElement
@@ -906,7 +910,7 @@ private final class MacControlServer {
         }
         let value = args["value"] as? String
         if action == "set_value" {
-            guard value != nil else { throw ToolFailure("set_value needs value, the text to set.") }
+            guard let value, value.count <= 2000 else { throw ToolFailure("set_value needs value, the text to set, of up to 2000 characters.") }
         } else if args["value"] != nil {
             throw ToolFailure("value is only used with set_value.")
         }
@@ -952,9 +956,9 @@ private final class MacControlServer {
         switch error {
         case .success: break
         case .actionUnsupported, .attributeUnsupported, .notImplemented:
-            throw ToolFailure("The element of ref \(refName) does not support \(action); no action was sent.")
+            throw ToolFailure("\(name) reported that the element of ref \(refName) does not support \(action), so it was not done.")
         case .illegalArgument:
-            throw ToolFailure("\(name) rejected \(action) for ref \(refName); no action was sent.")
+            throw ToolFailure("\(name) rejected \(action) for ref \(refName), so it was not done.")
         case .invalidUIElement:
             axRefs[refName] = nil
             throw ToolFailure("The element of ref \(refName) no longer exists; no action was sent. Call mac_ui_tree again.")
@@ -965,10 +969,11 @@ private final class MacControlServer {
         default:
             throw ToolFailure("\(action) returned Accessibility error \(error.rawValue), so it may or may not have happened. Call mac_ui_tree to check before trying again.")
         }
-        // Some fields, such as many on web pages, accept a value without taking it. The text read back is not
-        // repeated, since it may be private.
-        if action == "set_value", attribute(ref.element, kAXValueAttribute as CFString) as? String != value {
-            throw ToolFailure("\(name) accepted set_value for ref \(refName), but the field does not show the new text. Call mac_ui_tree to check, or use mac_type_text.")
+        // Some fields, such as many on web pages, accept a value without taking it. A value that is not text,
+        // such as a slider's number, cannot be compared. The text read back is not repeated, since it may be private.
+        if action == "set_value", let shown = attribute(ref.element, kAXValueAttribute as CFString) as? String,
+           shown.replacingOccurrences(of: "\r\n", with: "\n") != value?.replacingOccurrences(of: "\r\n", with: "\n") {
+            throw ToolFailure("\(name) accepted set_value for ref \(refName), but the field does not show the new text, so it may not have been applied. Call mac_ui_tree to check, or use mac_type_text.")
         }
         return "Sent \(action) to \(ref.role) ref \(refName) in \(name). Call mac_ui_tree to see the result."
     }
