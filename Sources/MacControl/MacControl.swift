@@ -1632,12 +1632,16 @@ private final class MacControlServer {
         var windowsValue: CFTypeRef?
         let windowsRead = timedOut { AXUIElementCopyAttributeValue(appElement, kAXWindowsAttribute as CFString, &windowsValue) }
         guard !windowsRead.timedOut else { return nil }
-        func role(_ element: AXUIElement) -> String? { shortString(attribute(element, kAXRoleAttribute as CFString)) }
+        func role(_ element: AXUIElement) -> String? {
+            AXUIElementSetMessagingTimeout(element, axMessagingTimeout)
+            return shortString(attribute(element, kAXRoleAttribute as CFString))
+        }
         func surface(_ element: AXUIElement, _ kind: String) -> Surface {
             Surface(element: element, kind: kind, title: shortString(attribute(element, kAXTitleAttribute as CFString)).flatMap { $0.isEmpty ? nil : $0 })
         }
         func children(_ element: AXUIElement) -> [AXUIElement] {
-            attribute(element, kAXChildrenAttribute as CFString) as? [AXUIElement] ?? []
+            AXUIElementSetMessagingTimeout(element, axMessagingTimeout)
+            return attribute(element, kAXChildrenAttribute as CFString) as? [AXUIElement] ?? []
         }
         var found: [Surface] = []
         for window in windowsValue as? [AXUIElement] ?? [] {
@@ -1713,8 +1717,9 @@ private final class MacControlServer {
         return parts.isEmpty ? "" : " " + parts.joined(separator: " ")
     }
 
-    // What mac_ax_action did: whether anything was sent, whether the result was read back and matched, and
-    // what was read. Nothing is repeated from the element, since its text may be private.
+    // What mac_ax_action did: whether anything was sent, whether the result was read back and matched, what
+    // was read, and what opened and closed. The value read back is not repeated, since it may be private; the
+    // surfaces are described as mac_ui_tree would describe them.
     private struct AXActionOutcome {
         var message: String
         let delivered: Bool
@@ -1791,32 +1796,45 @@ private final class MacControlServer {
             if failure.kind == .outcomeUnknown, let before = surfacesBefore, let after = surfaces(ref.pid, near: ref.element) {
                 let changes = surfaceChanges(before: before, after: after, owner: refOwner(ref.pid, fresh: false))
                 if !changes.opened.isEmpty || !changes.closed.isEmpty {
-                    failure = ToolFailure(failure.description + surfaceSentence(changes.opened, changes.closed) + " That suggests \(action) happened.", .outcomeUnknown)
+                    let sheet = changes.opened.contains { ["sheet", "dialog"].contains($0["kind"] as? String ?? "") }
+                    failure = ToolFailure(failure.description + surfaceSentence(changes.opened, changes.closed)
+                        + (sheet ? " A sheet or dialog that opened this way usually means \(action) happened; check that it is the one expected." : ""), .outcomeUnknown)
                     failure.details = ["opened": changes.opened, "closed": changes.closed]
                 }
             }
             throw failure
         }
-        var outcome = try checkAXAction(action: action, ref: ref, refName: refName, name: name, target: target, value: value, asked: asked, numberBefore: numberBefore)
-        // Menus and sheets can take a moment to appear, so actions that open them are given a little time.
-        if let before = surfacesBefore {
-            // A chosen menu item flashes before its menu closes, which takes longer.
-            let checks = ref.role == "AXMenuItem" ? 11 : ["press", "show_menu", "confirm", "cancel"].contains(action) ? 4 : 1
-            var changes: (opened: [[String: Any]], closed: [[String: Any]]) = ([], [])
-            for attempt in 0..<checks {
-                if attempt > 0 { RunLoop.current.run(until: Date().addingTimeInterval(0.1)) }
-                guard let after = surfaces(ref.pid, near: ref.element) else { break }
-                let changed = after.count != before.count || zip(after, before).contains { !CFEqual($0.element, $1.element) }
-                if changed {
-                    changes = surfaceChanges(before: before, after: after, owner: refOwner(ref.pid, fresh: false))
-                    break
-                }
-            }
-            outcome.opened = changes.opened
-            outcome.closed = changes.closed
-            outcome.message += surfaceSentence(changes.opened, changes.closed)
+        // The read-back can fail, as when a state did not change; what opened and closed is reported either way.
+        let outcome = Result { try checkAXAction(action: action, ref: ref, refName: refName, name: name, target: target, value: value, asked: asked, numberBefore: numberBefore) }
+        let changes: (opened: [[String: Any]], closed: [[String: Any]]) =
+            surfacesBefore.map { waitForSurfaceChanges(ref: ref, action: action, before: $0) } ?? ([], [])
+        switch outcome {
+        case .success(var result):
+            result.opened = changes.opened
+            result.closed = changes.closed
+            result.message += surfaceSentence(changes.opened, changes.closed)
+            return result
+        case .failure(let error):
+            guard var failure = error as? ToolFailure, !changes.opened.isEmpty || !changes.closed.isEmpty else { throw error }
+            failure = ToolFailure(failure.description + surfaceSentence(changes.opened, changes.closed), failure.kind)
+            failure.details = ["opened": changes.opened, "closed": changes.closed]
+            throw failure
         }
-        return outcome
+    }
+
+    // What opened and closed after an action. Menus and sheets can take a moment to appear, so actions that
+    // open them are watched a little longer, and a chosen menu item flashes before its menu closes.
+    private func waitForSurfaceChanges(ref: AXRef, action: String, before: [Surface]) -> (opened: [[String: Any]], closed: [[String: Any]]) {
+        let checks = ref.role == "AXMenuItem" ? 11 : ["press", "show_menu", "confirm", "cancel"].contains(action) ? 4 : 1
+        for attempt in 0..<checks {
+            if attempt > 0 { RunLoop.current.run(until: Date().addingTimeInterval(0.1)) }
+            guard let after = surfaces(ref.pid, near: ref.element) else { break }
+            // Compared as sets, since windows can change order without anything opening or closing.
+            let opened = after.contains { item in !before.contains { CFEqual($0.element, item.element) } }
+            let closed = before.contains { item in !after.contains { CFEqual($0.element, item.element) } }
+            if opened || closed { return surfaceChanges(before: before, after: after, owner: refOwner(ref.pid, fresh: false)) }
+        }
+        return ([], [])
     }
 
     // Reads the element back after mac_ax_action sent action, and says what it found.

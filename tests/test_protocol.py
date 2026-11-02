@@ -213,7 +213,7 @@ class MCPProtocolTests(unittest.TestCase):
         for word in ("complete", "stopped_by", "element_limit", "time_limit", "app_not_answering", "unanswered", "more_children"):
             self.assertIn(word, tree)
         description = listed["mac_ax_action"]["description"]
-        for word in ("delivered", "verified", "checked", "OUTCOME_UNKNOWN", "opened", "closed", "menus, sheets"):
+        for word in ("delivered", "verified", "checked", "OUTCOME_UNKNOWN", "opened", "closed"):
             self.assertIn(word, description)
         response = self.request("tools/call", {"name": "mac_ax_action", "arguments": {"ref": "zzzzzz.1", "action": "check"}})
         self.assertIn("Unknown or expired ref", response["result"]["content"][0]["text"])

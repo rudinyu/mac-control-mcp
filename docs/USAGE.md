@@ -239,7 +239,7 @@ The result also lists what the action opened and closed, so after pressing a pop
 
 Each entry in `opened` has a `ref` and its direct children, up to 30 elements; read below the ref with `mac_ui_tree` `root` for more. Each entry in `closed` has `kind` and `title`. After `press`, `show_menu`, `confirm`, and `cancel`, changes are watched for about 0.3 seconds, and for about a second after an action on a menu item, since the item flashes before its menu closes.
 
-Some apps answer an action that opens a modal dialog only once the dialog is up, so `mac_ax_action` reports `OUTCOME_UNKNOWN`. Its JSON part then lists the dialog under `opened`, which shows that the action happened.
+Some apps answer an action that opens a modal dialog only once the dialog is up, so `mac_ax_action` reports `OUTCOME_UNKNOWN`. Its JSON part then lists the dialog under `opened`, which usually means the action happened; check that it is the dialog you expected, since another app could open one at the same moment.
 
 Menus in the menu bar are not covered, since `mac_find` and `mac_ui_tree` give no refs for them. A submenu, which a menu item lists whether or not it is open, is not reported as opened.
 

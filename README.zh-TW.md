@@ -32,7 +32,7 @@
 
 `mac_screenshot`、`mac_mouse`、`mac_scroll`、`mac_type_text`、`mac_key` 和 `mac_ui_tree` 都可以加上 `app` 參數，填執行中、有 Dock 圖示的 App 名稱或 bundle ID（例如 `TextEdit` 或 `com.apple.TextEdit`）。名稱同時符合多個 App 時，會選目前在前景的那個；都不在前景就回報錯誤並列出候選，請改用 bundle ID。`mac_screenshot`、`mac_mouse`、`mac_scroll`、`mac_type_text` 和 `mac_key` 會先把該 App 切到前景，送出前再確認一次；如果焦點已經被其他 App 搶走，就不會送出任何輸入，並回報錯誤。`mac_mouse` 指定 `app` 時，如果上一張截圖不是在該 App 位於前景時拍的，或它的視窗之後移動或改變了大小，或那個位置上是其他 App，也不會點擊；`mac_scroll` 在游標位於其他 App 上時也不會捲動。`mac_ui_tree` 指定 `app` 時只讀取，不會切換前景 App。代理在終端機裡執行時，焦點常在兩次工具呼叫之間回到終端機，所以建議一律指定 `app`。iTerm2 等終端機在輔助使用文字裡用 NUL 代表寬字元的補位和空白格：寬字元後的補位會移除，其他 NUL 轉成空格，每行結尾的空白會去掉。
 
-`mac_ui_tree`、`mac_find` 和 `mac_wait` 會給每個可以操作的元素一個 `ref`（例如 `k3f9q2.12`），並列出它支援的動作。句點前面的部分是快照 ID，每次讀取整棵 `mac_ui_tree` 都會換新；它是隨機產生的，所以 mac-control 重新啟動前留下的 ref 會被拒絕，不會誤指到別的元素。`mac_ax_action` 透過輔助使用直接操作那個元素。視窗很大時，先用較小的 `max_depth` 讀 `mac_ui_tree`，再把 ref 當作 `root` 往下讀，或改用 `mac_find`。同一個 App 重新讀取整棵 `mac_ui_tree`、元素消失，或 App 結束或重新開啟之後，ref 就失效；這時工具不會送出任何動作，並要求重新讀取 `mac_ui_tree`。如果指定 `app`，必須是 ref 所屬的 App。動作送出後，只要元素上有狀態可讀，`mac_ax_action` 就會讀回確認，結果會說明是否已確認（`verified`），並列出動作開啟或關閉的選單、工作表、對話框或彈出框，附上 ref。
+`mac_ui_tree`、`mac_find` 和 `mac_wait` 會給每個可以操作的元素一個 `ref`（例如 `k3f9q2.12`），並列出它支援的動作。句點前面的部分是快照 ID，每次讀取整棵 `mac_ui_tree` 都會換新；它是隨機產生的，所以 mac-control 重新啟動前留下的 ref 會被拒絕，不會誤指到別的元素。`mac_ax_action` 透過輔助使用直接操作那個元素。視窗很大時，先用較小的 `max_depth` 讀 `mac_ui_tree`，再把 ref 當作 `root` 往下讀，或改用 `mac_find`。同一個 App 重新讀取整棵 `mac_ui_tree`、元素消失，或 App 結束或重新開啟之後，ref 就失效；這時工具不會送出任何動作，並要求重新讀取 `mac_ui_tree`。如果指定 `app`，必須是 ref 所屬的 App。動作送出後，只要元素上有狀態可讀，`mac_ax_action` 就會讀回確認，結果會說明是否已確認（`verified`），並列出動作開啟或關閉的選單、工作表、對話框、彈出框、面板或視窗，附上 ref。
 
 `mac_type_text` 會短暫使用系統剪貼簿，再還原原有內容；如果在貼上期間其他程式更新了剪貼簿，它不會覆寫該更新。超過 40 MB 或無法完整保存的剪貼簿內容會讓輸入取消。這比直接送 Unicode 鍵盤事件更能配合目前的注音輸入法與各 App 文字欄位。
 

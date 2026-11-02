@@ -239,7 +239,7 @@ App 停止回應時（例如忙碌或當掉），讀取會在那裡停止，不�
 
 `opened` 的每一項都有 `ref` 和它的直接子元素（最多 30 個）；要看更多，就用 `mac_ui_tree` 的 `root` 從該 ref 往下讀。`closed` 的每一項有 `kind` 和 `title`。`press`、`show_menu`、`confirm` 和 `cancel` 之後會觀察變化約 0.3 秒；對選單項目的動作則約 1 秒，因為項目會先閃一下，選單才關閉。
 
-有些 App 要等動作開啟的強制回應對話框出現後才回覆，所以 `mac_ax_action` 會回報 `OUTCOME_UNKNOWN`。這時它的 JSON 會在 `opened` 列出那個對話框，表示動作確實發生了。
+有些 App 要等動作開啟的強制回應對話框出現後才回覆，所以 `mac_ax_action` 會回報 `OUTCOME_UNKNOWN`。這時它的 JSON 會在 `opened` 列出那個對話框，通常表示動作已經發生；請確認那是預期的對話框，因為同一時間其他程式也可能開啟對話框。
 
 選單列的選單不在範圍內，因為 `mac_find` 和 `mac_ui_tree` 不會給它們 ref。子選單不論是否開啟都會列在選單項目下，所以不會被當作已開啟回報。
 
