@@ -653,12 +653,12 @@ private final class MacControlServer {
         )
     }
 
-    private func postMouse(_ type: CGEventType, at point: CGPoint, button: CGMouseButton = .left, clickCount: Int64 = 1) throws {
+    private func mouseEvent(_ type: CGEventType, at point: CGPoint, button: CGMouseButton = .left, clickCount: Int64 = 1) throws -> CGEvent {
         guard let event = CGEvent(mouseEventSource: nil, mouseType: type, mouseCursorPosition: point, mouseButton: button) else {
-            throw ToolFailure("Could not create a mouse event.", .internalError)
+            throw ToolFailure("Could not create a mouse event; no input was sent.", .internalError)
         }
         event.setIntegerValueField(.mouseEventClickState, value: clickCount)
-        event.post(tap: .cghidEventTap)
+        return event
     }
 
     private func mouse(_ args: [String: Any]) throws -> String {
@@ -678,31 +678,36 @@ private final class MacControlServer {
             // Moving the pointer sends nothing to an app; a drag may end over another app, as a drop onto Finder does.
             if action != "move" { try requirePoint(start, in: target, what: "The point") }
         }
+        // Every event is created before any is posted, so a failure cannot leave half a click or a button held down.
+        var events: [CGEvent] = []
         switch action {
         case "move":
-            try postMouse(.mouseMoved, at: start)
+            events = [try mouseEvent(.mouseMoved, at: start)]
         case "click":
-            try postMouse(.leftMouseDown, at: start)
-            try postMouse(.leftMouseUp, at: start)
+            events = [try mouseEvent(.leftMouseDown, at: start), try mouseEvent(.leftMouseUp, at: start)]
         case "double_click":
-            for count in 1...2 {
-                try postMouse(.leftMouseDown, at: start, clickCount: Int64(count))
-                try postMouse(.leftMouseUp, at: start, clickCount: Int64(count))
+            for count in Int64(1)...2 {
+                events += [try mouseEvent(.leftMouseDown, at: start, clickCount: count),
+                           try mouseEvent(.leftMouseUp, at: start, clickCount: count)]
             }
         case "right_click":
-            try postMouse(.rightMouseDown, at: start, button: .right)
-            try postMouse(.rightMouseUp, at: start, button: .right)
+            events = [try mouseEvent(.rightMouseDown, at: start, button: .right),
+                      try mouseEvent(.rightMouseUp, at: start, button: .right)]
         case "drag":
             guard let end else { throw ToolFailure("Missing drag destination") }
-            try postMouse(.leftMouseDown, at: start)
+            events = [try mouseEvent(.leftMouseDown, at: start)]
             for step in 1...12 {
                 let t = CGFloat(step) / 12
                 let current = CGPoint(x: start.x + (end.x - start.x) * t, y: start.y + (end.y - start.y) * t)
-                try postMouse(.leftMouseDragged, at: current)
-                usleep(12_000)
+                events.append(try mouseEvent(.leftMouseDragged, at: current))
             }
-            try postMouse(.leftMouseUp, at: end)
+            events.append(try mouseEvent(.leftMouseUp, at: end))
         default: break
+        }
+        for (index, event) in events.enumerated() {
+            event.post(tap: .cghidEventTap)
+            // Spaces the drag steps out so apps see movement rather than a jump.
+            if action == "drag", index > 0, index < events.count - 1 { usleep(12_000) }
         }
         return target == nil ? "Mouse \(action) completed." : "Mouse \(action) completed in \(receiver)."
     }
