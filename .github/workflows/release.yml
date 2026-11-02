@@ -5,6 +5,8 @@
 #   NOTARY_KEY_P8_BASE64      base64 of the App Store Connect API key (AuthKey_<id>.p8)
 #   NOTARY_KEY_ID             its key ID
 #   NOTARY_ISSUER_ID          its issuer ID
+# Without them the tag is only checked and tested, and the release is published from a Mac that holds the
+# Developer ID key: sh scripts/build-app.sh --sign, sh scripts/notarize.sh, then gh release create.
 name: Release
 
 on:
@@ -17,6 +19,8 @@ permissions:
 jobs:
   release:
     runs-on: macos-latest
+    env:
+      SIGNING: ${{ secrets.DEVELOPER_ID_P12_BASE64 != '' }}
     steps:
       - uses: actions/checkout@v4
 
@@ -28,7 +32,12 @@ jobs:
       - name: Test
         run: sh scripts/ci.sh
 
+      - name: Note that the release is published locally
+        if: env.SIGNING != 'true'
+        run: echo "::notice::No signing secrets in this repository, so $GITHUB_REF_NAME is checked and tested here and published from a Mac with the Developer ID key."
+
       - name: Import the signing certificate and notary key into a temporary keychain
+        if: env.SIGNING == 'true'
         env:
           P12: ${{ secrets.DEVELOPER_ID_P12_BASE64 }}
           P12_PASSWORD: ${{ secrets.DEVELOPER_ID_P12_PASSWORD }}
@@ -52,14 +61,17 @@ jobs:
           echo "MACCONTROL_KEYCHAIN=$keychain" >> "$GITHUB_ENV"
 
       - name: Build and sign
+        if: env.SIGNING == 'true'
         run: sh scripts/build-app.sh --sign
 
       - name: Notarize and staple
+        if: env.SIGNING == 'true'
         run: |
           dmg=$(ls .build/app/MacControl-*.dmg)
           MACCONTROL_NOTARY_KEYCHAIN="$MACCONTROL_KEYCHAIN" sh scripts/notarize.sh "$dmg"
 
       - name: Publish the release
+        if: env.SIGNING == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -68,5 +80,5 @@ jobs:
           gh release create "$GITHUB_REF_NAME" "$dmg" "$dmg.sha256" --title "MacControl ${GITHUB_REF_NAME#v}" --generate-notes
 
       - name: Remove the temporary keychain
-        if: always()
+        if: always() && env.SIGNING == 'true'
         run: security delete-keychain "$RUNNER_TEMP/signing.keychain-db" || true
