@@ -1113,10 +1113,15 @@ private final class MacControlServer {
         var result: [String: Any] = ["role": role]
         if let title = shortString(read(kAXTitleAttribute)) { result["title"] = title }
         if let description = shortString(read(kAXDescriptionAttribute)) { result["description"] = description }
-        // A password field reports AXSecureTextField as its role or subrole. The value is read only once the
-        // subrole has been, so an app that stops answering cannot have a password field's value read.
-        let subrole = shortString(read(kAXSubroleAttribute))
-        if answered, role != "AXSecureTextField", subrole != "AXSecureTextField", let value = shortString(read(kAXValueAttribute)) {
+        // A password field reports AXSecureTextField as its role or subrole. The value is read only when both
+        // were read, or the element plainly has no subrole, so a failed read cannot let a password through.
+        var subroleValue: CFTypeRef?
+        let subrole = answered ? timedOut { AXUIElementCopyAttributeValue(element, kAXSubroleAttribute as CFString, &subroleValue) } : (.cannotComplete, false)
+        if subrole.timedOut { answered = false }
+        let subroleKnown = subrole.error == .success || subrole.error == .noValue || subrole.error == .attributeUnsupported
+        if answered, role != "unknown", subroleKnown, role != "AXSecureTextField",
+           shortString(subrole.error == .success ? subroleValue : nil) != "AXSecureTextField",
+           let value = shortString(read(kAXValueAttribute)) {
             result["value"] = value
         }
         guard answered else {
