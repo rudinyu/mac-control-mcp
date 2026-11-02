@@ -10,7 +10,7 @@
 
 1. **`mac_status`**：檢查權限，回報目前在前景的 App。
 2. **`mac_screenshot`**：讓代理看到畫面。
-3. **操作**：用 `mac_mouse` 點擊，用 `mac_type_text` 或 `mac_key` 輸入，或用 `mac_ui_tree` 讀取介面元素。
+3. **操作**：用 `mac_mouse` 點擊，用 `mac_type_text` 或 `mac_key` 輸入，或用 `mac_ui_tree` 讀取介面元素，再用 `mac_ax_action` 依 ref 操作。
 4. **再次 `mac_screenshot`**：確認結果，再進行下一步。
 
 指示範例：
@@ -116,8 +116,26 @@
 
 以 JSON 回傳該 App 焦點視窗的輔助使用樹，包括每個元素的角色、標題、描述和值，以及目前取得鍵盤焦點的元素。可以用名稱找按鈕和欄位，不必靠像素位置。最多讀 200 個元素，每個值截到 200 個字元，碰到上限時會回報 `"truncated": true`。密碼欄位的內容一律不會回傳。指定 `app` 時只讀取，不會把該 App 切到前景。
 
+可以操作的元素另外會有 `ref`（例如 `"ref": "3.12"`）和 `actions`，也就是它支援的 `mac_ax_action` 動作。同一個 App 重新讀取時，該 App 原有的 ref 全部換新。
+
 ```json
 {"app": "TextEdit", "max_depth": 6}
+```
+
+### `mac_ax_action`
+
+| 參數 | 型別 | 說明 |
+| --- | --- | --- |
+| `ref` | 字串，必填 | 該 App 最近一次 `mac_ui_tree` 的 ref |
+| `action` | 字串，必填 | `press`、`show_menu`、`increment`、`decrement`、`confirm`、`cancel`、`raise`、`set_value` 或 `focus` |
+| `value` | 字串，最多 2000 個字元 | `set_value` 要設定的文字；其他動作不能使用 |
+| `app` | 字串 | 如果指定，必須是 ref 所屬的 App |
+
+透過輔助使用直接操作元素，所以不需要座標，不會移動游標，不會把 App 切到前景，也不會使用剪貼簿。送出前會確認 App 沒有結束或重新開啟、元素仍然存在且角色相同，而且仍支援該動作。密碼欄位不能設定。成功只代表 App 接受了動作，不代表結果符合預期，請再讀一次 `mac_ui_tree` 確認。`set_value` 之後會讀回欄位內容，沒有顯示新文字就回報錯誤；許多網頁欄位需要改用 `mac_type_text`。
+
+```json
+{"ref": "3.12", "action": "press", "app": "Calculator"}
+{"ref": "3.4", "action": "set_value", "value": "Meeting notes", "app": "TextEdit"}
 ```
 
 ### `mac_record_start`、`mac_record_status`、`mac_record_stop`
@@ -142,6 +160,8 @@
 | `Could not determine which app has focus` | 輔助使用無法回報焦點所在的 App。請檢查輔助使用權限。 |
 | `Call mac_screenshot before mac_mouse` 或座標被拒絕 | 先截圖，並使用那張截圖的座標。 |
 | `… was not steadily in front for the last mac_screenshot`、`… window moved, resized, or changed` 或 `… is not over …` | 沒有點擊任何東西。用同一個 `app` 重新截圖，再用新截圖的座標點擊。 |
+| `Unknown or expired ref`、`… no longer exists or has changed` 或 `… has quit or relaunched since mac_ui_tree` | 沒有送出任何動作。重新讀取 `mac_ui_tree`，改用新的 ref。 |
+| `… may or may not have happened` | App 沒有確認動作是否完成。先讀取 `mac_ui_tree` 確認，再決定要不要重試。 |
 | 點擊位置不對 | 截圖之後畫面變了。重新截圖，並指定 `app`，讓伺服器可以檢查。 |
 | 文字或點擊跑到代理自己的視窗或其他 App | 沒有指定 `app`。一定要指定。 |
 | 客戶端裡看不到這些工具 | 重開客戶端，再檢查設定裡的伺服器路徑。在 Claude Code 可以執行 `/mcp`。 |

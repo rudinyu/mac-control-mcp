@@ -40,9 +40,31 @@ private struct Recording {
     let startedAt: Date
 }
 
+// An element mac_ui_tree gave a ref, kept alive so mac_ax_action acts on that exact object and never on
+// another element that merely looks the same.
+private struct AXRef {
+    let element: AXUIElement
+    let pid: pid_t
+    // A relaunched app, or another process given the same PID, has a different start time.
+    let processStart: timeval
+    let role: String
+}
+
+// mac_ax_action names and the Accessibility actions they perform. set_value and focus set attributes instead.
+private let axActionNames: [String: String] = [
+    "press": kAXPressAction, "show_menu": kAXShowMenuAction,
+    "increment": kAXIncrementAction, "decrement": kAXDecrementAction,
+    "confirm": kAXConfirmAction, "cancel": kAXCancelAction, "raise": kAXRaiseAction
+]
+// Some menus and pop-ups only return from an action after they close; without a limit the server would hang.
+private let axMessagingTimeout: Float = 2
+
 private final class MacControlServer {
     private var lastCapture: CaptureSize?
     private var recordings: [String: Recording] = [:]
+    private var axRefs: [String: AXRef] = [:]
+    private var axGeneration = 0
+    private var axRefCount = 0
 
     private let tools: [[String: Any]] = [
         [
@@ -63,13 +85,27 @@ private final class MacControlServer {
         ],
         [
             "name": "mac_ui_tree",
-            "description": "Read a limited Accessibility tree for the focused window and focused element of an app: the named app if app is given, otherwise the frontmost app. Does not change which app is in front. Password field values are excluded. Requires Accessibility permission.",
+            "description": "Read a limited Accessibility tree for the focused window and focused element of an app: the named app if app is given, otherwise the frontmost app. Does not change which app is in front. Password field values are excluded. Elements that can be acted on carry a ref and their actions for mac_ax_action; reading the tree again for the same app replaces its refs. Requires Accessibility permission.",
             "inputSchema": [
                 "type": "object",
                 "properties": ["max_depth": ["type": "integer", "minimum": 0, "maximum": 8], "app": appProperty],
                 "additionalProperties": false
             ],
             "annotations": ["readOnlyHint": true]
+        ],
+        [
+            "name": "mac_ax_action",
+            "description": "Act on an element through Accessibility, using a ref from the latest mac_ui_tree of its app: press, show_menu, increment, decrement, confirm, cancel, raise, set_value (with value), or focus. Does not move the pointer, change which app is in front, or use the clipboard. A ref stops working when mac_ui_tree is read again for that app, the element goes away, or the app quits or relaunches; then nothing is sent. If app is given, it must be the ref's app. Success means the app accepted the action; read mac_ui_tree again to see the result. Requires Accessibility permission.",
+            "inputSchema": [
+                "type": "object",
+                "properties": [
+                    "ref": ["type": "string"],
+                    "action": ["type": "string", "enum": ["press", "show_menu", "increment", "decrement", "confirm", "cancel", "raise", "set_value", "focus"]],
+                    "value": ["type": "string", "maxLength": 2000],
+                    "app": appProperty
+                ],
+                "required": ["ref", "action"], "additionalProperties": false
+            ]
         ],
         [
             "name": "mac_record_start",
@@ -181,7 +217,7 @@ private final class MacControlServer {
                 "protocolVersion": selected,
                 "capabilities": ["tools": [:]],
                 "serverInfo": ["name": "mac-control", "version": serverVersion],
-                "instructions": "Use mac_status first. Use mac_screenshot before mac_mouse; mouse coordinates use the most recent screenshot. Pass app with the name of the app you are working in to mac_screenshot, mac_mouse, mac_scroll, mac_type_text, and mac_key, so input cannot land in another app. Ask the user before irreversible actions."
+                "instructions": "Use mac_status first. Use mac_screenshot before mac_mouse; mouse coordinates use the most recent screenshot. When mac_ui_tree gives the element a ref, mac_ax_action can act on it without coordinates or focus. Pass app with the name of the app you are working in to mac_screenshot, mac_mouse, mac_scroll, mac_type_text, and mac_key, so input cannot land in another app. Ask the user before irreversible actions."
             ], id: id)
         case "ping":
             send(result: [:], id: id)
@@ -220,6 +256,7 @@ private final class MacControlServer {
         case "mac_screenshot": return try screenshot(args)
         case "mac_request_screen_recording": return [textContent(CGRequestScreenCaptureAccess() ? "Screen Recording access is granted." : "Screen Recording access is not granted yet. Complete the macOS permission prompt. \(PermissionHint.screenRecording)")]
         case "mac_ui_tree": return [textContent(try uiTree(args))]
+        case "mac_ax_action": return [textContent(try axAction(args))]
         case "mac_record_start": return [textContent(try recordStart(args))]
         case "mac_record_status": return [textContent(try recordStatus(args))]
         case "mac_record_stop": return [textContent(try recordStop(args))]
@@ -775,21 +812,28 @@ private final class MacControlServer {
         guard let app = target ?? focusedApp() ?? NSWorkspace.shared.frontmostApplication else {
             throw ToolFailure("No frontmost app found.")
         }
-        let appElement = AXUIElementCreateApplication(app.processIdentifier)
+        let pid = app.processIdentifier
+        axRefs = axRefs.filter { $0.value.pid != pid }
+        axGeneration += 1
+        axRefCount = 0
+        // Without the start time a ref could not tell a relaunched app apart, so the tree then has no refs.
+        let owner = processStart(pid).map { (pid: pid, start: $0, prefix: "\(axGeneration).") }
+        let appElement = AXUIElementCreateApplication(pid)
         let root = elementAttribute(appElement, kAXFocusedWindowAttribute as CFString)
             ?? elementAttribute(appElement, kAXMainWindowAttribute as CFString)
             ?? appElement
         var remaining = 200
-        let tree = describeElement(root, depth: Int(depth), remaining: &remaining)
+        let tree = describeElement(root, depth: Int(depth), remaining: &remaining, owner: owner)
         let focused = elementAttribute(appElement, kAXFocusedUIElementAttribute as CFString).map {
             var focusRemaining = 20
-            return describeElement($0, depth: 1, remaining: &focusRemaining)
+            return describeElement($0, depth: 1, remaining: &focusRemaining, owner: owner)
         }
         return jsonString(["app": app.localizedName ?? "Unknown", "bundle_id": app.bundleIdentifier ?? "",
                            "focused": focused ?? NSNull(), "tree": tree, "truncated": remaining == 0])
     }
 
-    private func describeElement(_ element: AXUIElement, depth: Int, remaining: inout Int) -> [String: Any] {
+    private func describeElement(_ element: AXUIElement, depth: Int, remaining: inout Int,
+                                 owner: (pid: pid_t, start: timeval, prefix: String)?) -> [String: Any] {
         remaining -= 1
         let role = shortString(attribute(element, kAXRoleAttribute as CFString)) ?? "unknown"
         var result: [String: Any] = ["role": role]
@@ -798,15 +842,135 @@ private final class MacControlServer {
         if role != "AXSecureTextField", let value = shortString(attribute(element, kAXValueAttribute as CFString)) {
             result["value"] = value
         }
+        if let owner, role != "unknown" {
+            let actions = availableActions(element, role: role)
+            // Web content offers show_menu and focus on nearly every node, so they alone do not earn a ref.
+            if actions.contains(where: { $0 != "show_menu" && $0 != "focus" }) {
+                result["ref"] = ref(for: element, role: role, owner: owner)
+                result["actions"] = actions
+            }
+        }
         if depth > 0, remaining > 0, let children = attribute(element, kAXChildrenAttribute as CFString) as? [AXUIElement] {
             var entries: [[String: Any]] = []
             for child in children {
                 if remaining == 0 { break }
-                entries.append(describeElement(child, depth: depth - 1, remaining: &remaining))
+                entries.append(describeElement(child, depth: depth - 1, remaining: &remaining, owner: owner))
             }
             result["children"] = entries
         }
         return result
+    }
+
+    // The same element can appear in the tree and as the focused element; it keeps one ref.
+    private func ref(for element: AXUIElement, role: String, owner: (pid: pid_t, start: timeval, prefix: String)) -> String {
+        if let existing = axRefs.first(where: { $0.key.hasPrefix(owner.prefix) && CFEqual($0.value.element, element) }) {
+            return existing.key
+        }
+        axRefCount += 1
+        let name = owner.prefix + String(axRefCount)
+        axRefs[name] = AXRef(element: element, pid: owner.pid, processStart: owner.start, role: role)
+        return name
+    }
+
+    // A password field reports AXSecureTextField as its role or, for NSSecureTextField, as its subrole.
+    private func isSecure(_ element: AXUIElement, role: String) -> Bool {
+        role == "AXSecureTextField" || shortString(attribute(element, kAXSubroleAttribute as CFString)) == "AXSecureTextField"
+    }
+
+    private func isSettable(_ element: AXUIElement, _ name: CFString) -> Bool {
+        var settable: DarwinBoolean = false
+        return AXUIElementIsAttributeSettable(element, name, &settable) == .success && settable.boolValue
+    }
+
+    // The mac_ax_action names this element offers now.
+    private func availableActions(_ element: AXUIElement, role: String) -> [String] {
+        var names: CFArray?
+        let native = AXUIElementCopyActionNames(element, &names) == .success ? (names as? [String] ?? []) : []
+        var actions = axActionNames.filter { native.contains($0.value) }.keys.sorted()
+        if !isSecure(element, role: role), isSettable(element, kAXValueAttribute as CFString) { actions.append("set_value") }
+        if isSettable(element, kAXFocusedAttribute as CFString) { actions.append("focus") }
+        return actions
+    }
+
+    private func processStart(_ pid: pid_t) -> timeval? {
+        var info = proc_bsdinfo()
+        let size = Int32(MemoryLayout<proc_bsdinfo>.size)
+        guard proc_pidinfo(pid, PROC_PIDTBSDINFO, 0, &info, size) == size, info.pbi_pid == UInt32(pid) else { return nil }
+        return timeval(tv_sec: Int(info.pbi_start_tvsec), tv_usec: Int32(info.pbi_start_tvusec))
+    }
+
+    private func axAction(_ args: [String: Any]) throws -> String {
+        guard let action = args["action"] as? String,
+              axActionNames[action] != nil || action == "set_value" || action == "focus" else {
+            throw ToolFailure("Invalid action. Use press, show_menu, increment, decrement, confirm, cancel, raise, set_value, or focus.")
+        }
+        let value = args["value"] as? String
+        if action == "set_value" {
+            guard value != nil else { throw ToolFailure("set_value needs value, the text to set.") }
+        } else if args["value"] != nil {
+            throw ToolFailure("value is only used with set_value.")
+        }
+        guard let refName = args["ref"] as? String, !refName.isEmpty else {
+            throw ToolFailure("ref must be a ref from mac_ui_tree.")
+        }
+        guard let ref = axRefs[refName] else {
+            throw ToolFailure("Unknown or expired ref \(refName); no action was sent. Call mac_ui_tree again and use a ref from it.")
+        }
+        let target = try targetApp(args)
+        try requireAccessibility()
+        try requireUnlocked()
+        let name = NSRunningApplication(processIdentifier: ref.pid)?.localizedName ?? "The app"
+        if let target, target.processIdentifier != ref.pid {
+            throw ToolFailure("Ref \(refName) belongs to \(name), not \(target.localizedName ?? "that app"); no action was sent.")
+        }
+        guard let start = processStart(ref.pid), start.tv_sec == ref.processStart.tv_sec, start.tv_usec == ref.processStart.tv_usec else {
+            axRefs = axRefs.filter { $0.value.pid != ref.pid }
+            throw ToolFailure("\(name) has quit or relaunched since mac_ui_tree; no action was sent. Call mac_ui_tree again.")
+        }
+        AXUIElementSetMessagingTimeout(ref.element, axMessagingTimeout)
+        // Read the role again, so an element that went away, or that the app reused for another kind of
+        // control, is refused before anything is sent.
+        var roleValue: CFTypeRef?
+        let roleError = AXUIElementCopyAttributeValue(ref.element, kAXRoleAttribute as CFString, &roleValue)
+        switch roleError {
+        case .success where roleValue as? String == ref.role: break
+        case .apiDisabled: throw ToolFailure("Accessibility permission is missing. \(PermissionHint.accessibility)")
+        case .cannotComplete: throw ToolFailure("\(name) did not answer; no action was sent. Try again.")
+        default:
+            axRefs[refName] = nil
+            throw ToolFailure("The element of ref \(refName) no longer exists or has changed; no action was sent. Call mac_ui_tree again.")
+        }
+        guard availableActions(ref.element, role: ref.role).contains(action) else {
+            throw ToolFailure("The element of ref \(refName) does not offer \(action) now; no action was sent. Call mac_ui_tree again to see its actions.")
+        }
+        let error: AXError
+        switch action {
+        case "set_value": error = AXUIElementSetAttributeValue(ref.element, kAXValueAttribute as CFString, value! as CFString)
+        case "focus": error = AXUIElementSetAttributeValue(ref.element, kAXFocusedAttribute as CFString, kCFBooleanTrue)
+        default: error = AXUIElementPerformAction(ref.element, axActionNames[action]! as CFString)
+        }
+        switch error {
+        case .success: break
+        case .actionUnsupported, .attributeUnsupported, .notImplemented:
+            throw ToolFailure("The element of ref \(refName) does not support \(action); no action was sent.")
+        case .illegalArgument:
+            throw ToolFailure("\(name) rejected \(action) for ref \(refName); no action was sent.")
+        case .invalidUIElement:
+            axRefs[refName] = nil
+            throw ToolFailure("The element of ref \(refName) no longer exists; no action was sent. Call mac_ui_tree again.")
+        case .apiDisabled:
+            throw ToolFailure("Accessibility permission is missing. \(PermissionHint.accessibility)")
+        case .cannotComplete:
+            throw ToolFailure("\(name) did not answer in time, so \(action) may or may not have happened. Call mac_ui_tree to check before trying again.")
+        default:
+            throw ToolFailure("\(action) returned Accessibility error \(error.rawValue), so it may or may not have happened. Call mac_ui_tree to check before trying again.")
+        }
+        // Some fields, such as many on web pages, accept a value without taking it. The text read back is not
+        // repeated, since it may be private.
+        if action == "set_value", attribute(ref.element, kAXValueAttribute as CFString) as? String != value {
+            throw ToolFailure("\(name) accepted set_value for ref \(refName), but the field does not show the new text. Call mac_ui_tree to check, or use mac_type_text.")
+        }
+        return "Sent \(action) to \(ref.role) ref \(refName) in \(name). Call mac_ui_tree to see the result."
     }
 
     private func jsonString(_ value: Any) -> String {
