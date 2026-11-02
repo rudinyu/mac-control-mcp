@@ -843,7 +843,7 @@ private final class MacControlServer {
         var result: [String: Any] = ["role": role]
         if let title = shortString(attribute(element, kAXTitleAttribute as CFString)) { result["title"] = title }
         if let description = shortString(attribute(element, kAXDescriptionAttribute as CFString)) { result["description"] = description }
-        if role != "AXSecureTextField", let value = shortString(attribute(element, kAXValueAttribute as CFString)) {
+        if !isSecure(element, role: role), let value = shortString(attribute(element, kAXValueAttribute as CFString)) {
             result["value"] = value
         }
         if let owner, role != "unknown" {
