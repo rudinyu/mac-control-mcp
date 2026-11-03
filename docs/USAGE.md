@@ -266,7 +266,7 @@ When a tool fails, the result has two text parts: a message for people, and a JS
 {"error": {"code": "STALE_REF", "delivered": false, "retry": "refresh"}}
 ```
 
-`delivered` is `false` when nothing reached the app, and `"unknown"` when an action was sent but not confirmed. `retry` says what to do next:
+`delivered` is `false` when nothing reached the app, `true` when the app accepted the action but did not show the expected result afterwards, and `"unknown"` when an action was sent but the app did not confirm receiving it. `retry` says what to do next:
 
 | `retry` | Meaning | Codes |
 | --- | --- | --- |
@@ -298,7 +298,7 @@ When a tool fails, the result has two text parts: a message for people, and a JS
 ## Privacy and safety
 
 - Screenshots, recordings, and UI tree values send what is on your screen to the agent's model. Close private windows first.
-- `mac_type_text` briefly puts the text on the system clipboard, where clipboard history tools and Universal Clipboard on your other devices can capture it. Do not have the agent type passwords or other secrets.
+- `mac_type_text` briefly puts the text on the system clipboard. It marks the text as transient and concealed, which clipboard history tools that follow the nspasteboard.org convention, such as Maccy, Raycast, and Alfred, take as a request not to save it. Other tools, and Universal Clipboard on your other devices, can still capture it. Do not have the agent type passwords or other secrets.
 - Recordings stay in `~/Movies/MacControl/` or `.build/recordings/` until you delete them. Delete the ones you no longer need.
 - The server only reads and acts on your desktop. It opens no network port, does not run arbitrary shell commands, and talks only to the client that started it.
 - The agent can click and type anything you could. Keep your client's approval prompts on, and do not let it confirm purchases, deletions, or messages without checking.

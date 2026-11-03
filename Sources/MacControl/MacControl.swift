@@ -9,13 +9,16 @@ private let supportedProtocolVersions: Set<String> = [
 ]
 
 private struct ToolFailure: Error, CustomStringConvertible {
-    let description: String
+    var description: String
     let kind: FailureKind
+    // Whether the action reached the app, when that is known; otherwise the kind decides.
+    let delivered: Bool?
     // More fields for the error's JSON part, such as the menus and sheets an action opened.
     var details: [String: Any] = [:]
-    init(_ description: String, _ kind: FailureKind = .invalidArgs) {
+    init(_ description: String, _ kind: FailureKind = .invalidArgs, delivered: Bool? = nil) {
         self.description = description
         self.kind = kind
+        self.delivered = delivered
     }
 }
 
@@ -39,7 +42,8 @@ private enum FailureKind: String {
     case timeout = "TIMEOUT"
     case outcomeUnknown = "OUTCOME_UNKNOWN"
 
-    // Only an action that was sent without confirmation can have reached the app.
+    // Only an action that was sent without confirmation can have reached the app. A failure that knows the
+    // app accepted the action, but could not confirm its result, says delivered true instead.
     var delivered: Any { self == .outcomeUnknown ? "unknown" : false }
 
     var retry: String {
@@ -403,9 +407,11 @@ private final class MacControlServer {
                 let content = try callTool(name, arguments)
                 send(result: ["content": content], id: id)
             } catch {
-                // A failure that is not a ToolFailure comes from a system call whose effect is not known.
-                let kind = (error as? ToolFailure)?.kind ?? .outcomeUnknown
-                let base: [String: Any] = ["code": kind.rawValue, "delivered": kind.delivered, "retry": kind.retry]
+                // A failure that is not a ToolFailure comes from starting screencapture or making the recordings
+                // folder, which happen before anything is sent.
+                let kind = (error as? ToolFailure)?.kind ?? .internalError
+                let delivered: Any = (error as? ToolFailure)?.delivered ?? kind.delivered
+                let base: [String: Any] = ["code": kind.rawValue, "delivered": delivered, "retry": kind.retry]
                 let details = ["error": base.merging((error as? ToolFailure)?.details ?? [:]) { current, _ in current }]
                 send(result: ["content": [textContent(String(describing: error)), textContent(jsonString(details))],
                               "isError": true], id: id)
@@ -897,8 +903,15 @@ private final class MacControlServer {
             }
             savedItems.append(copy)
         }
+        // The nspasteboard.org markers ask clipboard history tools not to save the text, which only passes through.
+        let item = NSPasteboardItem()
+        guard item.setString(value, forType: .string),
+              item.setData(Data(), forType: NSPasteboard.PasteboardType("org.nspasteboard.TransientType")),
+              item.setData(Data(), forType: NSPasteboard.PasteboardType("org.nspasteboard.ConcealedType")) else {
+            throw ToolFailure("Could not prepare the text for the clipboard.", .internalError)
+        }
         pasteboard.clearContents()
-        guard pasteboard.setString(value, forType: .string) else {
+        guard pasteboard.writeObjects([item]) else {
             pasteboard.clearContents()
             if !savedItems.isEmpty { pasteboard.writeObjects(savedItems) }
             throw ToolFailure("Could not put text on the clipboard.", .internalError)
@@ -1474,7 +1487,7 @@ private final class MacControlServer {
             guard raised == .success else { throw axFailure(raised, "focus", refName: refName, appName: name) }
             try bringToFront(app)
             guard settles({ elementAttribute(appElement, kAXFocusedWindowAttribute as CFString).map { CFEqual($0, element) } ?? false }) else {
-                throw ToolFailure("\(name) came to the front, but \(label) did not become its focused window. Call mac_window list to check.", .outcomeUnknown)
+                throw ToolFailure("\(name) came to the front, but \(label) did not become its focused window. Call mac_window list to check.", .outcomeUnknown, delivered: true)
             }
         case "move", "resize":
             var point = CGPoint(x: numbers["x"] ?? 0, y: numbers["y"] ?? 0)
@@ -1490,7 +1503,7 @@ private final class MacControlServer {
             try set(kAXMinimizedAttribute, wanted ? kCFBooleanTrue : kCFBooleanFalse)
             // The Dock animation takes a moment.
             guard settles({ boolState(element, kAXMinimizedAttribute) == wanted }) || settles({ boolState(element, kAXMinimizedAttribute) == wanted }) else {
-                throw ToolFailure("\(name) accepted \(action) for \(label), but it has not changed yet. Call mac_window list to check.", .outcomeUnknown)
+                throw ToolFailure("\(name) accepted \(action) for \(label), but it has not changed yet. Call mac_window list to check.", .outcomeUnknown, delivered: true)
             }
         default: break
         }
@@ -1797,8 +1810,8 @@ private final class MacControlServer {
                 let changes = surfaceChanges(before: before, after: after, owner: refOwner(ref.pid, fresh: false))
                 if !changes.opened.isEmpty || !changes.closed.isEmpty {
                     let sheet = changes.opened.contains { ["sheet", "dialog"].contains($0["kind"] as? String ?? "") }
-                    failure = ToolFailure(failure.description + surfaceSentence(changes.opened, changes.closed)
-                        + (sheet ? " A sheet or dialog that opened this way usually means \(action) happened; check that it is the one expected." : ""), .outcomeUnknown)
+                    failure.description += surfaceSentence(changes.opened, changes.closed)
+                        + (sheet ? " A sheet or dialog that opened this way usually means \(action) happened; check that it is the one expected." : "")
                     failure.details = ["opened": changes.opened, "closed": changes.closed]
                 }
             }
@@ -1816,7 +1829,8 @@ private final class MacControlServer {
             return result
         case .failure(let error):
             guard var failure = error as? ToolFailure, !changes.opened.isEmpty || !changes.closed.isEmpty else { throw error }
-            failure = ToolFailure(failure.description + surfaceSentence(changes.opened, changes.closed), failure.kind)
+            // Appended in place, so the failure keeps whether the action was delivered.
+            failure.description += surfaceSentence(changes.opened, changes.closed)
             failure.details = ["opened": changes.opened, "closed": changes.closed]
             throw failure
         }
@@ -1841,7 +1855,7 @@ private final class MacControlServer {
     private func checkAXAction(action: String, ref: AXRef, refName: String, name: String, target: (attribute: String, value: Bool)?,
                                value: String?, asked: Double?, numberBefore: Double?) throws -> AXActionOutcome {
         if let target, !settles({ boolState(ref.element, target.attribute) == target.value }) {
-            throw ToolFailure("\(name) accepted \(action) for ref \(refName), but the element did not change state, so it may not have been applied. Call mac_ui_tree to check.", .outcomeUnknown)
+            throw ToolFailure("\(name) accepted \(action) for ref \(refName), but the element did not change state, so it may not have been applied. Call mac_ui_tree to check.", .outcomeUnknown, delivered: true)
         }
         let sent = "Sent \(action) to \(ref.role) ref \(refName) in \(name)"
         if let target {
@@ -1853,7 +1867,7 @@ private final class MacControlServer {
             let shown = attribute(ref.element, kAXValueAttribute as CFString)
             if let text = shown as? String {
                 guard text.replacingOccurrences(of: "\r\n", with: "\n") == value!.replacingOccurrences(of: "\r\n", with: "\n") else {
-                    throw ToolFailure("\(name) accepted set_value for ref \(refName), but the field does not show the new text, so it may not have been applied. Call mac_ui_tree to check, or use mac_type_text.", .outcomeUnknown)
+                    throw ToolFailure("\(name) accepted set_value for ref \(refName), but the field does not show the new text, so it may not have been applied. Call mac_ui_tree to check, or use mac_type_text.", .outcomeUnknown, delivered: true)
                 }
                 return AXActionOutcome(message: "\(sent); the field shows the new text.", delivered: true, checked: kAXValueAttribute, verified: true)
             }
@@ -1870,7 +1884,7 @@ private final class MacControlServer {
                     return AXActionOutcome(message: "\(sent), but it does not report whether it has focus. Call mac_ui_tree to check.",
                                            delivered: true, checked: nil, verified: false)
                 }
-                throw ToolFailure("\(name) accepted focus for ref \(refName), but the element does not report focus, so it may not have been applied. Call mac_ui_tree to check.", .outcomeUnknown)
+                throw ToolFailure("\(name) accepted focus for ref \(refName), but the element does not report focus, so it may not have been applied. Call mac_ui_tree to check.", .outcomeUnknown, delivered: true)
             }
             return AXActionOutcome(message: "\(sent); it now has focus in \(name).", delivered: true, checked: kAXFocusedAttribute, verified: true)
         case "increment", "decrement":
