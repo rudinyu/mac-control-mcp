@@ -391,7 +391,7 @@ private final class MacControlServer {
                 "protocolVersion": selected,
                 "capabilities": ["tools": [:]],
                 "serverInfo": ["name": "mac-control", "version": serverVersion],
-                "instructions": "Use mac_status first. Use mac_screenshot before mac_mouse; mouse coordinates use the most recent screenshot. When mac_ui_tree or mac_find gives the element a ref, mac_ax_action can act on it without coordinates or focus; use mac_wait to wait for the result. Pass app with the name of the app you are working in to mac_screenshot, mac_mouse, mac_scroll, mac_type_text, and mac_key, so input cannot land in another app. A failed call also returns JSON with code, delivered, and retry; follow retry, and check the app before repeating an action whose delivered is \"unknown\". A mac_ax_action result says whether it was verified; when verified is false, read the app before relying on the result. Ask the user before irreversible actions."
+                "instructions": "Use mac_status first. Use mac_screenshot before mac_mouse; mouse coordinates use the most recent screenshot. When mac_ui_tree or mac_find gives the element a ref, mac_ax_action can act on it without coordinates or focus; use mac_wait to wait for the result. Pass app with the name of the app you are working in to mac_screenshot, mac_mouse, mac_scroll, mac_type_text, and mac_key, so input cannot land in another app. A failed call also returns JSON with code, delivered, and retry; follow retry, and check the app before repeating an action whose retry is \"check\", since it may have happened. A mac_ax_action result says whether it was verified; when verified is false, read the app before relying on the result. Ask the user before irreversible actions."
             ], id: id)
         case "ping":
             send(result: [:], id: id)
@@ -407,9 +407,8 @@ private final class MacControlServer {
                 let content = try callTool(name, arguments)
                 send(result: ["content": content], id: id)
             } catch {
-                // A failure that is not a ToolFailure comes from starting screencapture or making the recordings
-                // folder, which happen before anything is sent.
-                let kind = (error as? ToolFailure)?.kind ?? .internalError
+                // Every known failure is a ToolFailure, so another error comes from a call whose effect is not known.
+                let kind = (error as? ToolFailure)?.kind ?? .outcomeUnknown
                 let delivered: Any = (error as? ToolFailure)?.delivered ?? kind.delivered
                 let base: [String: Any] = ["code": kind.rawValue, "delivered": delivered, "retry": kind.retry]
                 let details = ["error": base.merging((error as? ToolFailure)?.details ?? [:]) { current, _ in current }]
@@ -509,7 +508,9 @@ private final class MacControlServer {
         process.arguments = ["-x", "-m", "-t", "jpg", path.path]
         process.standardOutput = FileHandle.nullDevice
         process.standardError = FileHandle.nullDevice
-        try process.run()
+        do { try process.run() } catch {
+            throw ToolFailure("Could not start screencapture: \(error.localizedDescription)", .setup)
+        }
         process.waitUntilExit()
         guard process.terminationStatus == 0,
               let data = try? Data(contentsOf: path),
@@ -549,7 +550,9 @@ private final class MacControlServer {
         process.arguments = ["-x", "-m", "-v", "-V", String(Int(seconds)), path.path]
         process.standardOutput = FileHandle.nullDevice
         process.standardError = FileHandle.nullDevice
-        try process.run()
+        do { try process.run() } catch {
+            throw ToolFailure("Could not start screencapture; recording was not started: \(error.localizedDescription)", .setup)
+        }
         recordings[id] = Recording(process: process, path: path, duration: Int(seconds), startedAt: Date())
         return jsonString(["recording_id": id, "state": "recording", "duration_seconds": Int(seconds)])
     }
@@ -579,9 +582,13 @@ private final class MacControlServer {
     private static func privateRecordingsFolder() throws -> URL {
         let directory = recordingsFolder()
         let fm = FileManager.default
-        try fm.createDirectory(at: directory.deletingLastPathComponent(), withIntermediateDirectories: true)
-        if !fm.fileExists(atPath: directory.path) {
-            try fm.createDirectory(at: directory, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
+        do {
+            try fm.createDirectory(at: directory.deletingLastPathComponent(), withIntermediateDirectories: true)
+            if !fm.fileExists(atPath: directory.path) {
+                try fm.createDirectory(at: directory, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
+            }
+        } catch {
+            throw ToolFailure("Could not create \(directory.path); recording was not started: \(error.localizedDescription)", .setup)
         }
         // Check and change the folder through one descriptor, so a link swapped in cannot redirect the chmod.
         let fd = open(directory.path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)

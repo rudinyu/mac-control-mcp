@@ -274,7 +274,7 @@ When a tool fails, the result has two text parts: a message for people, and a JS
 | `refresh` | Take a new `mac_screenshot` or `mac_ui_tree`, and use its coordinates or refs | `STALE_SCREENSHOT`, `STALE_REF` |
 | `safe` | The same call can be repeated | `FOCUS_LOST`, `APP_UNRESPONSIVE`, `BUSY`, `INTERNAL`, `TIMEOUT` |
 | `user` | The user must act: grant a permission, unlock the Mac, or fix the setup | `PERMISSION_DENIED`, `SCREEN_LOCKED`, `SETUP_PROBLEM`, `CLIPBOARD_UNSAFE` |
-| `check` | The action may have happened; look before repeating it | `OUTCOME_UNKNOWN` |
+| `check` | The action may have happened, or reached the app without the expected result; look before repeating it | `OUTCOME_UNKNOWN` |
 
 ## Troubleshooting
 
@@ -298,7 +298,7 @@ When a tool fails, the result has two text parts: a message for people, and a JS
 ## Privacy and safety
 
 - Screenshots, recordings, and UI tree values send what is on your screen to the agent's model. Close private windows first.
-- `mac_type_text` briefly puts the text on the system clipboard. It marks the text as transient and concealed, which clipboard history tools that follow the nspasteboard.org convention, such as Maccy, Raycast, and Alfred, take as a request not to save it. Other tools, and Universal Clipboard on your other devices, can still capture it. Do not have the agent type passwords or other secrets.
+- `mac_type_text` briefly puts the text on the system clipboard. It marks the text as transient and concealed, which clipboard history tools that follow the nspasteboard.org convention take as a request not to save it. Other tools, and Universal Clipboard on your other devices, can still capture it. Do not have the agent type passwords or other secrets.
 - Recordings stay in `~/Movies/MacControl/` or `.build/recordings/` until you delete them. Delete the ones you no longer need.
 - The server only reads and acts on your desktop. It opens no network port, does not run arbitrary shell commands, and talks only to the client that started it.
 - The agent can click and type anything you could. Keep your client's approval prompts on, and do not let it confirm purchases, deletions, or messages without checking.

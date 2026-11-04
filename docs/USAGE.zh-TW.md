@@ -274,7 +274,7 @@ App 停止回應時（例如忙碌或當掉），讀取會在那裡停止，不�
 | `refresh` | 重新執行 `mac_screenshot` 或 `mac_ui_tree`，改用新的座標或 ref | `STALE_SCREENSHOT`、`STALE_REF` |
 | `safe` | 可以原樣再呼叫一次 | `FOCUS_LOST`、`APP_UNRESPONSIVE`、`BUSY`、`INTERNAL`、`TIMEOUT` |
 | `user` | 需要使用者處理：授予權限、解鎖 Mac 或修正設定 | `PERMISSION_DENIED`、`SCREEN_LOCKED`、`SETUP_PROBLEM`、`CLIPBOARD_UNSAFE` |
-| `check` | 動作可能已經發生；先確認再決定要不要重做 | `OUTCOME_UNKNOWN` |
+| `check` | 動作可能已經發生，或已送到 App 但沒有出現預期的結果；先確認再決定要不要重做 | `OUTCOME_UNKNOWN` |
 
 ## 疑難排解
 
@@ -298,7 +298,7 @@ App 停止回應時（例如忙碌或當掉），讀取會在那裡停止，不�
 ## 隱私與安全
 
 - 截圖、錄影和 UI 樹的內容，會把你畫面上的東西傳給代理使用的模型。請先關閉私人視窗。
-- `mac_type_text` 會把文字短暫放到系統剪貼簿。它會把文字標示為暫時及隱藏，遵循 nspasteboard.org 慣例的剪貼簿紀錄工具，例如 Maccy、Raycast 和 Alfred，會因此不儲存這些內容。其他工具，以及你其他裝置上的「通用剪貼板」仍可能取得。不要讓代理輸入密碼或其他機密資料。
+- `mac_type_text` 會把文字短暫放到系統剪貼簿。它會把文字標示為暫時及隱藏，遵循 nspasteboard.org 慣例的剪貼簿紀錄工具會因此不儲存這些內容。其他工具，以及你其他裝置上的「通用剪貼板」仍可能取得。不要讓代理輸入密碼或其他機密資料。
 - 錄影檔會留在 `~/Movies/MacControl/` 或 `.build/recordings/`，直到你刪除為止。不需要的錄影請刪掉。
 - 伺服器只會讀取和操作你的桌面。它不開網路埠、不執行任意 shell 指令，只跟啟動它的客戶端溝通。
 - 代理能點擊和輸入任何你能操作的東西。請保持客戶端的核准提示開啟，購買、刪除或送出訊息前，不要讓它在你沒確認的情況下執行。
