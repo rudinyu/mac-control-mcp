@@ -77,6 +77,15 @@ private enum FailureTests {
               withDetails["code"] as? String == "OUTCOME_UNKNOWN" && withDetails["delivered"] as? Bool == true
                 && withDetails["retry"] as? String == "check", "got \(withDetails)")
 
+        var unusual = ToolFailure("The window moved.", .outcomeUnknown, delivered: true)
+        unusual.details = ["when": Date(timeIntervalSince1970: 0), "scale": Double.nan, "nested": [["at": Date(timeIntervalSince1970: 0)]]]
+        let written = parts(unusual).error
+        check("values JSON cannot hold keep the error",
+              written["code"] as? String == "OUTCOME_UNKNOWN" && written["delivered"] as? Bool == true, "got \(written)")
+        check("and are written as text", written["when"] is String && written["scale"] as? String == "nan"
+              && (written["nested"] as? [[String: Any]])?.first?["at"] is String, "got \(written)")
+        check("JSON that is fine is left alone", jsonString(["a": 1, "b": [true, "x"]]) == #"{"a":1,"b":[true,"x"]}"#)
+
         if failures > 0 {
             print("\(failures) failure test(s) failed")
             exit(1)

@@ -1048,7 +1048,7 @@ private final class MacControlServer: MCPServer {
         if let target, target.processIdentifier != ref.pid {
             throw ToolFailure("Ref \(refName) belongs to \(name), not \(target.localizedName ?? "that app"); \(outcome).")
         }
-        guard refs.isCurrentRun(ref) else {
+        guard refs.confirmCurrentRun(ref) else {
             throw ToolFailure("\(name) has quit or relaunched since mac_ui_tree; \(outcome). Call mac_ui_tree again.", .staleRef)
         }
         AXUIElementSetMessagingTimeout(ref.element, axMessagingTimeout)

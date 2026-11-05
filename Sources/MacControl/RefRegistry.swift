@@ -44,12 +44,27 @@ private func sameStart(_ a: timeval, _ b: timeval) -> Bool {
 // How many replaced snapshots are remembered, so a ref from one is reported as replaced rather than unknown.
 private let retiredSnapshotLimit = 200
 
+// Why a snapshot's refs stopped working. The description finishes a sentence that starts "snapshot <id>".
+enum RetireReason: CustomStringConvertible {
+    // A newer full mac_ui_tree of the same app started the snapshot named.
+    case replaced(by: String, app: String)
+    case earlierRun(app: String)
+    case quit
+
+    var description: String {
+        switch self {
+        case .replaced(let snapshot, let app): return "was replaced by snapshot \(snapshot), a newer mac_ui_tree of \(app)"
+        case .earlierRun(let app): return "belongs to an earlier run of \(app), which has since quit or relaunched"
+        case .quit: return "belongs to an app that has quit"
+        }
+    }
+}
+
 // What a ref name names: its element, or why it names none.
 enum RefLookup {
     case found(AXRef)
     case notARef
-    // The snapshot was replaced, or its app quit or relaunched; reason says which.
-    case retired(snapshot: String, reason: String)
+    case retired(snapshot: String, reason: RetireReason)
     // The snapshot is current, but the element went away (existed) or was never given out.
     case missing(snapshot: String, element: Int, existed: Bool)
     // Not a snapshot of this server, as when the ref is from before it restarted.
@@ -63,7 +78,7 @@ final class RefRegistry {
     private var apps: [pid_t: AXOwner] = [:]
     private var counts: [String: Int] = [:]
     // Snapshots that were replaced or whose app quit, oldest first, with what happened to them.
-    private var retired: [(snapshot: String, reason: String)] = []
+    private var retired: [(snapshot: String, reason: RetireReason)] = []
     private let processStart: (pid_t) -> timeval?
     private let isRunning: (pid_t) -> Bool
     private let appName: (pid_t) -> String?
@@ -88,13 +103,11 @@ final class RefRegistry {
         let snapshot = newSnapshotID()
         let name = appName(pid) ?? "the app"
         if let current {
-            retire(current.snapshot, sameStart(current.start, start)
-                ? "was replaced by snapshot \(snapshot), a newer mac_ui_tree of \(name)"
-                : "belongs to an earlier run of \(name), which has since quit or relaunched")
+            retire(current.snapshot, sameStart(current.start, start) ? .replaced(by: snapshot, app: name) : .earlierRun(app: name))
         }
         // Also release the refs of apps that have quit, so a long session does not keep their elements.
         for (otherPID, owner) in apps where otherPID != pid && !isRunning(otherPID) {
-            retire(owner.snapshot, "belongs to an app that has quit")
+            retire(owner.snapshot, .quit)
         }
         refs = refs.filter { $0.value.pid != pid && isRunning($0.value.pid) }
         apps = apps.filter { $0.key != pid && isRunning($0.key) }
@@ -134,14 +147,14 @@ final class RefRegistry {
         return .unknownSnapshot(parsed.snapshot)
     }
 
-    // Whether the ref's app is still the run the ref came from. When it is not, all of that app's refs are
-    // dropped and its snapshot is remembered as belonging to an earlier run.
-    func isCurrentRun(_ ref: AXRef) -> Bool {
+    // Checks that the ref's app is still the run the ref came from. When it is not, this drops all of that
+    // app's refs, remembers its snapshot as belonging to an earlier run, and returns false.
+    func confirmCurrentRun(_ ref: AXRef) -> Bool {
         if let start = processStart(ref.pid), sameStart(start, ref.processStart) { return true }
         refs = refs.filter { $0.value.pid != ref.pid }
         if let owner = apps.removeValue(forKey: ref.pid) {
             counts[owner.snapshot] = nil
-            retire(owner.snapshot, "belongs to an earlier run of the app, which has since quit or relaunched")
+            retire(owner.snapshot, .earlierRun(app: appName(ref.pid) ?? "the app"))
         }
         return false
     }
@@ -163,7 +176,7 @@ final class RefRegistry {
         }
     }
 
-    private func retire(_ snapshot: String, _ reason: String) {
+    private func retire(_ snapshot: String, _ reason: RetireReason) {
         retired.append((snapshot, reason))
         if retired.count > retiredSnapshotLimit { retired.removeFirst(retired.count - retiredSnapshotLimit) }
     }
