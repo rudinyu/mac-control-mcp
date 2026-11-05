@@ -180,8 +180,8 @@ macOS 不允許任何 App 代替你打開這些開關。打開後，完全結束
 之後：
 
 ```sh
-sh scripts/build-app.sh --sign                         # 通用版 App，已簽章，外加已簽章的 DMG
-sh scripts/notarize.sh .build/app/MacControl-<版本>.dmg   # 公證、staple，並用 Gatekeeper 檢查
+sh scripts/build-app.sh --sign   # 通用版 App，已簽章
+sh scripts/notarize.sh           # 公證 App 並 staple，再製作 DMG、公證並 staple，最後用 Gatekeeper 檢查
 ```
 
 不加 `--sign` 的 `sh scripts/build-app.sh` 會建置 ad-hoc 簽章的 App，供本機測試。發布時，先執行 `sh scripts/ci.sh`，推送跟 `App/Info.plist` 版本一致的 tag（例如 `v0.3.0`），再用 `sh scripts/build-app.sh --sign` 建置、`sh scripts/notarize.sh` 公證，最後用 `gh release create` 發布 DMG 和它的 `.sha256`。GitHub Actions 只會核對 tag 和 `App/Info.plist`；如果 repository 設了 workflow 裡列出的簽章 secrets，則改由 Actions 建置、公證並發布。測試一律不在 Actions 上執行。固定的下載版本和校驗碼在 `App/Sources/RuntimePlan.swift`；更新時要一起改，並先用各專案公布的校驗碼核對每個檔案。`swift scripts/make-icon.swift` 會重新繪製圖示。

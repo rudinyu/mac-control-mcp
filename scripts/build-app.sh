@@ -1,7 +1,8 @@
 #!/bin/sh
 # Builds MacControl.app as a universal (Apple silicon + Intel) app in .build/app.
 #   sh scripts/build-app.sh          ad-hoc signed, for testing on this Mac
-#   sh scripts/build-app.sh --sign   signed with Developer ID for distribution, plus a signed DMG
+#   sh scripts/build-app.sh --sign   signed with Developer ID for distribution; sh scripts/notarize.sh then
+#                                    notarizes it and makes the DMG
 # The identity comes from MACCONTROL_SIGN_IDENTITY, defaulting to the project's Developer ID.
 set -eu
 
@@ -89,13 +90,5 @@ codesign --verify --deep --strict "$app"
 echo "Built $app ($version, $( [ "$sign" = 1 ] && echo "signed by $identity" || echo "ad-hoc signed" ))."
 
 if [ "$sign" = 1 ]; then
-  staging="$out/dmg"
-  mkdir -p "$staging"
-  cp -R "$app" "$staging/"
-  ln -s /Applications "$staging/Applications"
-  dmg="$out/MacControl-$version.dmg"
-  hdiutil create -quiet -volname "MacControl" -srcfolder "$staging" -ov -format UDZO "$dmg"
-  rm -rf "$staging"
-  codesign --force --timestamp --sign "$identity" "$dmg"
-  echo "Built $dmg. Notarize it with: sh scripts/notarize.sh \"$dmg\""
+  echo "Notarize it and make the DMG with: sh scripts/notarize.sh"
 fi

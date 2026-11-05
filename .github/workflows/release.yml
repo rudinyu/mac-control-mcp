@@ -64,9 +64,7 @@ jobs:
 
       - name: Notarize and staple
         if: env.SIGNING == 'true'
-        run: |
-          dmg=$(ls .build/app/MacControl-*.dmg)
-          MACCONTROL_NOTARY_KEYCHAIN="$MACCONTROL_KEYCHAIN" sh scripts/notarize.sh "$dmg"
+        run: MACCONTROL_NOTARY_KEYCHAIN="$MACCONTROL_KEYCHAIN" sh scripts/notarize.sh
 
       - name: Publish the release
         if: env.SIGNING == 'true'

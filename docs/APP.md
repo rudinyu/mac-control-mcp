@@ -180,8 +180,8 @@ One-time setup on the build Mac:
 Then:
 
 ```sh
-sh scripts/build-app.sh --sign                         # universal app, signed, plus a signed DMG
-sh scripts/notarize.sh .build/app/MacControl-<version>.dmg   # notarize, staple, and check with Gatekeeper
+sh scripts/build-app.sh --sign   # universal app, signed
+sh scripts/notarize.sh           # notarize and staple the app, then make, notarize, and staple the DMG, and check with Gatekeeper
 ```
 
 `sh scripts/build-app.sh` without `--sign` builds an ad-hoc signed app for local testing. To release, run `sh scripts/ci.sh`, push a tag such as `v0.3.0` that matches `App/Info.plist`, then build with `sh scripts/build-app.sh --sign`, notarize with `sh scripts/notarize.sh`, and publish the DMG and its `.sha256` with `gh release create`. On GitHub Actions the tag is only checked against `App/Info.plist`; if the repository has the signing secrets listed in the workflow, Actions builds, notarizes, and publishes instead. Tests never run on Actions. The pinned download versions and checksums live in `App/Sources/RuntimePlan.swift`; update them together, after checking each file against its project's published checksum. `swift scripts/make-icon.swift` redraws the icon.
