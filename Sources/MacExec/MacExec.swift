@@ -121,7 +121,7 @@ private final class MacExecServer: MCPServer {
     private var client: String?
 
     var tools: [[String: Any]] {
-        let command: [String: Any] = ["type": "string", "maxLength": maxCommandLength]
+        let command: [String: Any] = ["type": "string", "maxLength": maxCommandLength, "description": "The command, run with bash -c."]
         let timeout: [String: Any] = ["type": "integer", "minimum": 1, "maximum": 600, "description": "Seconds before the command is stopped. Default 120."]
         let path: [String: Any] = ["type": "string", "description": "Path relative to the workspace, or under /workspace."]
         let runs: [String: Any] = ["destructiveHint": true, "openWorldHint": true]
@@ -147,17 +147,20 @@ private final class MacExecServer: MCPServer {
                 "description": "Read a UTF-8 text file from the workspace.",
                 "inputSchema": [
                     "type": "object",
-                    "properties": ["path": path, "max_bytes": ["type": "integer", "minimum": 1, "maximum": maxFileBytes]],
+                    "properties": ["path": path, "max_bytes": ["type": "integer", "minimum": 1, "maximum": maxFileBytes, "description": "Most bytes to read. Default 200000."]],
                     "required": ["path"], "additionalProperties": false
                 ],
                 "annotations": ["readOnlyHint": true]
             ],
             [
                 "name": "sandbox_write_file",
-                "description": "Create or replace a text file in the workspace, creating folders as needed. Set append to add to the end instead.",
+                "description": "Create or replace a text file in the workspace, creating folders as needed.",
                 "inputSchema": [
                     "type": "object",
-                    "properties": ["path": path, "content": ["type": "string"], "append": ["type": "boolean"]],
+                    "properties": [
+                        "path": path, "content": ["type": "string", "description": "The text to write."],
+                        "append": ["type": "boolean", "description": "Add to the end of the file instead of replacing it. Default false."]
+                    ],
                     "required": ["path", "content"], "additionalProperties": false
                 ],
                 "annotations": ["destructiveHint": true]
@@ -172,12 +175,12 @@ private final class MacExecServer: MCPServer {
         if settings.allowHost {
             list.append([
                 "name": "host_exec",
-                "description": "Run a zsh command directly on the Mac, outside the sandbox, with the user's full permissions. Use only when the task cannot be done in sandbox_exec, for example to run a macOS program. reason must say why the sandbox is not enough. sudo is refused.",
+                "description": "Run a zsh command directly on the Mac, outside the sandbox, with the user's full permissions. Use only when the task cannot be done in sandbox_exec, for example to run a macOS program. sudo is refused.",
                 "inputSchema": [
                     "type": "object",
                     "properties": [
-                        "command": command,
-                        "reason": ["type": "string", "minLength": 10, "maxLength": 500],
+                        "command": command.merging(["description": "The command, run by a zsh login shell."]) { $1 },
+                        "reason": ["type": "string", "minLength": 10, "maxLength": 500, "description": "Why sandbox_exec cannot do this task."],
                         "cwd": ["type": "string", "description": "Absolute folder on the Mac. Default is the home folder."],
                         "timeout_seconds": timeout
                     ],

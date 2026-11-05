@@ -62,6 +62,13 @@ class MCPProtocolTests(unittest.TestCase):
                 "mac_record_status", "mac_record_stop", "mac_mouse", "mac_scroll", "mac_type_text", "mac_key",
             },
         )
+        # Rules about one parameter belong in its own description, so tool descriptions stay short.
+        for tool in listed:
+            with self.subTest(tool=tool["name"]):
+                self.assertLessEqual(len(tool["description"]), 800)
+                self.assertIn("readOnlyHint", tool["annotations"])
+                for name, schema in tool["inputSchema"]["properties"].items():
+                    self.assertTrue(schema.get("description"), f"{name} has no description")
 
     def test_02_status_reports_permissions_without_requesting_them(self):
         response = self.request("tools/call", {"name": "mac_status", "arguments": {}})
@@ -217,7 +224,7 @@ class MCPProtocolTests(unittest.TestCase):
         tree = listed["mac_ui_tree"]["description"]
         for word in ("complete", "stopped_by", "element_limit", "time_limit", "app_not_answering", "unanswered", "more_children"):
             self.assertIn(word, tree)
-        description = listed["mac_ax_action"]["description"]
+        description = listed["mac_ax_action"]["description"] + listed["mac_ax_action"]["inputSchema"]["properties"]["action"]["description"]
         for word in ("delivered", "verified", "checked", "OUTCOME_UNKNOWN", "opened", "closed"):
             self.assertIn(word, description)
         response = self.request("tools/call", {"name": "mac_ax_action", "arguments": {"ref": "zzzzzz.1", "action": "check"}})

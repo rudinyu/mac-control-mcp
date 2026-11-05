@@ -318,6 +318,14 @@ class HostExecTests(unittest.TestCase):
     def setUp(self):
         self.server = Server(MAC_EXEC_ALLOW_HOST="1")
 
+    def test_every_tool_and_parameter_is_described(self):
+        for tool in self.server.request("tools/list")["result"]["tools"]:
+            with self.subTest(tool=tool["name"]):
+                self.assertLessEqual(len(tool["description"]), 800)
+                self.assertIn("annotations", tool)
+                for name, schema in tool["inputSchema"]["properties"].items():
+                    self.assertTrue(schema.get("description"), f"{name} has no description")
+
     def tearDown(self):
         self.server.close()
 

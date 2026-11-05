@@ -13,10 +13,10 @@ private struct CaptureSize {
     let windowFrame: CGRect?
 }
 
-private let appProperty: [String: Any] = [
-    "type": "string",
-    "description": "Name or bundle ID of a running app with a Dock icon, such as TextEdit or com.apple.TextEdit."
-]
+// The app parameter: a running app with a Dock icon, and what the tool does with it.
+private func appProperty(_ use: String) -> [String: Any] {
+    ["type": "string", "description": "A running app with a Dock icon, by name or bundle ID, such as TextEdit. \(use)"]
+}
 
 private let activationTimeout: TimeInterval = 2
 private let focusPollInterval: TimeInterval = 0.05
@@ -83,6 +83,21 @@ private let mouseActions = ["move", "click", "double_click", "right_click", "dra
 private let windowActions = ["list", "focus", "move", "resize", "minimize", "restore"]
 private let keyModifiers = ["cmd", "shift", "alt", "ctrl"]
 
+// mac_key names and their virtual key codes.
+private let keyCodes: [String: CGKeyCode] = [
+    "a": 0, "s": 1, "d": 2, "f": 3, "h": 4, "g": 5, "z": 6, "x": 7, "c": 8,
+    "v": 9, "b": 11, "q": 12, "w": 13, "e": 14, "r": 15, "y": 16, "t": 17,
+    "1": 18, "2": 19, "3": 20, "4": 21, "6": 22, "5": 23, "9": 25, "7": 26,
+    "8": 28, "0": 29, "o": 31, "u": 32, "i": 34, "p": 35, "l": 37, "j": 38,
+    "k": 40, "n": 45, "m": 46,
+    "enter": 36, "return": 36, "tab": 48, "space": 49, "backspace": 51,
+    "escape": 53, "delete": 117, "home": 115, "end": 119,
+    "pageup": 116, "pagedown": 121,
+    "left": 123, "right": 124, "down": 125, "up": 126
+]
+// Key names other than single letters and digits, for the schema.
+private let namedKeys = keyCodes.keys.filter { $0.count > 1 }.sorted()
+
 // mac_ax_action names and the Accessibility actions they perform. set_value and focus set attributes instead.
 private let axActionNames: [String: String] = [
     "press": kAXPressAction, "show_menu": kAXShowMenuAction,
@@ -113,175 +128,206 @@ private final class MacControlServer: MCPServer {
     private var recordings: [String: Recording] = [:]
     private let refs = RefRegistry()
 
-    let tools: [[String: Any]] = [
-        [
-            "name": "mac_status",
-            "description": "Report macOS Screen Recording and Accessibility permission, whether the screen is locked, the frontmost app, and main display geometry. Call this before controlling the Mac. While screen_locked is true, mouse and keyboard tools refuse to send input.",
-            "inputSchema": ["type": "object", "properties": [:], "additionalProperties": false],
-            "annotations": ["readOnlyHint": true]
-        ],
-        [
-            "name": "mac_screenshot",
-            "description": "Capture the main display. The returned image dimensions define the x/y coordinate space for mac_mouse until the next screenshot. If app is given, that running app is brought to the front first, which also brings back a window from the Stage Manager strip (an app with no open window may open a new one), and mac_mouse with the same app can check that its window has not changed since. Requires Screen Recording permission, and Accessibility permission when app is given.",
-            "inputSchema": ["type": "object", "properties": ["app": appProperty], "additionalProperties": false]
-        ],
-        [
-            "name": "mac_request_screen_recording",
-            "description": "Ask macOS to show its Screen Recording permission prompt for this local server. The user must grant access in macOS and restart the host app if required.",
-            "inputSchema": ["type": "object", "properties": [:], "additionalProperties": false]
-        ],
-        [
-            "name": "mac_ui_tree",
-            "description": "Read a limited Accessibility tree for the focused window and focused element of an app: the named app if app is given, otherwise the frontmost app. Does not change which app is in front. Password field values are excluded. Elements that can be acted on carry a ref and their actions for mac_ax_action. Reads at most \(treeElementLimit) elements for at most \(Int(treeTimeLimit)) seconds. An element whose children are not all listed, because of max_depth or because the read stopped early, shows more_children (the number left out) and a ref; pass that ref as root to read below it. complete is false when the read stopped early (stopped_by: element_limit, time_limit, or app_not_answering) or the app did not answer for an element, which is marked unanswered; elements left out only because of max_depth do not make it incomplete. A ref such as k3f9q2.12 names a snapshot (k3f9q2, returned as snapshot) and an element in it. Reading the whole tree again for the same app starts a new snapshot and retires the old refs; reading below a root, mac_find, mac_wait, and mac_window list add to the current snapshot. For a large window, read with a small max_depth first, then drill in with root. Requires Accessibility permission.",
-            "inputSchema": [
-                "type": "object",
-                "properties": [
-                    "max_depth": ["type": "integer", "minimum": 0, "maximum": treeDepthLimit],
-                    "root": ["type": "string", "description": "A ref to read below instead of the focused window."],
-                    "app": appProperty
-                ],
-                "additionalProperties": false
+    let tools: [[String: Any]] = {
+        let role: [String: Any] = ["type": "string", "description": "Accessibility role, with or without the AX prefix, such as button or AXTextField."]
+        let text: [String: Any] = ["type": "string", "description": "Text to look for in the title, description, or value, ignoring case."]
+        let exact: [String: Any] = ["type": "boolean", "description": "Match the whole text instead of part of it. Default false."]
+        let searchRoot: [String: Any] = ["type": "string", "description": "A ref to search below instead of all of the app's windows."]
+        let readApp = appProperty("Default is the frontmost app.")
+        let recordingID: [String: Any] = ["type": "string", "description": "The ID from mac_record_start."]
+        // Input tools can do anything the user could, in any app.
+        let sendsInput: [String: Any] = ["readOnlyHint": false, "destructiveHint": true, "openWorldHint": true]
+        let readsOnly: [String: Any] = ["readOnlyHint": true, "openWorldHint": false]
+        return [
+            [
+                "name": "mac_status",
+                "description": "Report macOS Screen Recording and Accessibility permission, whether the screen is locked, the frontmost app, and main display geometry. Call this before controlling the Mac. While screen_locked is true, mouse and keyboard tools refuse to send input.",
+                "inputSchema": ["type": "object", "properties": [:], "additionalProperties": false],
+                "annotations": readsOnly
             ],
-            "annotations": ["readOnlyHint": true]
-        ],
-        [
-            "name": "mac_find",
-            "description": "Search all windows of an app, or below a root ref, for elements by role (such as button or AXTextField) and/or text in their title, description, or value (case-insensitive; exact for a whole-text match). Searches much deeper than mac_ui_tree, up to \(searchNodeLimit) elements, and returns up to limit matches with refs for mac_ax_action, keeping the app's existing refs. complete is false when the search was cut short. Does not change which app is in front. Requires Accessibility permission.",
-            "inputSchema": [
-                "type": "object",
-                "properties": [
-                    "role": ["type": "string"], "text": ["type": "string"], "exact": ["type": "boolean"],
-                    "limit": ["type": "integer", "minimum": 1, "maximum": findMatchLimit],
-                    "root": ["type": "string"], "app": appProperty
+            [
+                "name": "mac_screenshot",
+                "description": "Capture the main display. The image's pixels are the x/y coordinates for mac_mouse until the next screenshot. Requires Screen Recording permission, and Accessibility permission when app is given.",
+                "inputSchema": [
+                    "type": "object",
+                    "properties": ["app": appProperty("It is brought to the front first, which also brings back a window from the Stage Manager strip; an app with no open window may open a new one. mac_mouse with the same app then checks that its window has not changed since.")],
+                    "additionalProperties": false
                 ],
-                "additionalProperties": false
+                "annotations": ["readOnlyHint": false, "destructiveHint": false, "idempotentHint": true, "openWorldHint": false]
             ],
-            "annotations": ["readOnlyHint": true]
-        ],
-        [
-            "name": "mac_wait",
-            "description": "Wait until an element matching role and/or text (as in mac_find) is present, or until none is left (state absent), checking about four times a second for up to timeout_seconds (default \(Int(waitDefaultSeconds))). Use it after an action instead of polling with mac_ui_tree, such as waiting for a dialog or for a spinner to go away. Returns the matches with refs when present; reports TIMEOUT otherwise. Does not change which app is in front. Requires Accessibility permission.",
-            "inputSchema": [
-                "type": "object",
-                "properties": [
-                    "role": ["type": "string"], "text": ["type": "string"], "exact": ["type": "boolean"],
-                    "state": ["type": "string", "enum": ["present", "absent"]],
-                    "timeout_seconds": ["type": "number", "minimum": waitMinSeconds, "maximum": waitMaxSeconds],
-                    "root": ["type": "string"], "app": appProperty
-                ],
-                "additionalProperties": false
+            [
+                "name": "mac_request_screen_recording",
+                "description": "Ask macOS to show its Screen Recording permission prompt for this local server. The user must grant access in macOS and restart the host app if required.",
+                "inputSchema": ["type": "object", "properties": [:], "additionalProperties": false],
+                "annotations": ["readOnlyHint": false, "destructiveHint": false, "idempotentHint": true, "openWorldHint": false]
             ],
-            "annotations": ["readOnlyHint": true]
-        ],
-        [
-            "name": "mac_window",
-            "description": "List or arrange windows. list returns each window's title, frame in screen points (as in mac_status main_display, not screenshot pixels), state, and a ref; it lists the windows of app, or of every app with a Dock icon when app is left out. focus brings a window and its app to the front, restoring it if minimized. move sets the top-left corner to x, y; resize sets width and height; minimize and restore change whether it is minimized; with Stage Manager on, macOS may ignore them, which is reported as OUTCOME_UNKNOWN. Without window, these act on the focused window of app. move and resize report the frame the app actually took, which can differ from the one asked for. Requires Accessibility permission.",
-            "inputSchema": [
-                "type": "object",
-                "properties": [
-                    "action": ["type": "string", "enum": windowActions],
-                    "window": ["type": "string", "description": "A window ref from mac_window list, mac_find, or mac_ui_tree."],
-                    "x": ["type": "number"], "y": ["type": "number"],
-                    "width": ["type": "number", "minimum": 1], "height": ["type": "number", "minimum": 1],
-                    "app": appProperty
+            [
+                "name": "mac_ui_tree",
+                "description": "Read a limited Accessibility tree of an app's focused window and focused element: at most \(treeElementLimit) elements, for at most \(Int(treeTimeLimit)) seconds. Elements that can be acted on get a ref and their actions, for mac_ax_action. Reading the whole tree again starts a new snapshot and retires the app's old refs. For a large window, read with a small max_depth, then pass a ref as root. In the result, more_children counts the children not listed; complete is false when the read stopped early (stopped_by: element_limit, time_limit, or app_not_answering) or an element is marked unanswered, but not for children left out by max_depth. Password values are left out. Does not change which app is in front. Requires Accessibility permission.",
+                "inputSchema": [
+                    "type": "object",
+                    "properties": [
+                        "max_depth": ["type": "integer", "minimum": 0, "maximum": treeDepthLimit, "description": "Levels to read below the window or root. Default 5. Deeper children are counted in more_children."],
+                        "root": ["type": "string", "description": "A ref to read below instead of the focused window, such as one with more_children. This adds to the app's current snapshot instead of starting a new one."],
+                        "app": readApp
+                    ],
+                    "additionalProperties": false
                 ],
-                "required": ["action"], "additionalProperties": false
-            ]
-        ],
-        [
-            "name": "mac_ax_action",
-            "description": "Act on an element through Accessibility, using a ref from mac_ui_tree, mac_find, or mac_wait for its app: press, show_menu, increment, decrement, confirm, cancel, raise, scroll_to_visible, set_value (with value), focus, select, deselect, expand, collapse, check, or uncheck. select through uncheck do nothing when the element is already in that state. set_value sends a number to an element that holds one, such as a slider. Does not move the pointer, change which app is in front, or use the clipboard. A ref stops working when the whole mac_ui_tree is read again for that app, the element goes away, or the app quits or relaunches; then nothing is sent. If app is given, it must be the ref's app. The result's JSON part says whether anything was sent (delivered) and whether the element was read back afterwards and shows the result (verified, with the attribute read in checked). select through uncheck, focus, and set_value with text fail with OUTCOME_UNKNOWN when the element reads back differently; set_value with a number, increment, and decrement, and a focus the element does not report, return verified false instead, since a slider can round and a stepper can be at its limit; press, show_menu, confirm, cancel, raise, and scroll_to_visible leave nothing to read, so they are never verified: read mac_ui_tree again to see their result. The JSON part also lists the menus, sheets, dialogs, popovers, panels, and windows the action opened (opened, each with kind, a ref, and its direct children such as menu items, ready for mac_ax_action) and closed (closed, with kind and title); an error from an app that did not answer in time lists them too, as when a button opens a modal dialog. Requires Accessibility permission.",
-            "inputSchema": [
-                "type": "object",
-                "properties": [
-                    "ref": ["type": "string"],
-                    "action": ["type": "string", "enum": axAllActions],
-                    "value": ["type": "string", "maxLength": textLimit],
-                    "app": appProperty
-                ],
-                "required": ["ref", "action"], "additionalProperties": false
+                "annotations": readsOnly
             ],
-            "annotations": ["readOnlyHint": false, "destructiveHint": true]
-        ],
-        [
-            "name": "mac_record_start",
-            "description": "Start recording the main display to a local MOV file for 1 to \(recordingSecondsLimit) seconds. Returns an ID; use mac_record_status to get the completed path. Requires Screen Recording permission.",
-            "inputSchema": [
-                "type": "object",
-                "properties": ["duration_seconds": ["type": "integer", "minimum": 1, "maximum": recordingSecondsLimit]],
-                "required": ["duration_seconds"], "additionalProperties": false
-            ]
-        ],
-        [
-            "name": "mac_record_status",
-            "description": "Check whether a screen recording is still running and get the MOV file path when complete.",
-            "inputSchema": [
-                "type": "object",
-                "properties": ["recording_id": ["type": "string"]],
-                "required": ["recording_id"], "additionalProperties": false
+            [
+                "name": "mac_find",
+                "description": "Search an app for elements by role and/or text, up to \(searchNodeLimit) elements deep, far deeper than mac_ui_tree. Returns the matches with refs for mac_ax_action, keeping the app's existing refs. complete is false when the search was cut short. Does not change which app is in front. Requires Accessibility permission.",
+                "inputSchema": [
+                    "type": "object",
+                    "properties": [
+                        "role": role, "text": text, "exact": exact,
+                        "limit": ["type": "integer", "minimum": 1, "maximum": findMatchLimit, "description": "Most matches to return. Default \(findDefaultLimit)."],
+                        "root": searchRoot, "app": readApp
+                    ],
+                    "additionalProperties": false
+                ],
+                "annotations": readsOnly
             ],
-            "annotations": ["readOnlyHint": true]
-        ],
-        [
-            "name": "mac_record_stop",
-            "description": "Stop an active recording early. The recording may need a moment to finish writing before mac_record_status reports the file.",
-            "inputSchema": [
-                "type": "object",
-                "properties": ["recording_id": ["type": "string"]],
-                "required": ["recording_id"], "additionalProperties": false
-            ]
-        ],
-        [
-            "name": "mac_mouse",
-            "description": "Move, click, double-click, right-click, or drag on the main display. x/y and to_x/to_y are pixels in the most recent mac_screenshot image. If app is given, that running app is brought to the front first, and nothing is sent unless it is still in front, the last mac_screenshot was taken with it in front, its window has not moved or resized since, and the point is over that app. Requires Accessibility permission.",
-            "inputSchema": [
-                "type": "object",
-                "properties": [
-                    "action": ["type": "string", "enum": mouseActions],
-                    "x": ["type": "number"], "y": ["type": "number"],
-                    "to_x": ["type": "number"], "to_y": ["type": "number"],
-                    "app": appProperty
+            [
+                "name": "mac_wait",
+                "description": "Wait until an element matching role and/or text is present, or until none is left, checking about four times a second. Use it after an action instead of polling with mac_ui_tree, such as to wait for a dialog or for a spinner to go away. Returns the matches with refs, or fails with TIMEOUT. Does not change which app is in front. Requires Accessibility permission.",
+                "inputSchema": [
+                    "type": "object",
+                    "properties": [
+                        "role": role, "text": text, "exact": exact,
+                        "state": ["type": "string", "enum": ["present", "absent"], "description": "present (default) waits for a match; absent waits until there is none."],
+                        "timeout_seconds": ["type": "number", "minimum": waitMinSeconds, "maximum": waitMaxSeconds, "description": "How long to wait. Default \(Int(waitDefaultSeconds))."],
+                        "root": searchRoot, "app": readApp
+                    ],
+                    "additionalProperties": false
                 ],
-                "required": ["action", "x", "y"],
-                "additionalProperties": false
-            ]
-        ],
-        [
-            "name": "mac_scroll",
-            "description": "Scroll at the current pointer position by line increments. Positive vertical values scroll up; positive horizontal values scroll left. If app is given, that running app is brought to the front first and nothing is scrolled unless it is still in front and the pointer is over it. Requires Accessibility permission.",
-            "inputSchema": [
-                "type": "object",
-                "properties": [
-                    "vertical": ["type": "integer", "minimum": -scrollLimit, "maximum": scrollLimit],
-                    "horizontal": ["type": "integer", "minimum": -scrollLimit, "maximum": scrollLimit],
-                    "app": appProperty
+                "annotations": readsOnly
+            ],
+            [
+                "name": "mac_window",
+                "description": "List or arrange windows. Frames are in screen points, as in mac_status main_display, not screenshot pixels. With Stage Manager on, macOS may ignore move, resize, minimize, and restore, which is reported as OUTCOME_UNKNOWN. Requires Accessibility permission.",
+                "inputSchema": [
+                    "type": "object",
+                    "properties": [
+                        "action": ["type": "string", "enum": windowActions, "description": "list returns each window's title, frame, state, and a ref. focus brings the window and its app to the front, restoring it if minimized. move sets its top-left corner to x, y; resize sets width and height; both report the frame the app actually took, which can differ. minimize and restore change whether it is minimized."],
+                        "window": ["type": "string", "description": "A window ref from mac_window list, mac_find, or mac_ui_tree. Without it, the action applies to the focused window of app."],
+                        "x": ["type": "number", "description": "For move: the left edge, in screen points."],
+                        "y": ["type": "number", "description": "For move: the top edge, in screen points."],
+                        "width": ["type": "number", "minimum": 1, "description": "For resize, in screen points."],
+                        "height": ["type": "number", "minimum": 1, "description": "For resize, in screen points."],
+                        "app": appProperty("For list, the app whose windows to list; without it, every app with a Dock icon. For the other actions, the app whose focused window is used when window is left out.")
+                    ],
+                    "required": ["action"], "additionalProperties": false
                 ],
-                "additionalProperties": false
-            ]
-        ],
-        [
-            "name": "mac_type_text",
-            "description": "Insert Unicode text into the focused field by temporarily placing it on the clipboard and pressing Command-V. If app is given, that running app is brought to the front first and nothing is pasted unless it is still in front. Restores the prior clipboard when possible. Maximum \(textLimit) characters. Requires Accessibility permission.",
-            "inputSchema": [
-                "type": "object",
-                "properties": ["text": ["type": "string", "maxLength": textLimit], "app": appProperty],
-                "required": ["text"], "additionalProperties": false
-            ]
-        ],
-        [
-            "name": "mac_key",
-            "description": "Press a key, optionally with modifiers cmd, shift, alt, or ctrl. Examples: key='enter'; key='c', modifiers=['cmd']. If app is given, that running app is brought to the front first and no key is sent unless it is still in front. Requires Accessibility permission.",
-            "inputSchema": [
-                "type": "object",
-                "properties": [
-                    "key": ["type": "string"],
-                    "modifiers": ["type": "array", "items": ["type": "string", "enum": keyModifiers], "uniqueItems": true],
-                    "app": appProperty
+                "annotations": ["readOnlyHint": false, "destructiveHint": false, "idempotentHint": true, "openWorldHint": false]
+            ],
+            [
+                "name": "mac_ax_action",
+                "description": "Act on an element through Accessibility, using a ref from mac_ui_tree, mac_find, mac_wait, or mac_window. Does not move the pointer, change which app is in front, or use the clipboard. A ref stops working when the app's whole tree is read again, the element goes away, or the app quits or relaunches; then nothing is sent. The result's JSON part says whether anything was sent (delivered) and whether the element read back showing the result (verified, with the attribute in checked). It also lists the menus, sheets, dialogs, popovers, panels, and windows the action opened (each with kind, a ref, and its direct children such as menu items) and closed; an error from an app that did not answer in time, as when a button opens a modal dialog, lists them too. Requires Accessibility permission.",
+                "inputSchema": [
+                    "type": "object",
+                    "properties": [
+                        "ref": ["type": "string", "description": "A ref such as k3f9q2.12, which names snapshot k3f9q2 and element 12 in it."],
+                        "action": ["type": "string", "enum": axAllActions, "description": "press, show_menu, confirm, cancel, raise, and scroll_to_visible leave nothing to read back, so they are never verified; read the app again to see their result. select, deselect, expand, collapse, check, and uncheck do nothing when the element is already in that state. These, focus, and set_value with text fail with OUTCOME_UNKNOWN when the element reads back differently. set_value with a number, increment, decrement, and a focus the element does not report return verified false instead, since a slider can round and a stepper can be at its limit."],
+                        "value": ["type": "string", "maxLength": textLimit, "description": "For set_value: the text, or a number for an element that holds one, such as a slider."],
+                        "app": appProperty("If given, it must be the ref's app.")
+                    ],
+                    "required": ["ref", "action"], "additionalProperties": false
                 ],
-                "required": ["key"], "additionalProperties": false
+                "annotations": sendsInput
+            ],
+            [
+                "name": "mac_record_start",
+                "description": "Start recording the main display to a local MOV file. Returns an ID; use mac_record_status to get the file's path when it is done. Requires Screen Recording permission.",
+                "inputSchema": [
+                    "type": "object",
+                    "properties": ["duration_seconds": ["type": "integer", "minimum": 1, "maximum": recordingSecondsLimit, "description": "How long to record."]],
+                    "required": ["duration_seconds"], "additionalProperties": false
+                ],
+                "annotations": ["readOnlyHint": false, "destructiveHint": false, "openWorldHint": false]
+            ],
+            [
+                "name": "mac_record_status",
+                "description": "Check whether a screen recording is still running and get the MOV file path when complete.",
+                "inputSchema": [
+                    "type": "object",
+                    "properties": ["recording_id": recordingID],
+                    "required": ["recording_id"], "additionalProperties": false
+                ],
+                "annotations": readsOnly
+            ],
+            [
+                "name": "mac_record_stop",
+                "description": "Stop an active recording early. The recording may need a moment to finish writing before mac_record_status reports the file.",
+                "inputSchema": [
+                    "type": "object",
+                    "properties": ["recording_id": recordingID],
+                    "required": ["recording_id"], "additionalProperties": false
+                ],
+                "annotations": ["readOnlyHint": false, "destructiveHint": false, "idempotentHint": true, "openWorldHint": false]
+            ],
+            [
+                "name": "mac_mouse",
+                "description": "Move, click, double-click, right-click, or drag on the main display, at pixels of the most recent mac_screenshot image. Requires Accessibility permission.",
+                "inputSchema": [
+                    "type": "object",
+                    "properties": [
+                        "action": ["type": "string", "enum": mouseActions, "description": "What to do at x, y. drag goes from x, y to to_x, to_y."],
+                        "x": ["type": "number", "description": "Pixels from the left of the most recent mac_screenshot image."],
+                        "y": ["type": "number", "description": "Pixels from the top of the most recent mac_screenshot image."],
+                        "to_x": ["type": "number", "description": "For drag: where it ends, in the same pixels."],
+                        "to_y": ["type": "number", "description": "For drag: where it ends, in the same pixels."],
+                        "app": appProperty("It is brought to the front first, and nothing is sent unless it is still in front, the last mac_screenshot was taken with it in front, its window has not moved or resized since, and the point is over it.")
+                    ],
+                    "required": ["action", "x", "y"],
+                    "additionalProperties": false
+                ],
+                "annotations": sendsInput
+            ],
+            [
+                "name": "mac_scroll",
+                "description": "Scroll by lines at the current pointer position. Requires Accessibility permission.",
+                "inputSchema": [
+                    "type": "object",
+                    "properties": [
+                        "vertical": ["type": "integer", "minimum": -scrollLimit, "maximum": scrollLimit, "description": "Lines to scroll; positive scrolls up."],
+                        "horizontal": ["type": "integer", "minimum": -scrollLimit, "maximum": scrollLimit, "description": "Lines to scroll; positive scrolls left."],
+                        "app": appProperty("It is brought to the front first, and nothing is scrolled unless it is still in front and the pointer is over it.")
+                    ],
+                    "additionalProperties": false
+                ],
+                "annotations": sendsInput
+            ],
+            [
+                "name": "mac_type_text",
+                "description": "Insert Unicode text into the focused field by placing it on the clipboard for a moment and pressing Command-V, then restore the prior clipboard when possible. Requires Accessibility permission.",
+                "inputSchema": [
+                    "type": "object",
+                    "properties": [
+                        "text": ["type": "string", "maxLength": textLimit, "description": "The text to insert."],
+                        "app": appProperty("It is brought to the front first, and nothing is pasted unless it is still in front.")
+                    ],
+                    "required": ["text"], "additionalProperties": false
+                ],
+                "annotations": sendsInput
+            ],
+            [
+                "name": "mac_key",
+                "description": "Press a key, optionally with modifiers. Examples: key enter; key c with modifiers [cmd]. Requires Accessibility permission.",
+                "inputSchema": [
+                    "type": "object",
+                    "properties": [
+                        "key": ["type": "string", "description": "A letter a-z, a digit 0-9, or one of \(namedKeys.joined(separator: ", ")). delete is forward delete."],
+                        "modifiers": ["type": "array", "items": ["type": "string", "enum": keyModifiers], "uniqueItems": true, "description": "Keys to hold down while pressing key."],
+                        "app": appProperty("It is brought to the front first, and no key is sent unless it is still in front.")
+                    ],
+                    "required": ["key"], "additionalProperties": false
+                ],
+                "annotations": sendsInput
             ]
         ]
-    ]
+    }()
 
     // Answers tools/call; a failure is described by failureResult.
     func answer(tool name: String, arguments: [String: Any]) -> [String: Any] {
@@ -812,21 +858,10 @@ private final class MacControlServer: MCPServer {
         return "Inserted \(value.count) characters into \(receiver) via Command-V."
     }
 
-    private let keyCodes: [String: CGKeyCode] = [
-        "a": 0, "s": 1, "d": 2, "f": 3, "h": 4, "g": 5, "z": 6, "x": 7, "c": 8,
-        "v": 9, "b": 11, "q": 12, "w": 13, "e": 14, "r": 15, "y": 16, "t": 17,
-        "1": 18, "2": 19, "3": 20, "4": 21, "6": 22, "5": 23, "9": 25, "7": 26,
-        "8": 28, "0": 29, "o": 31, "u": 32, "i": 34, "p": 35, "l": 37, "j": 38,
-        "k": 40, "n": 45, "m": 46,
-        "enter": 36, "return": 36, "tab": 48, "space": 49, "backspace": 51,
-        "escape": 53, "delete": 117, "home": 115, "end": 119,
-        "pageup": 116, "pagedown": 121,
-        "left": 123, "right": 124, "down": 125, "up": 126
-    ]
 
     private func key(_ args: [String: Any]) throws -> String {
         guard let keyName = (args["key"] as? String)?.lowercased(), let code = keyCodes[keyName] else {
-            throw ToolFailure("Unsupported key. Use a-z, 0-9, enter, tab, space, backspace, escape, delete, home, end, pageup, pagedown, or an arrow key.")
+            throw ToolFailure("Unsupported key. Use a-z, 0-9, or one of \(namedKeys.joined(separator: ", ")).")
         }
         let names = args["modifiers"] as? [String] ?? []
         guard names.count <= keyModifiers.count, Set(names).count == names.count,
