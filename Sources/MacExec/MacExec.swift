@@ -1,6 +1,5 @@
 import Foundation
 
-private let serverVersion = "0.1.0"
 private let supportedProtocolVersions: Set<String> = [
     "2024-11-05", "2025-03-26", "2025-06-18", "2025-11-25"
 ]
@@ -226,7 +225,7 @@ private final class MacExecServer {
             send(result: [
                 "protocolVersion": selected,
                 "capabilities": ["tools": [:]],
-                "serverInfo": ["name": "mac-exec", "version": serverVersion],
+                "serverInfo": ["name": "mac-exec", "version": productVersion],
                 "instructions": "Run commands with sandbox_exec, and keep files in the workspace. Use host_exec, when it is available, only when the sandbox cannot do the task, and explain why in reason."
             ], id: id)
         case "ping":

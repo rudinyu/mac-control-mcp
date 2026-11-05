@@ -3,7 +3,6 @@ import ApplicationServices
 import CoreGraphics
 import Foundation
 
-private let serverVersion = "0.2.0"
 private let supportedProtocolVersions: Set<String> = [
     "2024-11-05", "2025-03-26", "2025-06-18", "2025-11-25"
 ]
@@ -390,7 +389,7 @@ private final class MacControlServer {
             send(result: [
                 "protocolVersion": selected,
                 "capabilities": ["tools": [:]],
-                "serverInfo": ["name": "mac-control", "version": serverVersion],
+                "serverInfo": ["name": "mac-control", "version": productVersion],
                 "instructions": "Use mac_status first. Use mac_screenshot before mac_mouse; mouse coordinates use the most recent screenshot. When mac_ui_tree or mac_find gives the element a ref, mac_ax_action can act on it without coordinates or focus; use mac_wait to wait for the result. Pass app with the name of the app you are working in to mac_screenshot, mac_mouse, mac_scroll, mac_type_text, and mac_key, so input cannot land in another app. A failed call also returns JSON with code, delivered, and retry; follow retry, and check the app before repeating an action whose retry is \"check\", since it may have happened. A mac_ax_action result says whether it was verified; when verified is false, read the app before relying on the result. Ask the user before irreversible actions."
             ], id: id)
         case "ping":

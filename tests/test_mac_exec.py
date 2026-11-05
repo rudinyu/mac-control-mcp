@@ -1,5 +1,6 @@
 import json
 import os
+import plistlib
 import shutil
 import subprocess
 import sys
@@ -105,7 +106,10 @@ class ProtocolAndFileTests(unittest.TestCase):
         self.server.close()
 
     def test_tools_and_host_exec_off_by_default(self):
-        self.assertEqual(self.server.request("initialize", {"protocolVersion": "2025-11-25"})["result"]["serverInfo"]["name"], "mac-exec")
+        info = self.server.request("initialize", {"protocolVersion": "2025-11-25"})["result"]["serverInfo"]
+        self.assertEqual(info["name"], "mac-exec")
+        with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "App", "Info.plist"), "rb") as plist:
+            self.assertEqual(info["version"], plistlib.load(plist)["CFBundleShortVersionString"])
         self.assertEqual(self.server.tool_names(),
                          {"exec_status", "sandbox_exec", "sandbox_read_file", "sandbox_write_file", "sandbox_list"})
         is_error, text = self.server.call("host_exec", command="echo hi", reason="testing that it is off")

@@ -40,8 +40,9 @@ universal() {
   lipo -create "$out/obj/$name-arm64" "$out/obj/$name-x86_64" -output "$out/obj/$name"
 }
 
-universal mac-control-mcp "$project_dir"/Sources/MacControl/*.swift
-universal mac-exec-mcp "$project_dir"/Sources/MacExec/*.swift
+version_source=$(sh "$project_dir/scripts/write-version.sh" "$out/obj")
+universal mac-control-mcp "$project_dir"/Sources/MacControl/*.swift "$version_source"
+universal mac-exec-mcp "$project_dir"/Sources/MacExec/*.swift "$version_source"
 # The app shares the sandbox code with mac-exec, but not its server entry point.
 universal MacControl "$project_dir"/App/Sources/*.swift \
   "$project_dir/Sources/MacExec/ProcessRunner.swift" \

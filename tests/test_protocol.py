@@ -1,5 +1,6 @@
 import json
 import os
+import plistlib
 import subprocess
 import sys
 import unittest
@@ -8,6 +9,9 @@ SERVER = os.environ.get(
     "MAC_CONTROL_SERVER",
     os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".build", "mac-control-mcp"),
 )
+# The version the server reports comes from here when it is built.
+with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "App", "Info.plist"), "rb") as info:
+    APP_VERSION = plistlib.load(info)["CFBundleShortVersionString"]
 
 
 class MCPProtocolTests(unittest.TestCase):
@@ -46,6 +50,7 @@ class MCPProtocolTests(unittest.TestCase):
         response = self.request("initialize", {"protocolVersion": "2025-11-25"})
         self.assertEqual(response["result"]["protocolVersion"], "2025-11-25")
         self.assertIn("tools", response["result"]["capabilities"])
+        self.assertEqual(response["result"]["serverInfo"]["version"], APP_VERSION)
 
         self.process.stdin.write('{"jsonrpc":"2.0","method":"notifications/initialized"}\n')
         self.process.stdin.flush()
