@@ -157,6 +157,20 @@ private let treeTimeLimit: TimeInterval = 5
 private let searchNodeLimit = 5000
 private let searchDepthLimit = 40
 
+// Limits and choices that the tool schemas, their descriptions, and the argument checks all use.
+private let treeDepthLimit = 8
+private let findMatchLimit = 50
+private let findDefaultLimit = 20
+private let waitMinSeconds = 0.5
+private let waitMaxSeconds = 30.0
+private let waitDefaultSeconds = 10.0
+private let textLimit = 2000
+private let recordingSecondsLimit = 120
+private let scrollLimit = 20
+private let mouseActions = ["move", "click", "double_click", "right_click", "drag"]
+private let windowActions = ["list", "focus", "move", "resize", "minimize", "restore"]
+private let keyModifiers = ["cmd", "shift", "alt", "ctrl"]
+
 // mac_ax_action names and the Accessibility actions they perform. set_value and focus set attributes instead.
 private let axActionNames: [String: String] = [
     "press": kAXPressAction, "show_menu": kAXShowMenuAction,
@@ -209,11 +223,11 @@ private final class MacControlServer {
         ],
         [
             "name": "mac_ui_tree",
-            "description": "Read a limited Accessibility tree for the focused window and focused element of an app: the named app if app is given, otherwise the frontmost app. Does not change which app is in front. Password field values are excluded. Elements that can be acted on carry a ref and their actions for mac_ax_action. Reads at most 200 elements for at most 5 seconds. An element whose children are not all listed, because of max_depth or because the read stopped early, shows more_children (the number left out) and a ref; pass that ref as root to read below it. complete is false when the read stopped early (stopped_by: element_limit, time_limit, or app_not_answering) or the app did not answer for an element, which is marked unanswered; elements left out only because of max_depth do not make it incomplete. A ref such as k3f9q2.12 names a snapshot (k3f9q2, returned as snapshot) and an element in it. Reading the whole tree again for the same app starts a new snapshot and retires the old refs; reading below a root, mac_find, mac_wait, and mac_window list add to the current snapshot. For a large window, read with a small max_depth first, then drill in with root. Requires Accessibility permission.",
+            "description": "Read a limited Accessibility tree for the focused window and focused element of an app: the named app if app is given, otherwise the frontmost app. Does not change which app is in front. Password field values are excluded. Elements that can be acted on carry a ref and their actions for mac_ax_action. Reads at most \(treeElementLimit) elements for at most \(Int(treeTimeLimit)) seconds. An element whose children are not all listed, because of max_depth or because the read stopped early, shows more_children (the number left out) and a ref; pass that ref as root to read below it. complete is false when the read stopped early (stopped_by: element_limit, time_limit, or app_not_answering) or the app did not answer for an element, which is marked unanswered; elements left out only because of max_depth do not make it incomplete. A ref such as k3f9q2.12 names a snapshot (k3f9q2, returned as snapshot) and an element in it. Reading the whole tree again for the same app starts a new snapshot and retires the old refs; reading below a root, mac_find, mac_wait, and mac_window list add to the current snapshot. For a large window, read with a small max_depth first, then drill in with root. Requires Accessibility permission.",
             "inputSchema": [
                 "type": "object",
                 "properties": [
-                    "max_depth": ["type": "integer", "minimum": 0, "maximum": 8],
+                    "max_depth": ["type": "integer", "minimum": 0, "maximum": treeDepthLimit],
                     "root": ["type": "string", "description": "A ref to read below instead of the focused window."],
                     "app": appProperty
                 ],
@@ -223,12 +237,12 @@ private final class MacControlServer {
         ],
         [
             "name": "mac_find",
-            "description": "Search all windows of an app, or below a root ref, for elements by role (such as button or AXTextField) and/or text in their title, description, or value (case-insensitive; exact for a whole-text match). Searches much deeper than mac_ui_tree, up to 5000 elements, and returns up to limit matches with refs for mac_ax_action, keeping the app's existing refs. complete is false when the search was cut short. Does not change which app is in front. Requires Accessibility permission.",
+            "description": "Search all windows of an app, or below a root ref, for elements by role (such as button or AXTextField) and/or text in their title, description, or value (case-insensitive; exact for a whole-text match). Searches much deeper than mac_ui_tree, up to \(searchNodeLimit) elements, and returns up to limit matches with refs for mac_ax_action, keeping the app's existing refs. complete is false when the search was cut short. Does not change which app is in front. Requires Accessibility permission.",
             "inputSchema": [
                 "type": "object",
                 "properties": [
                     "role": ["type": "string"], "text": ["type": "string"], "exact": ["type": "boolean"],
-                    "limit": ["type": "integer", "minimum": 1, "maximum": 50],
+                    "limit": ["type": "integer", "minimum": 1, "maximum": findMatchLimit],
                     "root": ["type": "string"], "app": appProperty
                 ],
                 "additionalProperties": false
@@ -237,13 +251,13 @@ private final class MacControlServer {
         ],
         [
             "name": "mac_wait",
-            "description": "Wait until an element matching role and/or text (as in mac_find) is present, or until none is left (state absent), checking about four times a second for up to timeout_seconds (default 10). Use it after an action instead of polling with mac_ui_tree, such as waiting for a dialog or for a spinner to go away. Returns the matches with refs when present; reports TIMEOUT otherwise. Does not change which app is in front. Requires Accessibility permission.",
+            "description": "Wait until an element matching role and/or text (as in mac_find) is present, or until none is left (state absent), checking about four times a second for up to timeout_seconds (default \(Int(waitDefaultSeconds))). Use it after an action instead of polling with mac_ui_tree, such as waiting for a dialog or for a spinner to go away. Returns the matches with refs when present; reports TIMEOUT otherwise. Does not change which app is in front. Requires Accessibility permission.",
             "inputSchema": [
                 "type": "object",
                 "properties": [
                     "role": ["type": "string"], "text": ["type": "string"], "exact": ["type": "boolean"],
                     "state": ["type": "string", "enum": ["present", "absent"]],
-                    "timeout_seconds": ["type": "number", "minimum": 0.5, "maximum": 30],
+                    "timeout_seconds": ["type": "number", "minimum": waitMinSeconds, "maximum": waitMaxSeconds],
                     "root": ["type": "string"], "app": appProperty
                 ],
                 "additionalProperties": false
@@ -256,7 +270,7 @@ private final class MacControlServer {
             "inputSchema": [
                 "type": "object",
                 "properties": [
-                    "action": ["type": "string", "enum": ["list", "focus", "move", "resize", "minimize", "restore"]],
+                    "action": ["type": "string", "enum": windowActions],
                     "window": ["type": "string", "description": "A window ref from mac_window list, mac_find, or mac_ui_tree."],
                     "x": ["type": "number"], "y": ["type": "number"],
                     "width": ["type": "number", "minimum": 1], "height": ["type": "number", "minimum": 1],
@@ -273,7 +287,7 @@ private final class MacControlServer {
                 "properties": [
                     "ref": ["type": "string"],
                     "action": ["type": "string", "enum": axAllActions],
-                    "value": ["type": "string", "maxLength": 2000],
+                    "value": ["type": "string", "maxLength": textLimit],
                     "app": appProperty
                 ],
                 "required": ["ref", "action"], "additionalProperties": false
@@ -282,10 +296,10 @@ private final class MacControlServer {
         ],
         [
             "name": "mac_record_start",
-            "description": "Start recording the main display to a local MOV file for 1 to 120 seconds. Returns an ID; use mac_record_status to get the completed path. Requires Screen Recording permission.",
+            "description": "Start recording the main display to a local MOV file for 1 to \(recordingSecondsLimit) seconds. Returns an ID; use mac_record_status to get the completed path. Requires Screen Recording permission.",
             "inputSchema": [
                 "type": "object",
-                "properties": ["duration_seconds": ["type": "integer", "minimum": 1, "maximum": 120]],
+                "properties": ["duration_seconds": ["type": "integer", "minimum": 1, "maximum": recordingSecondsLimit]],
                 "required": ["duration_seconds"], "additionalProperties": false
             ]
         ],
@@ -314,7 +328,7 @@ private final class MacControlServer {
             "inputSchema": [
                 "type": "object",
                 "properties": [
-                    "action": ["type": "string", "enum": ["move", "click", "double_click", "right_click", "drag"]],
+                    "action": ["type": "string", "enum": mouseActions],
                     "x": ["type": "number"], "y": ["type": "number"],
                     "to_x": ["type": "number"], "to_y": ["type": "number"],
                     "app": appProperty
@@ -329,8 +343,8 @@ private final class MacControlServer {
             "inputSchema": [
                 "type": "object",
                 "properties": [
-                    "vertical": ["type": "integer", "minimum": -20, "maximum": 20],
-                    "horizontal": ["type": "integer", "minimum": -20, "maximum": 20],
+                    "vertical": ["type": "integer", "minimum": -scrollLimit, "maximum": scrollLimit],
+                    "horizontal": ["type": "integer", "minimum": -scrollLimit, "maximum": scrollLimit],
                     "app": appProperty
                 ],
                 "additionalProperties": false
@@ -338,10 +352,10 @@ private final class MacControlServer {
         ],
         [
             "name": "mac_type_text",
-            "description": "Insert Unicode text into the focused field by temporarily placing it on the clipboard and pressing Command-V. If app is given, that running app is brought to the front first and nothing is pasted unless it is still in front. Restores the prior clipboard when possible. Maximum 2000 characters. Requires Accessibility permission.",
+            "description": "Insert Unicode text into the focused field by temporarily placing it on the clipboard and pressing Command-V. If app is given, that running app is brought to the front first and nothing is pasted unless it is still in front. Restores the prior clipboard when possible. Maximum \(textLimit) characters. Requires Accessibility permission.",
             "inputSchema": [
                 "type": "object",
-                "properties": ["text": ["type": "string", "maxLength": 2000], "app": appProperty],
+                "properties": ["text": ["type": "string", "maxLength": textLimit], "app": appProperty],
                 "required": ["text"], "additionalProperties": false
             ]
         ],
@@ -352,7 +366,7 @@ private final class MacControlServer {
                 "type": "object",
                 "properties": [
                     "key": ["type": "string"],
-                    "modifiers": ["type": "array", "items": ["type": "string", "enum": ["cmd", "shift", "alt", "ctrl"]], "uniqueItems": true],
+                    "modifiers": ["type": "array", "items": ["type": "string", "enum": keyModifiers], "uniqueItems": true],
                     "app": appProperty
                 ],
                 "required": ["key"], "additionalProperties": false
@@ -529,8 +543,8 @@ private final class MacControlServer {
 
     private func recordStart(_ args: [String: Any]) throws -> String {
         let seconds = try number(args, "duration_seconds")
-        guard seconds.rounded() == seconds, seconds >= 1, seconds <= 120 else {
-            throw ToolFailure("duration_seconds must be an integer from 1 to 120.")
+        guard seconds.rounded() == seconds, seconds >= 1, seconds <= Double(recordingSecondsLimit) else {
+            throw ToolFailure("duration_seconds must be an integer from 1 to \(recordingSecondsLimit).")
         }
         guard CGDisplayBounds(CGMainDisplayID()).width > 0 else {
             throw ToolFailure("No Mac display is available to this process. Run the MCP host in a logged-in local desktop session.", .setup)
@@ -808,7 +822,7 @@ private final class MacControlServer {
 
     private func mouse(_ args: [String: Any]) throws -> String {
         guard let action = args["action"] as? String else { throw ToolFailure("Missing action") }
-        guard ["move", "click", "double_click", "right_click", "drag"].contains(action) else {
+        guard mouseActions.contains(action) else {
             throw ToolFailure("Invalid mouse action")
         }
         let target = try targetApp(args)
@@ -861,9 +875,9 @@ private final class MacControlServer {
         let vertical = try args["vertical"].map { _ in try number(args, "vertical") } ?? 0
         let horizontal = try args["horizontal"].map { _ in try number(args, "horizontal") } ?? 0
         guard vertical.rounded() == vertical, horizontal.rounded() == horizontal,
-              abs(vertical) <= 20, abs(horizontal) <= 20,
+              abs(vertical) <= Double(scrollLimit), abs(horizontal) <= Double(scrollLimit),
               vertical != 0 || horizontal != 0 else {
-            throw ToolFailure("Scroll values must be nonzero integers from -20 to 20.")
+            throw ToolFailure("Scroll values must be nonzero integers from -\(scrollLimit) to \(scrollLimit).")
         }
         let target = try targetApp(args)
         try requireAccessibility()
@@ -885,8 +899,8 @@ private final class MacControlServer {
     }
 
     private func typeText(_ args: [String: Any]) throws -> String {
-        guard let value = args["text"] as? String, !value.isEmpty, value.count <= 2000 else {
-            throw ToolFailure("text must contain 1 to 2000 characters.")
+        guard let value = args["text"] as? String, !value.isEmpty, value.count <= textLimit else {
+            throw ToolFailure("text must contain 1 to \(textLimit) characters.")
         }
         let target = try targetApp(args)
         try requireAccessibility()
@@ -960,8 +974,8 @@ private final class MacControlServer {
             throw ToolFailure("Unsupported key. Use a-z, 0-9, enter, tab, space, backspace, escape, delete, home, end, pageup, pagedown, or an arrow key.")
         }
         let names = args["modifiers"] as? [String] ?? []
-        guard names.count <= 4, Set(names).count == names.count,
-              names.allSatisfy({ ["cmd", "shift", "alt", "ctrl"].contains($0) }) else {
+        guard names.count <= keyModifiers.count, Set(names).count == names.count,
+              names.allSatisfy({ keyModifiers.contains($0) }) else {
             throw ToolFailure("Invalid modifiers")
         }
         let target = try targetApp(args)
@@ -1009,7 +1023,7 @@ private final class MacControlServer {
 
     private func uiTree(_ args: [String: Any]) throws -> String {
         let depth = try args["max_depth"].map { _ in try number(args, "max_depth") } ?? 5
-        guard depth.rounded() == depth, depth >= 0, depth <= 8 else { throw ToolFailure("max_depth must be 0 to 8.") }
+        guard depth.rounded() == depth, depth >= 0, depth <= Double(treeDepthLimit) else { throw ToolFailure("max_depth must be 0 to \(treeDepthLimit).") }
         var budget = TreeBudget(remaining: treeElementLimit, deadline: Date().addingTimeInterval(treeTimeLimit))
         guard args["root"] != nil else {
             let app = try appToRead(args)
@@ -1369,8 +1383,8 @@ private final class MacControlServer {
 
     private func find(_ args: [String: Any]) throws -> String {
         let query = try searchQuery(args)
-        let limit = try args["limit"].map { _ in try number(args, "limit") } ?? 20
-        guard limit.rounded() == limit, limit >= 1, limit <= 50 else { throw ToolFailure("limit must be 1 to 50.") }
+        let limit = try args["limit"].map { _ in try number(args, "limit") } ?? Double(findDefaultLimit)
+        guard limit.rounded() == limit, limit >= 1, limit <= Double(findMatchLimit) else { throw ToolFailure("limit must be 1 to \(findMatchLimit).") }
         let scope = try searchScope(args)
         let result = search(searchRoots(scope.pid, root: scope.root), query, limit: Int(limit), deadline: Date().addingTimeInterval(5))
         let matches = describeMatches(result.found, pid: scope.pid)
@@ -1412,7 +1426,7 @@ private final class MacControlServer {
     }
 
     private func window(_ args: [String: Any]) throws -> String {
-        let actions = ["list", "focus", "move", "resize", "minimize", "restore"]
+        let actions = windowActions
         guard let action = args["action"] as? String, actions.contains(action) else {
             throw ToolFailure("Invalid action. Use \(actions.joined(separator: ", ")).")
         }
@@ -1530,8 +1544,8 @@ private final class MacControlServer {
         guard args["state"] == nil || ["present", "absent"].contains(args["state"] as? String) else {
             throw ToolFailure("state must be present or absent.")
         }
-        let seconds = try args["timeout_seconds"].map { _ in try number(args, "timeout_seconds") } ?? 10
-        guard seconds >= 0.5, seconds <= 30 else { throw ToolFailure("timeout_seconds must be 0.5 to 30.") }
+        let seconds = try args["timeout_seconds"].map { _ in try number(args, "timeout_seconds") } ?? waitDefaultSeconds
+        guard seconds >= waitMinSeconds, seconds <= waitMaxSeconds else { throw ToolFailure("timeout_seconds must be \(waitMinSeconds) to \(Int(waitMaxSeconds)).") }
         let scope = try searchScope(args)
         let started = Date()
         let deadline = started.addingTimeInterval(seconds)
@@ -1757,7 +1771,7 @@ private final class MacControlServer {
         }
         let value = args["value"] as? String
         if action == "set_value" {
-            guard let value, value.count <= 2000 else { throw ToolFailure("set_value needs value, the text to set, of up to 2000 characters.") }
+            guard let value, value.count <= textLimit else { throw ToolFailure("set_value needs value, the text to set, of up to \(textLimit) characters.") }
         } else if args["value"] != nil {
             throw ToolFailure("value is only used with set_value.")
         }
