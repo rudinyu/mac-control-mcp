@@ -34,6 +34,9 @@ private final class FakeServer: MCPServer {
             let report: [String: Any] = ["text": arguments["text"] as? String ?? "", "main_thread": Thread.isMainThread,
                                          "most_running": mostRunning]
             return ["content": [textContent(jsonString(report))]]
+        case "unencodable":
+            // The extra value is NaN, which JSON cannot hold.
+            return ["content": [textContent("fine")], "value": Double.nan]
         default:
             return ["content": [textContent("Unknown tool")], "isError": true]
         }

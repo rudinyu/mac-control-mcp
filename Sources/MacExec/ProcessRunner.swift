@@ -69,14 +69,15 @@ private func readPipe(_ fd: Int32, into buffer: CappedBuffer) -> FileHandle {
 // different group that reused the ID.
 private func waitForExitWithoutReaping(_ pid: pid_t, seconds: TimeInterval, stop: () -> Bool = { false }) -> Bool {
     let deadline = Date().addingTimeInterval(seconds)
-    repeat {
+    while true {
         var info = siginfo_t()
         let result = waitid(P_PID, id_t(pid), &info, WEXITED | WNOHANG | WNOWAIT)
         if result == 0, info.si_pid == pid { return true }
         if result == -1, errno != EINTR { return true } // ECHILD: nothing left to wait for
+        // Checked after the exit, so a process that ended as it was stopped counts as having ended.
+        if Date() >= deadline || stop() { return false }
         usleep(20_000)
-    } while Date() < deadline && !stop()
-    return false
+    }
 }
 
 // Runs a program without a terminal or standard input, in a new process group. There is no working

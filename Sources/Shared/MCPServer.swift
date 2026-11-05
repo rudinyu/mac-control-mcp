@@ -102,7 +102,8 @@ private final class MCPConnection {
         let request = Request(id: id, key: key(id), method: method, params: params)
         pending.lock()
         queue.append(request)
-        active[request.key] = request.cancellation
+        // Only tool calls can be cancelled; MCP does not let a client cancel initialize.
+        if method == "tools/call" { active[request.key] = request.cancellation }
         pending.signal()
         pending.unlock()
     }
@@ -142,6 +143,12 @@ private final class MCPConnection {
         }
     }
 
+    // JSONSerialization stops the process on a value JSON cannot hold, so check first.
+    private func encoded(_ value: [String: Any]) -> Data? {
+        guard JSONSerialization.isValidJSONObject(value) else { return nil }
+        return try? JSONSerialization.data(withJSONObject: value)
+    }
+
     // Request IDs are strings or numbers, and "1" and 1 are different requests.
     private func key(_ id: Any) -> String {
         if let text = id as? String { return "s" + text }
@@ -158,8 +165,18 @@ private final class MCPConnection {
     }
 
     private func write(_ value: [String: Any]) {
-        guard JSONSerialization.isValidJSONObject(value),
-              let data = try? JSONSerialization.data(withJSONObject: value) else { return }
+        var data = encoded(value)
+        if data == nil {
+            let id = value["id"].map { String(describing: $0) } ?? "none"
+            FileHandle.standardError.write(Data("The message for request \(id) could not be encoded as JSON.\n".utf8))
+            // A result still needs an answer, or the client waits forever for it. The error holds nothing but the
+            // request's own ID, which was read from JSON.
+            if value["result"] != nil, let id = value["id"] {
+                data = encoded(["jsonrpc": "2.0", "id": id,
+                                "error": ["code": -32603, "message": "Internal error: the result could not be encoded as JSON"]])
+            }
+        }
+        guard let data else { return }
         output.lock(); defer { output.unlock() }
         FileHandle.standardOutput.write(data + Data([0x0a]))
     }

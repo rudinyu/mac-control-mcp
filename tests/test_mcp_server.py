@@ -101,6 +101,23 @@ class TransportTests(unittest.TestCase):
         self.assertEqual(reply["id"], 3)
         self.server.no_reply(0.3)
 
+    def test_initialize_cannot_be_cancelled(self):
+        # Requests run in order, so initialize waits behind the sleep and is still queued when the cancel arrives.
+        self.server.call(1, "sleep", seconds=1)
+        self.server.send({"jsonrpc": "2.0", "id": 2, "method": "initialize", "params": {"protocolVersion": "2025-11-25"}})
+        self.server.cancel(2)
+        self.assertEqual(self.server.reply()["id"], 1)
+        self.assertEqual(self.server.reply()["result"]["serverInfo"]["name"], "fake")
+
+    def test_a_result_that_is_not_json_gets_an_error(self):
+        self.server.call(1, "unencodable")
+        reply = self.server.reply()
+        self.assertEqual(reply["id"], 1)
+        self.assertEqual(reply["error"]["code"], -32603)
+        self.assertIn("could not be encoded", reply["error"]["message"])
+        self.server.call(2, "echo", text="still here")
+        self.assertEqual(self.server.reply()["id"], 2)
+
     def test_cancelling_matches_the_id_type(self):
         # "1" and 1 are different requests, so cancelling 1 leaves "1" running.
         self.server.call("1", "sleep", seconds=0.3)
