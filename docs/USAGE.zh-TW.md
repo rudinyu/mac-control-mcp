@@ -29,6 +29,10 @@
 
 > 每個 mac-control 工具都使用 `"app": "TextEdit"`。
 
+## 結果
+
+成功的呼叫會回傳一個 JSON 物件，放在結果的 `structuredContent`，也原樣放在結果的文字裡，所以不論客戶端讀哪一個，拿到的都一樣。每個工具的 `outputSchema` 列出它的欄位。需要用一句話說明的事，例如點擊送到了哪個 App，會放在 `message`。`mac_screenshot` 會在 JSON 之後附上圖片。失敗的呼叫格式不同，請見[錯誤結果](#錯誤結果)。
+
 ## 工具參考
 
 ### `mac_status`
@@ -211,10 +215,11 @@ App 停止回應時（例如忙碌或當掉），讀取會在那裡停止，不�
 | `increment`、`decrement` | `AXValue` 變大或變小 | 不算已確認，因為元素可能已經到上限或下限 |
 | `press`、`show_menu`、`confirm`、`cancel`、`raise`、`scroll_to_visible` | 無；這些動作不會在元素上留下狀態 | 一律不算已確認 |
 
-成功的結果和錯誤一樣有兩段文字：一段訊息，以及說明確認了什麼的 JSON。讀回的值不會出現在結果裡，因為它可能是私人內容：
+結果會說明確認了什麼。讀回的值不會出現在結果裡，因為它可能是私人內容：
 
 ```json
-{"result": {"delivered": true, "verified": true, "checked": "AXSelected"}}
+{"delivered": true, "verified": true, "checked": "AXSelected", "opened": [], "closed": [],
+  "message": "Sent select to AXRow ref k3f9q2.12 in Finder; it is now in that state."}
 ```
 
 元素已經是要求的狀態而沒有送出任何東西時，`delivered` 是 false。只有讀回 `checked` 所列的屬性而且符合時，`verified` 才是 true；是 false 時，請讀 `mac_ui_tree` 查看結果。
@@ -222,10 +227,10 @@ App 停止回應時（例如忙碌或當掉），讀取會在那裡停止，不�
 結果也會列出動作開啟和關閉了什麼，所以按下彈出式按鈕或使用 `show_menu` 之後，可以直接選擇選單項目：
 
 ```json
-{"result": {"delivered": true, "verified": false, "checked": null,
+{"delivered": true, "verified": false, "checked": null,
   "opened": [{"kind": "menu", "role": "AXMenu", "ref": "aflg2p.5", "children": [
     {"role": "AXMenuItem", "title": "Apple", "ref": "aflg2p.2", "actions": ["cancel", "press", "select", "deselect"]}]}],
-  "closed": []}}
+  "closed": [], "message": "…"}
 ```
 
 | `kind` | 是什麼 |

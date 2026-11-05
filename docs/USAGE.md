@@ -29,6 +29,10 @@ Example requests:
 
 > Use `"app": "TextEdit"` with every mac-control tool.
 
+## Results
+
+A successful call returns one JSON object, as the result's `structuredContent` and again as its text, so clients that read either get the same thing. Each tool's `outputSchema` lists its fields. When there is something to say in a sentence, such as which app received a click, it is in `message`. `mac_screenshot` adds the image after the JSON. A failed call is different; see [Error results](#error-results).
+
 ## Tool reference
 
 ### `mac_status`
@@ -211,10 +215,11 @@ After sending, the element is read back where there is something to read:
 | `increment`, `decrement` | `AXValue` went up or down | Not verified, since the element may be at its limit |
 | `press`, `show_menu`, `confirm`, `cancel`, `raise`, `scroll_to_visible` | Nothing; these leave no state on the element | Never verified |
 
-A successful result has two text parts, like an error: a message, and a JSON object that says what was checked. The value read back is never included, since it may be private:
+The result says what was checked. The value read back is never included, since it may be private:
 
 ```json
-{"result": {"delivered": true, "verified": true, "checked": "AXSelected"}}
+{"delivered": true, "verified": true, "checked": "AXSelected", "opened": [], "closed": [],
+  "message": "Sent select to AXRow ref k3f9q2.12 in Finder; it is now in that state."}
 ```
 
 `delivered` is false when nothing was sent because the element was already in that state. `verified` is true only when the attribute named in `checked` was read back and matched. When it is false, read `mac_ui_tree` to see the result.
@@ -222,10 +227,10 @@ A successful result has two text parts, like an error: a message, and a JSON obj
 The result also lists what the action opened and closed, so after pressing a pop-up button or choosing `show_menu` you can pick a menu item at once:
 
 ```json
-{"result": {"delivered": true, "verified": false, "checked": null,
+{"delivered": true, "verified": false, "checked": null,
   "opened": [{"kind": "menu", "role": "AXMenu", "ref": "aflg2p.5", "children": [
     {"role": "AXMenuItem", "title": "Apple", "ref": "aflg2p.2", "actions": ["cancel", "press", "select", "deselect"]}]}],
-  "closed": []}}
+  "closed": [], "message": "…"}
 ```
 
 | `kind` | What it is |

@@ -5,7 +5,7 @@ import subprocess
 import sys
 import unittest
 
-from tool_descriptions import check_tool_descriptions
+from tool_descriptions import check_output_schemas, check_structured_result, check_tool_descriptions
 
 SERVER = os.environ.get(
     "MAC_CONTROL_SERVER",
@@ -65,9 +65,12 @@ class MCPProtocolTests(unittest.TestCase):
             },
         )
         check_tool_descriptions(self, listed)
+        check_output_schemas(self, listed)
 
     def test_02_status_reports_permissions_without_requesting_them(self):
         response = self.request("tools/call", {"name": "mac_status", "arguments": {}})
+        listed = {tool["name"]: tool for tool in self.request("tools/list")["result"]["tools"]}
+        check_structured_result(self, listed["mac_status"], response["result"])
         info = json.loads(response["result"]["content"][0]["text"])
         self.assertIsInstance(info["screen_recording"], bool)
         self.assertIsInstance(info["accessibility"], bool)

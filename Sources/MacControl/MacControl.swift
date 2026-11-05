@@ -141,11 +141,47 @@ private final class MacControlServer: MCPServer {
         // Input tools can do anything the user could, in any app.
         let sendsInput: [String: Any] = ["readOnlyHint": false, "destructiveHint": true, "openWorldHint": true]
         let readsOnly: [String: Any] = ["readOnlyHint": true, "openWorldHint": false]
+
+        // Output schemas name the fields agents rely on. Objects stay open, so a field added later is no error.
+        func output(_ properties: [String: Any], required: [String]) -> [String: Any] {
+            ["type": "object", "properties": properties, "required": required]
+        }
+        let string: [String: Any] = ["type": "string"]
+        let boolean: [String: Any] = ["type": "boolean"]
+        let integer: [String: Any] = ["type": "integer"]
+        let optionalString: [String: Any] = ["type": ["string", "null"]]
+        let message: [String: Any] = ["type": "string", "description": "What happened, in a sentence."]
+        let inputApp: [String: Any] = ["type": "string", "description": "The app in front when the input was sent."]
+        let snapshot: [String: Any] = ["type": ["string", "null"], "description": "The snapshot the refs belong to."]
+        let element: [String: Any] = [
+            "type": "object",
+            "description": "An element: role, and title, value, and description when it has them. An element that can be acted on has a ref and its actions. children lists the elements below it; more_children counts those not listed, which can be read by passing its ref as root. unanswered is true when the app did not answer for it."
+        ]
+        let elements: [String: Any] = ["type": "array", "items": element]
+        let point: [String: Any] = ["type": "object", "properties": ["x": ["type": "number"], "y": ["type": "number"]]]
+        let window: [String: Any] = [
+            "type": "object",
+            "properties": ["app": string, "bundle_id": string, "title": string, "frame": ["type": ["object", "null"], "description": "x, y, width, and height in screen points."],
+                           "minimized": boolean, "main": boolean, "focused": boolean, "ref": string]
+        ]
+        let recording = output([
+            "recording_id": string, "state": ["type": "string", "enum": ["recording", "ready", "failed"]],
+            "duration_seconds": integer, "elapsed_seconds": integer,
+            "path": ["type": "string", "description": "The MOV file, once state is ready."], "bytes": integer
+        ], required: ["recording_id", "state", "duration_seconds", "elapsed_seconds", "path", "bytes"])
         return [
             [
                 "name": "mac_status",
                 "description": "Report macOS Screen Recording and Accessibility permission, whether the screen is locked, the frontmost app, and main display geometry. Call this before controlling the Mac. While screen_locked is true, mouse and keyboard tools refuse to send input.",
                 "inputSchema": ["type": "object", "properties": [:], "additionalProperties": false],
+                "outputSchema": output([
+                    "screen_recording": boolean, "accessibility": boolean, "display_available": boolean,
+                    "screen_locked": ["type": "boolean", "description": "While true, mouse and keyboard tools refuse to send input."],
+                    "screen_locked_reason": optionalString, "frontmost_app": optionalString, "frontmost_bundle_id": optionalString,
+                    "main_display": ["type": "object", "description": "x, y, width, and height in screen points."],
+                    "last_screenshot": ["type": ["object", "null"], "description": "width and height in pixels of the last mac_screenshot."],
+                    "cursor_display": point, "cursor_screenshot": point
+                ], required: ["screen_recording", "accessibility", "display_available", "screen_locked", "main_display"]),
                 "annotations": readsOnly
             ],
             [
@@ -156,12 +192,20 @@ private final class MacControlServer: MCPServer {
                     "properties": ["app": appProperty("It is brought to the front first, which also brings back a window from the Stage Manager strip; an app with no open window may open a new one. mac_mouse with the same app then checks that its window has not changed since.")],
                     "additionalProperties": false
                 ],
+                "outputSchema": output([
+                    "width": ["type": "integer", "description": "Image width in pixels, the x range for mac_mouse."],
+                    "height": ["type": "integer", "description": "Image height in pixels, the y range for mac_mouse."],
+                    "front_app": optionalString,
+                    "changed_during_capture": ["type": "boolean", "description": "The front app or its window changed during the capture; take another screenshot before clicking with app. Missing without Accessibility permission."],
+                    "message": message
+                ], required: ["width", "height", "front_app", "message"]),
                 "annotations": ["readOnlyHint": false, "destructiveHint": false, "idempotentHint": true, "openWorldHint": false]
             ],
             [
                 "name": "mac_request_screen_recording",
                 "description": "Ask macOS to show its Screen Recording permission prompt for this local server. The user must grant access in macOS and restart the host app if required.",
                 "inputSchema": ["type": "object", "properties": [:], "additionalProperties": false],
+                "outputSchema": output(["granted": boolean, "message": message], required: ["granted", "message"]),
                 "annotations": ["readOnlyHint": false, "destructiveHint": false, "idempotentHint": true, "openWorldHint": false]
             ],
             [
@@ -176,6 +220,15 @@ private final class MacControlServer: MCPServer {
                     ],
                     "additionalProperties": false
                 ],
+                "outputSchema": output([
+                    "app": string, "bundle_id": string, "snapshot": snapshot, "tree": element,
+                    "focused": ["type": ["object", "null"], "description": "The focused element, read separately."],
+                    "root": string,
+                    "complete": ["type": "boolean", "description": "false when the read stopped early or an element is unanswered; children left out only by max_depth do not count."],
+                    "truncated": boolean,
+                    "stopped_by": ["type": ["string", "null"], "description": "element_limit, time_limit, or app_not_answering when the read stopped early."],
+                    "elements_read": integer, "unanswered": integer
+                ], required: ["app", "snapshot", "tree", "complete", "truncated", "stopped_by", "elements_read", "unanswered"]),
                 "annotations": readsOnly
             ],
             [
@@ -190,6 +243,10 @@ private final class MacControlServer: MCPServer {
                     ],
                     "additionalProperties": false
                 ],
+                "outputSchema": output([
+                    "app": string, "snapshot": snapshot, "matches": elements,
+                    "complete": ["type": "boolean", "description": "false when the search was cut short, so a missing match is not certain."]
+                ], required: ["app", "snapshot", "matches", "complete"]),
                 "annotations": readsOnly
             ],
             [
@@ -205,6 +262,11 @@ private final class MacControlServer: MCPServer {
                     ],
                     "additionalProperties": false
                 ],
+                "outputSchema": output([
+                    "app": string, "state": ["type": "string", "enum": ["present", "absent"]],
+                    "waited_seconds": ["type": "number"], "snapshot": snapshot,
+                    "matches": ["type": "array", "items": element, "description": "The matches, when state is present."]
+                ], required: ["app", "state", "waited_seconds"]),
                 "annotations": readsOnly
             ],
             [
@@ -223,11 +285,18 @@ private final class MacControlServer: MCPServer {
                     ],
                     "required": ["action"], "additionalProperties": false
                 ],
+                "outputSchema": output((window["properties"] as! [String: Any]).merging([
+                    "windows": ["type": "array", "items": window, "description": "For list."],
+                    "truncated": boolean, "action": string,
+                    "delivered": ["type": "boolean", "description": "false when the window was already in the state asked for, so nothing was sent."],
+                    "as_requested": ["type": "boolean", "description": "For move and resize: whether the app took the frame asked for."],
+                    "message": message
+                ]) { $1 }, required: []),
                 "annotations": ["readOnlyHint": false, "destructiveHint": false, "idempotentHint": true, "openWorldHint": false]
             ],
             [
                 "name": "mac_ax_action",
-                "description": "Act on an element through Accessibility, using a ref from mac_ui_tree, mac_find, mac_wait, or mac_window. Does not move the pointer, change which app is in front, or use the clipboard. A ref stops working when the app's whole tree is read again, the element goes away, or the app quits or relaunches; then nothing is sent. The result's JSON part says whether anything was sent (delivered) and whether the element read back showing the result (verified, with the attribute in checked). It also lists the menus, sheets, dialogs, popovers, panels, and windows the action opened (each with kind, a ref, and its direct children such as menu items) and closed; an error from an app that did not answer in time, as when a button opens a modal dialog, lists them too. Requires Accessibility permission.",
+                "description": "Act on an element through Accessibility, using a ref from mac_ui_tree, mac_find, mac_wait, or mac_window. Does not move the pointer, change which app is in front, or use the clipboard. A ref stops working when the app's whole tree is read again, the element goes away, or the app quits or relaunches; then nothing is sent. The result says whether anything was sent (delivered) and whether the element read back showing the result (verified, with the attribute in checked). It also lists the menus, sheets, dialogs, popovers, panels, and windows the action opened (each with kind, a ref, and its direct children such as menu items) and closed; an error from an app that did not answer in time, as when a button opens a modal dialog, lists them too. Requires Accessibility permission.",
                 "inputSchema": [
                     "type": "object",
                     "properties": [
@@ -238,6 +307,14 @@ private final class MacControlServer: MCPServer {
                     ],
                     "required": ["ref", "action"], "additionalProperties": false
                 ],
+                "outputSchema": output([
+                    "delivered": ["type": "boolean", "description": "Whether anything was sent to the app."],
+                    "verified": ["type": "boolean", "description": "Whether the element was read back afterwards and shows the result."],
+                    "checked": ["type": ["string", "null"], "description": "The attribute read back."],
+                    "opened": ["type": "array", "items": ["type": "object"], "description": "Menus, sheets, dialogs, popovers, panels, and windows the action opened, each with kind, a ref, and its direct children."],
+                    "closed": ["type": "array", "items": ["type": "object"], "description": "Those it closed, each with kind and title."],
+                    "message": message
+                ], required: ["delivered", "verified", "checked", "opened", "closed", "message"]),
                 "annotations": sendsInput
             ],
             [
@@ -248,6 +325,7 @@ private final class MacControlServer: MCPServer {
                     "properties": ["duration_seconds": ["type": "integer", "minimum": 1, "maximum": recordingSecondsLimit, "description": "How long to record."]],
                     "required": ["duration_seconds"], "additionalProperties": false
                 ],
+                "outputSchema": output(["recording_id": string, "state": string, "duration_seconds": integer], required: ["recording_id", "state", "duration_seconds"]),
                 "annotations": ["readOnlyHint": false, "destructiveHint": false, "openWorldHint": false]
             ],
             [
@@ -258,6 +336,7 @@ private final class MacControlServer: MCPServer {
                     "properties": ["recording_id": recordingID],
                     "required": ["recording_id"], "additionalProperties": false
                 ],
+                "outputSchema": recording,
                 "annotations": readsOnly
             ],
             [
@@ -268,6 +347,7 @@ private final class MacControlServer: MCPServer {
                     "properties": ["recording_id": recordingID],
                     "required": ["recording_id"], "additionalProperties": false
                 ],
+                "outputSchema": recording,
                 "annotations": ["readOnlyHint": false, "destructiveHint": false, "idempotentHint": true, "openWorldHint": false]
             ],
             [
@@ -286,6 +366,7 @@ private final class MacControlServer: MCPServer {
                     "required": ["action", "x", "y"],
                     "additionalProperties": false
                 ],
+                "outputSchema": output(["action": string, "app": inputApp, "message": message], required: ["action", "app", "message"]),
                 "annotations": sendsInput
             ],
             [
@@ -300,6 +381,7 @@ private final class MacControlServer: MCPServer {
                     ],
                     "additionalProperties": false
                 ],
+                "outputSchema": output(["vertical": integer, "horizontal": integer, "app": inputApp, "message": message], required: ["vertical", "horizontal", "app", "message"]),
                 "annotations": sendsInput
             ],
             [
@@ -313,6 +395,7 @@ private final class MacControlServer: MCPServer {
                     ],
                     "required": ["text"], "additionalProperties": false
                 ],
+                "outputSchema": output(["characters": integer, "app": inputApp, "message": message], required: ["characters", "app", "message"]),
                 "annotations": sendsInput
             ],
             [
@@ -327,6 +410,7 @@ private final class MacControlServer: MCPServer {
                     ],
                     "required": ["key"], "additionalProperties": false
                 ],
+                "outputSchema": output(["keys": ["type": "string", "description": "The keys pressed, such as cmd+c."], "app": inputApp, "message": message], required: ["keys", "app", "message"]),
                 "annotations": sendsInput
             ]
         ]
@@ -336,13 +420,13 @@ private final class MacControlServer: MCPServer {
     func answer(tool name: String, arguments: [String: Any], cancellation: Cancellation) -> [String: Any] {
         self.cancellation = cancellation
         do {
-            return ["content": try callTool(name, arguments)]
+            return try callTool(name, arguments)
         } catch {
             return failureResult(error)
         }
     }
 
-    private func callTool(_ name: String, _ args: [String: Any]) throws -> [[String: Any]] {
+    private func callTool(_ name: String, _ args: [String: Any]) throws -> [String: Any] {
         // Every schema sets additionalProperties to false. Saying so, with the accepted names, keeps a
         // misspelled parameter from being ignored or reported as a bad value.
         if let schema = tools.first(where: { $0["name"] as? String == name })?["inputSchema"] as? [String: Any],
@@ -354,28 +438,30 @@ private final class MacControlServer: MCPServer {
             }
         }
         switch name {
-        case "mac_status": return [textContent(status())]
+        case "mac_status": return toolResult(status())
         case "mac_screenshot": return try screenshot(args)
-        case "mac_request_screen_recording": return [textContent(CGRequestScreenCaptureAccess() ? "Screen Recording access is granted." : "Screen Recording access is not granted yet. Complete the macOS permission prompt. \(PermissionHint.screenRecording)")]
-        case "mac_ui_tree": return [textContent(try uiTree(args))]
+        case "mac_request_screen_recording":
+            let granted = CGRequestScreenCaptureAccess()
+            return toolResult(["granted": granted], message: granted ? "Screen Recording access is granted." : "Screen Recording access is not granted yet. Complete the macOS permission prompt. \(PermissionHint.screenRecording)")
+        case "mac_ui_tree": return toolResult(try uiTree(args))
         case "mac_ax_action":
             let outcome = try axAction(args)
-            return [textContent(outcome.message), textContent(jsonString(["result": outcome.report]))]
-        case "mac_find": return [textContent(try find(args))]
-        case "mac_window": return [textContent(try window(args))]
-        case "mac_wait": return [textContent(try wait(args))]
-        case "mac_record_start": return [textContent(try recordStart(args))]
-        case "mac_record_status": return [textContent(try recordStatus(args))]
-        case "mac_record_stop": return [textContent(try recordStop(args))]
-        case "mac_mouse": return [textContent(try mouse(args))]
-        case "mac_scroll": return [textContent(try scroll(args))]
-        case "mac_type_text": return [textContent(try typeText(args))]
-        case "mac_key": return [textContent(try key(args))]
+            return toolResult(outcome.report, message: outcome.message)
+        case "mac_find": return toolResult(try find(args))
+        case "mac_window": return toolResult(try window(args))
+        case "mac_wait": return toolResult(try wait(args))
+        case "mac_record_start": return toolResult(try recordStart(args))
+        case "mac_record_status": return toolResult(try recordStatus(args))
+        case "mac_record_stop": return toolResult(try recordStop(args))
+        case "mac_mouse": return toolResult(try mouse(args))
+        case "mac_scroll": return toolResult(try scroll(args))
+        case "mac_type_text": return toolResult(try typeText(args))
+        case "mac_key": return toolResult(try key(args))
         default: throw ToolFailure("Unknown tool: \(name)")
         }
     }
 
-    private func status() -> String {
+    private func status() -> [String: Any] {
         let display = CGMainDisplayID()
         let bounds = CGDisplayBounds(display)
         let app = NSWorkspace.shared.frontmostApplication
@@ -400,10 +486,10 @@ private final class MacControlServer: MCPServer {
                 ]
             }
         }
-        return jsonString(info)
+        return info
     }
 
-    private func screenshot(_ args: [String: Any]) throws -> [[String: Any]] {
+    private func screenshot(_ args: [String: Any]) throws -> [String: Any] {
         let target = try targetApp(args)
         guard CGDisplayBounds(CGMainDisplayID()).width > 0 else {
             throw ToolFailure("No Mac display is available to this process. Run the MCP host in a logged-in local desktop session.", .setup)
@@ -443,10 +529,13 @@ private final class MacControlServer: MCPServer {
         var description = "Main display screenshot: \(image.pixelsWide) x \(image.pixelsHigh) pixels. Use these pixel coordinates with mac_mouse."
         if let focused { description += " \(focused.localizedName ?? "An app") is in front." }
         if trusted, !steady { description += " The front app or its window changed during the capture; take another screenshot before clicking with app." }
-        return [textContent(description), ["type": "image", "data": data.base64EncodedString(), "mimeType": "image/jpeg"]]
+        var info: [String: Any] = ["width": image.pixelsWide, "height": image.pixelsHigh, "front_app": focused?.localizedName ?? NSNull()]
+        // Only known with Accessibility permission.
+        if trusted { info["changed_during_capture"] = !steady }
+        return toolResult(info, message: description, images: [["type": "image", "data": data.base64EncodedString(), "mimeType": "image/jpeg"]])
     }
 
-    private func recordStart(_ args: [String: Any]) throws -> String {
+    private func recordStart(_ args: [String: Any]) throws -> [String: Any] {
         let seconds = try number(args, "duration_seconds")
         guard seconds.rounded() == seconds, seconds >= 1, seconds <= Double(recordingSecondsLimit) else {
             throw ToolFailure("duration_seconds must be an integer from 1 to \(recordingSecondsLimit).")
@@ -472,7 +561,7 @@ private final class MacControlServer: MCPServer {
             throw ToolFailure("Could not start screencapture; recording was not started: \(error.localizedDescription)", .setup)
         }
         recordings[id] = Recording(process: process, path: path, duration: Int(seconds), startedAt: Date())
-        return jsonString(["recording_id": id, "state": "recording", "duration_seconds": Int(seconds)])
+        return ["recording_id": id, "state": "recording", "duration_seconds": Int(seconds)]
     }
 
     private func recording(_ args: [String: Any]) throws -> (String, Recording) {
@@ -522,22 +611,22 @@ private final class MacControlServer: MCPServer {
         return directory
     }
 
-    private func recordStatus(_ args: [String: Any]) throws -> String {
+    private func recordStatus(_ args: [String: Any]) throws -> [String: Any] {
         let (id, entry) = try recording(args)
         let size = (try? FileManager.default.attributesOfItem(atPath: entry.path.path)[.size] as? NSNumber)?.intValue ?? 0
         let state: String
         if entry.process.isRunning { state = "recording" }
         else if size > 0 { state = "ready" }
         else { state = "failed" }
-        return jsonString([
+        return [
             "recording_id": id, "state": state, "duration_seconds": entry.duration,
             "elapsed_seconds": Int(Date().timeIntervalSince(entry.startedAt)),
             "path": state == "ready" ? entry.path.path : "",
             "bytes": size
-        ])
+        ]
     }
 
-    private func recordStop(_ args: [String: Any]) throws -> String {
+    private func recordStop(_ args: [String: Any]) throws -> [String: Any] {
         let (_, entry) = try recording(args)
         if entry.process.isRunning {
             entry.process.interrupt()
@@ -728,7 +817,7 @@ private final class MacControlServer: MCPServer {
         return event
     }
 
-    private func mouse(_ args: [String: Any]) throws -> String {
+    private func mouse(_ args: [String: Any]) throws -> [String: Any] {
         guard let action = args["action"] as? String else { throw ToolFailure("Missing action") }
         guard mouseActions.contains(action) else {
             throw ToolFailure("Invalid mouse action")
@@ -776,10 +865,11 @@ private final class MacControlServer: MCPServer {
             // Spaces the drag steps out so apps see movement rather than a jump.
             if action == "drag", index > 0, index < events.count - 1 { usleep(12_000) }
         }
-        return target == nil ? "Mouse \(action) completed." : "Mouse \(action) completed in \(receiver)."
+        return ["action": action, "app": receiver,
+                "message": target == nil ? "Mouse \(action) completed." : "Mouse \(action) completed in \(receiver)."]
     }
 
-    private func scroll(_ args: [String: Any]) throws -> String {
+    private func scroll(_ args: [String: Any]) throws -> [String: Any] {
         let vertical = try args["vertical"].map { _ in try number(args, "vertical") } ?? 0
         let horizontal = try args["horizontal"].map { _ in try number(args, "horizontal") } ?? 0
         guard vertical.rounded() == vertical, horizontal.rounded() == horizontal,
@@ -803,10 +893,11 @@ private final class MacControlServer: MCPServer {
             throw ToolFailure("Could not create a scroll event.", .internalError)
         }
         event.post(tap: .cghidEventTap)
-        return target == nil ? "Scrolled." : "Scrolled in \(receiver)."
+        return ["vertical": Int(vertical), "horizontal": Int(horizontal), "app": receiver,
+                "message": target == nil ? "Scrolled." : "Scrolled in \(receiver)."]
     }
 
-    private func typeText(_ args: [String: Any]) throws -> String {
+    private func typeText(_ args: [String: Any]) throws -> [String: Any] {
         guard let value = args["text"] as? String, !value.isEmpty, value.count <= textLimit else {
             throw ToolFailure("text must contain 1 to \(textLimit) characters.")
         }
@@ -862,11 +953,11 @@ private final class MacControlServer: MCPServer {
         down.post(tap: .cghidEventTap)
         up.post(tap: .cghidEventTap)
         usleep(pasteSettleMicroseconds)
-        return "Inserted \(value.count) characters into \(receiver) via Command-V."
+        return ["characters": value.count, "app": receiver, "message": "Inserted \(value.count) characters into \(receiver) via Command-V."]
     }
 
 
-    private func key(_ args: [String: Any]) throws -> String {
+    private func key(_ args: [String: Any]) throws -> [String: Any] {
         guard let keyName = (args["key"] as? String)?.lowercased(), let code = keyCodes[keyName] else {
             throw ToolFailure("Unsupported key. Use a-z, 0-9, or one of \(namedKeys.joined(separator: ", ")).")
         }
@@ -893,7 +984,8 @@ private final class MacControlServer: MCPServer {
         up.flags = flags
         down.post(tap: .cghidEventTap)
         up.post(tap: .cghidEventTap)
-        return "Pressed \((names + [keyName]).joined(separator: "+")) in \(receiver)."
+        let keys = (names + [keyName]).joined(separator: "+")
+        return ["keys": keys, "app": receiver, "message": "Pressed \(keys) in \(receiver)."]
     }
 
     private func attribute(_ element: AXUIElement, _ name: CFString) -> CFTypeRef? {
@@ -918,7 +1010,7 @@ private final class MacControlServer: MCPServer {
         return cleanCellText(string, limit: limit)
     }
 
-    private func uiTree(_ args: [String: Any]) throws -> String {
+    private func uiTree(_ args: [String: Any]) throws -> [String: Any] {
         let depth = try args["max_depth"].map { _ in try number(args, "max_depth") } ?? Double(treeDefaultDepth)
         guard depth.rounded() == depth, depth >= 0, depth <= Double(treeDepthLimit) else { throw ToolFailure("max_depth must be 0 to \(treeDepthLimit).") }
         var budget = TreeBudget(remaining: treeElementLimit, deadline: Date().addingTimeInterval(treeTimeLimit))
@@ -935,9 +1027,9 @@ private final class MacControlServer: MCPServer {
                 budget.observed = 1
                 budget.unanswered = 1
                 budget.stopped = "app_not_answering"
-                return jsonString(["app": app.localizedName ?? "Unknown", "bundle_id": app.bundleIdentifier ?? "",
-                                   "snapshot": owner?.snapshot ?? NSNull(), "focused": NSNull(),
-                                   "tree": ["role": "AXApplication", "unanswered": true]].merging(treeStatus(budget)) { $1 })
+                return ["app": app.localizedName ?? "Unknown", "bundle_id": app.bundleIdentifier ?? "",
+                        "snapshot": owner?.snapshot ?? NSNull(), "focused": NSNull(),
+                        "tree": ["role": "AXApplication", "unanswered": true]].merging(treeStatus(budget)) { $1 }
             }
             let focusedWindow = windowValue.flatMap { CFGetTypeID($0) == AXUIElementGetTypeID() ? ($0 as! AXUIElement) : nil }
             let root = focusedWindow ?? elementAttribute(appElement, kAXMainWindowAttribute as CFString) ?? appElement
@@ -949,9 +1041,9 @@ private final class MacControlServer: MCPServer {
             }
             budget.unanswered += focusBudget.unanswered
             if budget.stopped == nil, let stopped = focusBudget.stopped, stopped != "element_limit" { budget.stopped = stopped }
-            return jsonString(["app": app.localizedName ?? "Unknown", "bundle_id": app.bundleIdentifier ?? "",
-                               "snapshot": owner?.snapshot ?? NSNull(),
-                               "focused": focused ?? NSNull(), "tree": tree].merging(treeStatus(budget)) { $1 })
+            return ["app": app.localizedName ?? "Unknown", "bundle_id": app.bundleIdentifier ?? "",
+                    "snapshot": owner?.snapshot ?? NSNull(),
+                    "focused": focused ?? NSNull(), "tree": tree].merging(treeStatus(budget)) { $1 }
         }
         // Reading below a ref keeps the app's refs, so the agent can map a large window first and then open
         // one part of it.
@@ -959,9 +1051,9 @@ private final class MacControlServer: MCPServer {
         let app = NSRunningApplication(processIdentifier: ref.pid)
         let owner = refs.owner(ref.pid, fresh: false)
         let tree = describeElement(ref.element, depth: Int(depth), budget: &budget, owner: owner)
-        return jsonString(["app": app?.localizedName ?? "Unknown", "bundle_id": app?.bundleIdentifier ?? "",
-                           "snapshot": owner?.snapshot ?? NSNull(),
-                           "root": args["root"] ?? NSNull(), "tree": tree].merging(treeStatus(budget)) { $1 })
+        return ["app": app?.localizedName ?? "Unknown", "bundle_id": app?.bundleIdentifier ?? "",
+                "snapshot": owner?.snapshot ?? NSNull(),
+                "root": args["root"] ?? NSNull(), "tree": tree].merging(treeStatus(budget)) { $1 }
     }
 
     // complete is false when the read stopped early or the app did not answer for some elements; elements
@@ -1215,15 +1307,15 @@ private final class MacControlServer: MCPServer {
         }
     }
 
-    private func find(_ args: [String: Any]) throws -> String {
+    private func find(_ args: [String: Any]) throws -> [String: Any] {
         let query = try searchQuery(args)
         let limit = try args["limit"].map { _ in try number(args, "limit") } ?? Double(findDefaultLimit)
         guard limit.rounded() == limit, limit >= 1, limit <= Double(findMatchLimit) else { throw ToolFailure("limit must be 1 to \(findMatchLimit).") }
         let scope = try searchScope(args)
         let result = search(searchRoots(scope.pid, root: scope.root), query, limit: Int(limit), deadline: Date().addingTimeInterval(5))
         let matches = describeMatches(result.found, pid: scope.pid)
-        return jsonString(["app": scope.app?.localizedName ?? "Unknown", "snapshot": refs.snapshot(of: scope.pid) ?? NSNull(),
-                           "matches": matches, "complete": result.complete])
+        return ["app": scope.app?.localizedName ?? "Unknown", "snapshot": refs.snapshot(of: scope.pid) ?? NSNull(),
+                "matches": matches, "complete": result.complete]
     }
 
     private func cgValue<T>(_ element: AXUIElement, _ name: String, _ type: AXValueType, _ empty: T) -> T? {
@@ -1259,7 +1351,7 @@ private final class MacControlServer: MCPServer {
         return result
     }
 
-    private func window(_ args: [String: Any]) throws -> String {
+    private func window(_ args: [String: Any]) throws -> [String: Any] {
         let actions = windowActions
         guard let action = args["action"] as? String, actions.contains(action) else {
             throw ToolFailure("Invalid action. Use \(actions.joined(separator: ", ")).")
@@ -1294,7 +1386,7 @@ private final class MacControlServer: MCPServer {
                     windows.append(describeWindow(element, app: app, appElement: appElement))
                 }
             }
-            return jsonString(["windows": windows, "truncated": windows.count >= 100])
+            return ["windows": windows, "truncated": windows.count >= 100]
         }
         guard args["window"] != nil || args["app"] != nil else {
             throw ToolFailure("Give window, a ref from mac_window list, or app to use its focused window.")
@@ -1352,7 +1444,11 @@ private final class MacControlServer: MCPServer {
         case "minimize", "restore":
             let wanted = action == "minimize"
             if boolState(element, kAXMinimizedAttribute) == wanted {
-                return "\(label.prefix(1).uppercased() + label.dropFirst()) of \(name) is already \(wanted ? "minimized" : "not minimized"), so nothing was sent."
+                var result = describeWindow(element, app: app, appElement: appElement)
+                result["action"] = action
+                result["delivered"] = false
+                result["message"] = "\(label.prefix(1).uppercased() + label.dropFirst()) of \(name) is already \(wanted ? "minimized" : "not minimized"), so nothing was sent."
+                return result
             }
             try set(kAXMinimizedAttribute, wanted ? kCFBooleanTrue : kCFBooleanFalse)
             // The Dock animation takes a moment.
@@ -1363,16 +1459,17 @@ private final class MacControlServer: MCPServer {
         }
         var result = describeWindow(element, app: app, appElement: appElement)
         result["action"] = action
+        result["delivered"] = true
         if action == "move" || action == "resize", let actual = frame(of: element) {
             let asked = action == "move"
                 ? (abs(actual.origin.x - numbers["x"]!) <= 1 && abs(actual.origin.y - numbers["y"]!) <= 1)
                 : (abs(actual.width - numbers["width"]!) <= 1 && abs(actual.height - numbers["height"]!) <= 1)
             result["as_requested"] = asked
         }
-        return jsonString(result)
+        return result
     }
 
-    private func wait(_ args: [String: Any]) throws -> String {
+    private func wait(_ args: [String: Any]) throws -> [String: Any] {
         let query = try searchQuery(args)
         let state = args["state"] as? String ?? "present"
         guard args["state"] == nil || ["present", "absent"].contains(args["state"] as? String) else {
@@ -1394,14 +1491,14 @@ private final class MacControlServer: MCPServer {
             let result = search(searchRoots(scope.pid, root: scope.root), query, limit: 20, deadline: deadline)
             if state == "present", !result.found.isEmpty {
                 let matches = describeMatches(result.found, pid: scope.pid)
-                return jsonString(["app": scope.app?.localizedName ?? "Unknown", "state": state,
-                                   "waited_seconds": (Date().timeIntervalSince(started) * 10).rounded() / 10,
-                                   "snapshot": refs.snapshot(of: scope.pid) ?? NSNull(), "matches": matches])
+                return ["app": scope.app?.localizedName ?? "Unknown", "state": state,
+                        "waited_seconds": (Date().timeIntervalSince(started) * 10).rounded() / 10,
+                        "snapshot": refs.snapshot(of: scope.pid) ?? NSNull(), "matches": matches]
             }
             // An element is only gone when the whole search finished without finding it.
             if state == "absent", result.found.isEmpty, result.complete {
-                return jsonString(["app": scope.app?.localizedName ?? "Unknown", "state": state,
-                                   "waited_seconds": (Date().timeIntervalSince(started) * 10).rounded() / 10])
+                return ["app": scope.app?.localizedName ?? "Unknown", "state": state,
+                        "waited_seconds": (Date().timeIntervalSince(started) * 10).rounded() / 10]
             }
             try cancellation.check()
             sawIncomplete = sawIncomplete || !result.complete

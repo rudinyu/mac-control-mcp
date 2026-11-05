@@ -131,11 +131,28 @@ private final class MacExecServer: MCPServer {
         let timeout: [String: Any] = ["type": "integer", "minimum": 1, "maximum": 600, "description": "Seconds before the command is stopped. Default 120."]
         let path: [String: Any] = ["type": "string", "description": "Path relative to the workspace, or under /workspace."]
         let runs: [String: Any] = ["readOnlyHint": false, "destructiveHint": true, "openWorldHint": true]
+        // Output schemas name the fields agents rely on. Objects stay open, so a field added later is no error.
+        func output(_ properties: [String: Any], required: [String]) -> [String: Any] {
+            ["type": "object", "properties": properties, "required": required]
+        }
+        let string: [String: Any] = ["type": "string"]
+        let boolean: [String: Any] = ["type": "boolean"]
+        let integer: [String: Any] = ["type": "integer"]
+        let ran = output([
+            "exit_code": integer, "stdout": string, "stderr": string,
+            "timed_out": boolean, "duration_ms": integer,
+            "output_truncated": ["type": "boolean", "description": "stdout or stderr was cut to the output limit."]
+        ], required: ["exit_code", "stdout", "stderr", "timed_out", "output_truncated", "duration_ms"])
         var list: [[String: Any]] = [
             [
                 "name": "exec_status",
                 "description": "Report the sandbox runtime (Docker or Apple container) and whether it is ready, whether the sandbox image is built, the workspace folder, read-only folders, and whether host_exec is enabled. Call this first.",
                 "inputSchema": ["type": "object", "properties": [:], "additionalProperties": false],
+                "outputSchema": output([
+                    "runtime": ["type": ["string", "null"]], "runtime_ready": boolean, "image_present": boolean,
+                    "workspace": string, "readonly_dirs": ["type": "array", "items": string], "host_exec_enabled": boolean,
+                    "problems": ["type": "array", "items": string], "next_step": string
+                ], required: ["runtime", "runtime_ready", "image_present", "workspace", "readonly_dirs", "host_exec_enabled", "problems"]),
                 "annotations": ["readOnlyHint": true]
             ],
             [
@@ -146,6 +163,7 @@ private final class MacExecServer: MCPServer {
                     "properties": ["command": command(runBy: "bash -c"), "cwd": path, "timeout_seconds": timeout],
                     "required": ["command"], "additionalProperties": false
                 ],
+                "outputSchema": ran,
                 "annotations": runs
             ],
             [
@@ -156,6 +174,7 @@ private final class MacExecServer: MCPServer {
                     "properties": ["path": path, "max_bytes": ["type": "integer", "minimum": 1, "maximum": maxFileBytes, "description": "Most bytes to read. Default \(defaultReadBytes)."]],
                     "required": ["path"], "additionalProperties": false
                 ],
+                "outputSchema": output(["path": string, "content": string, "truncated": boolean], required: ["path", "content", "truncated"]),
                 "annotations": ["readOnlyHint": true]
             ],
             [
@@ -169,12 +188,17 @@ private final class MacExecServer: MCPServer {
                     ],
                     "required": ["path", "content"], "additionalProperties": false
                 ],
+                "outputSchema": output(["path": string, "bytes_written": integer, "appended": boolean], required: ["path", "bytes_written", "appended"]),
                 "annotations": ["readOnlyHint": false, "destructiveHint": true]
             ],
             [
                 "name": "sandbox_list",
                 "description": "List a folder in the workspace with each entry's type and size.",
                 "inputSchema": ["type": "object", "properties": ["path": path], "additionalProperties": false],
+                "outputSchema": output([
+                    "path": string, "truncated": boolean,
+                    "entries": ["type": "array", "items": ["type": "object"], "description": "Each entry's name, type, and size."]
+                ], required: ["path", "entries", "truncated"]),
                 "annotations": ["readOnlyHint": true]
             ],
         ]
@@ -192,6 +216,7 @@ private final class MacExecServer: MCPServer {
                     ],
                     "required": ["command", "reason"], "additionalProperties": false
                 ],
+                "outputSchema": ran,
                 "annotations": runs
             ])
         }
@@ -211,13 +236,13 @@ private final class MacExecServer: MCPServer {
     func answer(tool name: String, arguments: [String: Any], cancellation: Cancellation) -> [String: Any] {
         self.cancellation = cancellation
         do {
-            return ["content": [textContent(try callTool(name, arguments))]]
+            return toolResult(try callTool(name, arguments))
         } catch {
             return ["content": [textContent(String(describing: error))], "isError": true]
         }
     }
 
-    private func callTool(_ name: String, _ args: [String: Any]) throws -> String {
+    private func callTool(_ name: String, _ args: [String: Any]) throws -> [String: Any] {
         switch name {
         case "exec_status": return status()
         case "sandbox_exec": return try sandboxExec(args)
@@ -296,7 +321,7 @@ private final class MacExecServer: MCPServer {
 
     // MARK: Tools
 
-    private func status() -> String {
+    private func status() -> [String: Any] {
         var info: [String: Any] = [
             "workspace": settings.workspace.path,
             "readonly_dirs": settings.readOnlyDirs.map(\.path),
@@ -326,10 +351,10 @@ private final class MacExecServer: MCPServer {
         if info["image_present"] as? Bool != true {
             info["next_step"] = "Open MacControl.app to install the sandbox runtime and build the image, or run sh scripts/build-sandbox.sh in the mac-control-mcp folder."
         }
-        return jsonString(info)
+        return info
     }
 
-    private func sandboxExec(_ args: [String: Any]) throws -> String {
+    private func sandboxExec(_ args: [String: Any]) throws -> [String: Any] {
         let command = try string(args, "command", max: maxCommandLength)
         let timeout = try integer(args, "timeout_seconds", default: 120, range: 1...600)
         try requireUsableWorkspace()
@@ -408,7 +433,7 @@ private final class MacExecServer: MCPServer {
         }
     }
 
-    private func hostExec(_ args: [String: Any]) throws -> String {
+    private func hostExec(_ args: [String: Any]) throws -> [String: Any] {
         let command = try string(args, "command", max: maxCommandLength)
         let reason = try string(args, "reason", max: 500)
         guard reason.count >= 10 else { throw ToolFailure("reason must explain in at least 10 characters why the sandbox is not enough.") }
@@ -441,7 +466,7 @@ private final class MacExecServer: MCPServer {
     // File tools go through WorkspaceFiles, which never follows a link the sandbox may have swapped in.
     private var files: WorkspaceFiles { WorkspaceFiles(root: resolvedPath(settings.workspace)) }
 
-    private func readFile(_ args: [String: Any]) throws -> String {
+    private func readFile(_ args: [String: Any]) throws -> [String: Any] {
         try requireUsableWorkspace()
         let url = try workspacePath(args, "path")
         let limit = try integer(args, "max_bytes", default: defaultReadBytes, range: 1...maxFileBytes)
@@ -453,10 +478,10 @@ private final class MacExecServer: MCPServer {
         guard let text = utf8Text(data, limit: limit) else {
             throw ToolFailure("\(displayPath(url)) is not UTF-8 text. Use sandbox_exec, for example with base64 or xxd.")
         }
-        return jsonString(["path": displayPath(url), "content": text, "truncated": data.count > limit])
+        return ["path": displayPath(url), "content": text, "truncated": data.count > limit]
     }
 
-    private func writeFile(_ args: [String: Any]) throws -> String {
+    private func writeFile(_ args: [String: Any]) throws -> [String: Any] {
         try requireUsableWorkspace()
         let url = try workspacePath(args, "path")
         guard let content = args["content"] as? String else { throw ToolFailure("content must be a string.") }
@@ -471,15 +496,15 @@ private final class MacExecServer: MCPServer {
         } catch {
             throw ToolFailure("Cannot write \(displayPath(url)): \(error)")
         }
-        return jsonString(["path": displayPath(url), "bytes_written": data.count, "appended": append])
+        return ["path": displayPath(url), "bytes_written": data.count, "appended": append]
     }
 
-    private func list(_ args: [String: Any]) throws -> String {
+    private func list(_ args: [String: Any]) throws -> [String: Any] {
         try requireUsableWorkspace()
         let url = try workspacePath(args, "path", default: ".")
         do {
             let (entries, truncated) = try files.list(url.path, limit: maxListEntries)
-            return jsonString(["path": displayPath(url), "entries": entries, "truncated": truncated])
+            return ["path": displayPath(url), "entries": entries, "truncated": truncated]
         } catch {
             throw ToolFailure("Cannot list \(displayPath(url)): \(error)")
         }
@@ -503,11 +528,11 @@ private final class MacExecServer: MCPServer {
         return "/workspace" + String(resolvedPath(url).dropFirst(root.count))
     }
 
-    private func resultJSON(_ result: RunResult) -> String {
-        jsonString([
+    private func resultJSON(_ result: RunResult) -> [String: Any] {
+        [
             "exit_code": result.exitCode, "stdout": result.stdout, "stderr": result.stderr,
             "timed_out": result.timedOut, "output_truncated": result.truncated, "duration_ms": result.durationMs
-        ])
+        ]
     }
 }
 

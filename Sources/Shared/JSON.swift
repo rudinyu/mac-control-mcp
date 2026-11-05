@@ -4,6 +4,16 @@ func textContent(_ text: String) -> [String: Any] {
     ["type": "text", "text": text]
 }
 
+// A successful tool result. data is the structuredContent, which the tool's outputSchema describes, and the text
+// content is the same JSON for clients that read only text. A sentence for people goes into data as message,
+// because some clients, such as Claude Code, show only structuredContent when it is present. Images follow.
+func toolResult(_ data: [String: Any], message: String? = nil, images: [[String: Any]] = []) -> [String: Any] {
+    var data = data
+    if let message { data["message"] = message }
+    let safe = JSONSerialization.isValidJSONObject(data) ? data : jsonSafe(data) as? [String: Any] ?? [:]
+    return ["content": [textContent(jsonString(safe))] + images, "structuredContent": safe]
+}
+
 // JSONSerialization stops the process on a value JSON cannot hold, so such values, like a Date or NaN, are
 // written as their descriptions instead.
 func jsonString(_ value: Any) -> String {
