@@ -120,6 +120,8 @@ private final class MacExecServer: MCPServer {
     private let settings = Settings.load()
     // The client's own name from initialize, such as claude-ai or codex, so the audit log shows who ran what.
     private var client: String?
+    // The running call's cancellation; calls run one at a time.
+    private var cancellation = Cancellation()
 
     var tools: [[String: Any]] {
         // The two exec tools take the same command, run by different shells.
@@ -206,7 +208,8 @@ private final class MacExecServer: MCPServer {
         }
     }
 
-    func answer(tool name: String, arguments: [String: Any]) -> [String: Any] {
+    func answer(tool name: String, arguments: [String: Any], cancellation: Cancellation) -> [String: Any] {
+        self.cancellation = cancellation
         do {
             return ["content": [textContent(try callTool(name, arguments))]]
         } catch {
@@ -364,12 +367,12 @@ private final class MacExecServer: MCPServer {
         try audit(["tool": "sandbox_exec", "event": "start", "command": command, "cwd": containerCwd, "container": name,
                    "runtime": runtime.kind.rawValue])
         let result = try runProcess(runtime.program, arguments, environment: runtime.environment,
-                                    timeout: TimeInterval(timeout), outputLimit: outputLimit) {
+                                    timeout: TimeInterval(timeout), outputLimit: outputLimit, cancellation: cancellation) {
             _ = try? runProcess(runtime.program, runtime.killArguments(name), environment: runtime.environment,
                                 timeout: 15, outputLimit: 1000)
         }
         try? audit(["tool": "sandbox_exec", "event": "end", "container": name, "exit_code": result.exitCode,
-                    "timed_out": result.timedOut, "duration_ms": result.durationMs])
+                    "timed_out": result.timedOut, "cancelled": result.cancelled, "duration_ms": result.durationMs])
         if runtime.isMissingImage(result, image: settings.image) {
             throw ToolFailure("The sandbox image \(settings.image) is missing. Open MacControl.app to build it, or run sh scripts/build-sandbox.sh in the mac-control-mcp folder.")
         }
@@ -429,9 +432,9 @@ private final class MacExecServer: MCPServer {
         // The folder and command are passed as arguments, never pasted into the script, so neither is reinterpreted.
         let script = #"cd -- "$1" || exit 125; eval "$2""#
         let result = try runProcess("/bin/zsh", ["-lc", script, "zsh", cwd.path, command],
-                                    timeout: TimeInterval(timeout), outputLimit: outputLimit)
+                                    timeout: TimeInterval(timeout), outputLimit: outputLimit, cancellation: cancellation)
         try? audit(["tool": "host_exec", "event": "end", "exit_code": result.exitCode,
-                    "timed_out": result.timedOut, "duration_ms": result.durationMs])
+                    "timed_out": result.timedOut, "cancelled": result.cancelled, "duration_ms": result.durationMs])
         return resultJSON(result)
     }
 

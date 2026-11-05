@@ -72,6 +72,8 @@ Example `.mcp.json` entry that shares a project folder read-only and allows `hos
 | `sandbox_list` | `path` | Lists a workspace folder, up to 500 entries. |
 | `host_exec` | `command`, `reason` (required), `cwd`, `timeout_seconds` | Only when `MAC_EXEC_ALLOW_HOST=1`. Runs `zsh -lc command` on the Mac with your permissions. |
 
+Commands run one at a time. When the client cancels a `sandbox_exec` or `host_exec` call, the command is stopped the same way as at its timeout: the container, or every process the command started, is ended, no result is returned, and the audit log records `"cancelled": true`.
+
 Paths for the file tools may be relative, such as `notes/a.txt`, or start with `/workspace/`. Anything that resolves outside the workspace, including through a symbolic link, is refused.
 
 Example requests:

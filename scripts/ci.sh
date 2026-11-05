@@ -20,8 +20,11 @@ swiftc -module-cache-path "$cache" -parse-as-library \
   "$project_dir/Sources/MacControl/RefRegistry.swift" "$project_dir/tests/RefRegistryTests.swift" \
   -o "$project_dir/.build/ref-registry-tests"
 swiftc -module-cache-path "$cache" -parse-as-library \
+  "$project_dir"/Sources/Shared/*.swift "$project_dir/.build/generated/Version.swift" "$project_dir/tests/FakeMCPServer.swift" \
+  -o "$project_dir/.build/fake-mcp-server"
+swiftc -module-cache-path "$cache" -parse-as-library \
   "$project_dir/Sources/MacExec/ContainerRuntime.swift" "$project_dir/Sources/MacExec/ProcessRunner.swift" \
-  "$project_dir/tests/ContainerRuntimeTests.swift" \
+  "$project_dir/Sources/Shared/Cancellation.swift" "$project_dir/tests/ContainerRuntimeTests.swift" \
   -o "$project_dir/.build/container-runtime-tests"
 swiftc -module-cache-path "$cache" -parse-as-library \
   "$project_dir/App/Sources/ClientConfig.swift" "$project_dir/App/Sources/RuntimePlan.swift" \
@@ -35,6 +38,7 @@ swiftc -module-cache-path "$cache" -parse-as-library \
 sh "$project_dir/scripts/check-localization.sh"
 "$project_dir/.build/container-runtime-tests"
 "$project_dir/.build/app-logic-tests"
+python3 "$project_dir/tests/test_mcp_server.py" "$project_dir/.build/fake-mcp-server"
 python3 "$project_dir/tests/test_protocol.py" "$project_dir/.build/mac-control-mcp"
 python3 "$project_dir/tests/test_init_agents.py"
 # Sandbox tests are skipped when Docker or the sandbox image is not available.

@@ -13,6 +13,7 @@ swiftc -parse-as-library -module-cache-path "$project_dir/.build/module-cache" -
   -emit-localized-strings -emit-localized-strings-path "$out" -module-name MacControl -c \
   "$project_dir"/App/Sources/*.swift \
   "$project_dir/Sources/MacExec/ProcessRunner.swift" \
+  "$project_dir/Sources/Shared/Cancellation.swift" \
   "$project_dir/Sources/MacExec/ContainerRuntime.swift" \
   "$project_dir/Sources/MacExec/PathGuard.swift"
 python3 "$project_dir/tests/check_localization.py" "$out" "$project_dir"/App/Localization/*.json

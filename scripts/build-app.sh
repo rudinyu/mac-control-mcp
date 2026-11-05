@@ -46,6 +46,7 @@ universal mac-exec-mcp "$project_dir"/Sources/MacExec/*.swift "$project_dir"/Sou
 # The app shares the sandbox code with mac-exec, but not its server entry point.
 universal MacControl "$project_dir"/App/Sources/*.swift \
   "$project_dir/Sources/MacExec/ProcessRunner.swift" \
+  "$project_dir/Sources/Shared/Cancellation.swift" \
   "$project_dir/Sources/MacExec/ContainerRuntime.swift" \
   "$project_dir/Sources/MacExec/PathGuard.swift"
 

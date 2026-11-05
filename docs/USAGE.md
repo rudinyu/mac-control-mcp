@@ -276,6 +276,16 @@ When a tool fails, the result has two text parts: a message for people, and a JS
 | `user` | The user must act: grant a permission, unlock the Mac, or fix the setup | `PERMISSION_DENIED`, `SCREEN_LOCKED`, `SETUP_PROBLEM`, `CLIPBOARD_UNSAFE` |
 | `check` | The action may have happened, or reached the app without the expected result; look before repeating it | `OUTCOME_UNKNOWN` |
 
+## Cancelling a call
+
+Calls run one at a time, in the order they arrive, so two input actions never interleave. When the client cancels a call, for example because you stopped the agent, the server stops it and sends no result:
+
+- A call that has not started yet never runs.
+- `mac_wait`, `mac_find`, and waiting for an app to come to the front stop within a fraction of a second.
+- Input tools check once more just before sending. Once the click, key, or paste has been sent, it is not undone.
+
+The server still answers the client's `ping` while a call runs.
+
 ## Troubleshooting
 
 | Message or symptom | What to do |

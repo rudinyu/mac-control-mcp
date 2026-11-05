@@ -72,6 +72,8 @@
 | `sandbox_list` | `path` | 列出工作資料夾裡的資料夾內容，最多 500 項。 |
 | `host_exec` | `command`、`reason`（必填）、`cwd`、`timeout_seconds` | 只在 `MAC_EXEC_ALLOW_HOST=1` 時出現。用你的權限在 Mac 上執行 `zsh -lc command`。 |
 
+指令一次執行一個。客戶端取消 `sandbox_exec` 或 `host_exec` 時，指令會像逾時一樣被停止：結束容器，或結束這個指令啟動的所有程序；不回傳結果，稽核紀錄會記下 `"cancelled": true`。
+
 檔案工具的路徑可以是相對路徑，例如 `notes/a.txt`，也可以用 `/workspace/` 開頭。任何解析後落在工作資料夾外的路徑，包括經由符號連結的，一律拒絕。
 
 指示範例：

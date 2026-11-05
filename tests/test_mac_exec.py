@@ -357,6 +357,30 @@ class HostExecTests(unittest.TestCase):
         with open(pid_file) as f:
             self.assertFalse(alive(int(f.read())), "a child of the timed-out command is still running")
 
+    def test_cancelling_host_exec_kills_every_process(self):
+        pid_file = os.path.join(self.server.temp, "child.pid")
+        self.server.next_id += 1
+        call_id = self.server.next_id
+        self.server.process.stdin.write(json.dumps({"jsonrpc": "2.0", "id": call_id, "method": "tools/call", "params": {
+            "name": "host_exec", "arguments": {"command": f"sleep 300 & echo $! > '{pid_file}'; sleep 300",
+                                               "reason": "testing cancellation"}}}) + "\n")
+        self.server.process.stdin.flush()
+        deadline = time.monotonic() + 10
+        while not (os.path.exists(pid_file) and os.path.getsize(pid_file)) and time.monotonic() < deadline:
+            time.sleep(0.05)
+        started = time.monotonic()
+        self.server.process.stdin.write(json.dumps({"jsonrpc": "2.0", "method": "notifications/cancelled",
+                                                    "params": {"requestId": call_id}}) + "\n")
+        self.server.process.stdin.flush()
+        # The cancelled call gets no answer, so the next one read is this call's, which runs after it has stopped.
+        self.server.call("sandbox_list")
+        self.assertLess(time.monotonic() - started, 5)
+        with open(pid_file) as f:
+            self.assertFalse(alive(int(f.read())), "a child of the cancelled command is still running")
+        end = [entry for entry in self.server.audit_entries() if entry["event"] == "end"][-1]
+        self.assertTrue(end["cancelled"])
+        self.assertFalse(end["timed_out"])
+
     def test_host_exec_cwd_and_quoting(self):
         folder = os.path.join(self.server.temp, "dir with 'quote\" and space")
         os.makedirs(folder)

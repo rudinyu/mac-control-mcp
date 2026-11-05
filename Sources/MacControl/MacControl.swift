@@ -128,6 +128,8 @@ private final class MacControlServer: MCPServer {
     private var lastCapture: CaptureSize?
     private var recordings: [String: Recording] = [:]
     private let refs = RefRegistry()
+    // The running call's cancellation; calls run one at a time.
+    private var cancellation = Cancellation()
 
     let tools: [[String: Any]] = {
         let role: [String: Any] = ["type": "string", "description": "Accessibility role, with or without the AX prefix, such as button or AXTextField."]
@@ -331,7 +333,8 @@ private final class MacControlServer: MCPServer {
     }()
 
     // Answers tools/call; a failure is described by failureResult.
-    func answer(tool name: String, arguments: [String: Any]) -> [String: Any] {
+    func answer(tool name: String, arguments: [String: Any], cancellation: Cancellation) -> [String: Any] {
+        self.cancellation = cancellation
         do {
             return ["content": try callTool(name, arguments)]
         } catch {
@@ -597,11 +600,12 @@ private final class MacControlServer: MCPServer {
 
     private func waitUntilFocused(_ app: NSRunningApplication) -> Bool {
         let deadline = Date().addingTimeInterval(activationTimeout)
-        while Date() < deadline {
+        // A cancelled call stops waiting, and then sends nothing, as when the app did not come to the front.
+        while Date() < deadline, !cancellation.isCancelled {
             if focusedApp()?.processIdentifier == app.processIdentifier { return true }
             RunLoop.current.run(until: Date().addingTimeInterval(focusPollInterval))
         }
-        return focusedApp()?.processIdentifier == app.processIdentifier
+        return !cancellation.isCancelled && focusedApp()?.processIdentifier == app.processIdentifier
     }
 
     private func focusFailure(_ target: NSRunningApplication, _ current: NSRunningApplication?) -> ToolFailure {
@@ -691,6 +695,8 @@ private final class MacControlServer: MCPServer {
             current = focusedApp()
             guard current?.processIdentifier == target.processIdentifier else { throw focusFailure(target, current) }
         }
+        // The last moment a cancelled call can stop with nothing sent.
+        try cancellation.check()
         return current?.localizedName ?? "the frontmost app"
     }
 
@@ -1171,7 +1177,7 @@ private final class MacControlServer: MCPServer {
         var visited = 0
         var complete = true
         while let (element, depth) = stack.popLast() {
-            if visited >= searchNodeLimit || Date() >= deadline { return (found, false) }
+            if visited >= searchNodeLimit || Date() >= deadline || cancellation.isCancelled { return (found, false) }
             visited += 1
             let role = searchAttribute(element, kAXRoleAttribute)
             let childList = searchAttribute(element, kAXChildrenAttribute)
@@ -1379,6 +1385,7 @@ private final class MacControlServer: MCPServer {
         let deadline = started.addingTimeInterval(seconds)
         var sawIncomplete = false
         repeat {
+            try cancellation.check()
             var rootRole: CFTypeRef?
             if let root = scope.root, case .invalidUIElement = AXUIElementCopyAttributeValue(root.element, kAXRoleAttribute as CFString, &rootRole) {
                 throw ToolFailure("The root element went away while waiting. Call mac_ui_tree again.", .staleRef)
@@ -1396,6 +1403,7 @@ private final class MacControlServer: MCPServer {
                 return jsonString(["app": scope.app?.localizedName ?? "Unknown", "state": state,
                                    "waited_seconds": (Date().timeIntervalSince(started) * 10).rounded() / 10])
             }
+            try cancellation.check()
             sawIncomplete = sawIncomplete || !result.complete
             if NSRunningApplication(processIdentifier: scope.pid) == nil {
                 throw ToolFailure("The app quit while waiting.", .staleRef)

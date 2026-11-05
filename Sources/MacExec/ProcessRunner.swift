@@ -5,6 +5,8 @@ struct RunResult {
     let stdout: String
     let stderr: String
     let timedOut: Bool
+    // Stopped because the client cancelled the request.
+    let cancelled: Bool
     let truncated: Bool
     let durationMs: Int
 }
@@ -62,10 +64,10 @@ private func readPipe(_ fd: Int32, into buffer: CappedBuffer) -> FileHandle {
     return handle
 }
 
-// Waits up to `seconds` for the process to exit, without reaping it. While the exited leader is
+// Waits up to `seconds` for the process to exit, or until `stop` returns true, without reaping it. While the exited leader is
 // not reaped, its process group ID stays reserved, so signalling the group cannot reach a
 // different group that reused the ID.
-private func waitForExitWithoutReaping(_ pid: pid_t, seconds: TimeInterval) -> Bool {
+private func waitForExitWithoutReaping(_ pid: pid_t, seconds: TimeInterval, stop: () -> Bool = { false }) -> Bool {
     let deadline = Date().addingTimeInterval(seconds)
     repeat {
         var info = siginfo_t()
@@ -73,17 +75,18 @@ private func waitForExitWithoutReaping(_ pid: pid_t, seconds: TimeInterval) -> B
         if result == 0, info.si_pid == pid { return true }
         if result == -1, errno != EINTR { return true } // ECHILD: nothing left to wait for
         usleep(20_000)
-    } while Date() < deadline
+    } while Date() < deadline && !stop()
     return false
 }
 
 // Runs a program without a terminal or standard input, in a new process group. There is no working
 // folder option, because the spawn call for one differs between macOS SDKs; change folders in the command.
 // When the program ends, or when the timeout passes, its whole process group is killed, so nothing it
-// started keeps running unless it moved itself to another group. `onTimeout` runs first on a timeout,
-// for example to kill a container.
+// started keeps running unless it moved itself to another group. Cancelling stops it the same way.
+// `onStop` runs first when it is stopped early, for example to kill a container.
 func runProcess(_ executable: String, _ arguments: [String], environment: [String: String]? = nil,
-                timeout: TimeInterval, outputLimit: Int, onTimeout: (() -> Void)? = nil) throws -> RunResult {
+                timeout: TimeInterval, outputLimit: Int, cancellation: Cancellation? = nil,
+                onStop: (() -> Void)? = nil) throws -> RunResult {
     var outPipe: [Int32] = [0, 0], errPipe: [Int32] = [0, 0]
     guard pipe(&outPipe) == 0 else { throw SpawnFailure(description: "Could not create a pipe.") }
     guard pipe(&errPipe) == 0 else {
@@ -129,10 +132,11 @@ func runProcess(_ executable: String, _ arguments: [String], environment: [Strin
     let outHandle = readPipe(outPipe[0], into: stdout), errHandle = readPipe(errPipe[0], into: stderr)
     let started = Date()
 
-    var timedOut = false
-    if !waitForExitWithoutReaping(pid, seconds: timeout) {
-        timedOut = true
-        onTimeout?()
+    var timedOut = false, cancelled = false
+    if !waitForExitWithoutReaping(pid, seconds: timeout, stop: { cancellation?.isCancelled == true }) {
+        cancelled = cancellation?.isCancelled == true
+        timedOut = !cancelled
+        onStop?()
         kill(-pid, SIGTERM)
         _ = waitForExitWithoutReaping(pid, seconds: 2)
     }
@@ -153,6 +157,6 @@ func runProcess(_ executable: String, _ arguments: [String], environment: [Strin
     if status & 0x7f == 0 { exitCode = (status >> 8) & 0xff } // exited normally
     else { exitCode = 128 + (status & 0x7f) }                 // ended by a signal
     return RunResult(exitCode: exitCode, stdout: stdout.text, stderr: stderr.text,
-                     timedOut: timedOut, truncated: stdout.truncated || stderr.truncated,
+                     timedOut: timedOut, cancelled: cancelled, truncated: stdout.truncated || stderr.truncated,
                      durationMs: Int(Date().timeIntervalSince(started) * 1000))
 }

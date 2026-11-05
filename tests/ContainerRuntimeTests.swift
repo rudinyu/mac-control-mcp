@@ -73,9 +73,9 @@ private enum ContainerRuntimeTests {
         check("docker ready", docker.readyArguments() == ["info", "--format", "{{.ServerVersion}}"])
         check("apple ready", apple.readyArguments() == ["system", "status"])
 
-        let missing = RunResult(exitCode: 125, stdout: "", stderr: "Unable to find image 'mac-exec-sandbox:latest' locally", timedOut: false, truncated: false, durationMs: 1)
+        let missing = RunResult(exitCode: 125, stdout: "", stderr: "Unable to find image 'mac-exec-sandbox:latest' locally", timedOut: false, cancelled: false, truncated: false, durationMs: 1)
         check("docker: missing image recognized", docker.isMissingImage(missing, image: "mac-exec-sandbox:latest"))
-        let failed = RunResult(exitCode: 1, stdout: "", stderr: "boom", timedOut: false, truncated: false, durationMs: 1)
+        let failed = RunResult(exitCode: 1, stdout: "", stderr: "boom", timedOut: false, cancelled: false, truncated: false, durationMs: 1)
         check("docker: ordinary failure is not a missing image", !docker.isMissingImage(failed, image: "mac-exec-sandbox:latest"))
 
         // Discovery: an explicit program that does not exist must not fall back to another one.
