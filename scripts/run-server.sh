@@ -5,7 +5,7 @@ project_dir=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 binary="$project_dir/.build/mac-control-mcp"
 stale=0
 [ -x "$binary" ] || stale=1
-for source_file in "$project_dir"/Sources/MacControl/*.swift "$project_dir/App/Info.plist"; do
+for source_file in "$project_dir"/Sources/MacControl/*.swift "$project_dir"/Sources/Shared/*.swift "$project_dir/App/Info.plist"; do
   if [ "$source_file" -nt "$binary" ]; then stale=1; fi
 done
 

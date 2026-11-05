@@ -6,13 +6,13 @@ mkdir -p "$project_dir/.build/module-cache"
 export CLANG_MODULE_CACHE_PATH="$project_dir/.build/module-cache"
 export SWIFT_MODULE_CACHE_PATH="$project_dir/.build/module-cache"
 
-# Usage: build.sh [mac-control|mac-exec|all]. Each folder in Sources/ is one server, and each is built
-# on its own, so a compile error in one does not stop the other from starting.
+# Usage: build.sh [mac-control|mac-exec|all]. Sources/MacControl and Sources/MacExec are the two servers, each
+# built on its own with Sources/Shared, so a compile error in one does not stop the other from starting.
 target="${1:-all}"
 version_source=$(sh "$project_dir/scripts/write-version.sh" "$project_dir/.build/generated")
 build() {
   swiftc -module-cache-path "$project_dir/.build/module-cache" -parse-as-library \
-    "$project_dir"/Sources/"$1"/*.swift "$version_source" \
+    "$project_dir"/Sources/"$1"/*.swift "$project_dir"/Sources/Shared/*.swift "$version_source" \
     -o "$project_dir/.build/$2"
 }
 case "$target" in

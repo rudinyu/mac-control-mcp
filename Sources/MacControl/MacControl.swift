@@ -3,10 +3,6 @@ import ApplicationServices
 import CoreGraphics
 import Foundation
 
-private let supportedProtocolVersions: Set<String> = [
-    "2024-11-05", "2025-03-26", "2025-06-18", "2025-11-25"
-]
-
 private struct ToolFailure: Error, CustomStringConvertible {
     var description: String
     let kind: FailureKind
@@ -193,7 +189,10 @@ private let axWeakActions: Set<String> = ["show_menu", "focus", "scroll_to_visib
 // Some menus and pop-ups only return from an action after they close; without a limit the server would hang.
 private let axMessagingTimeout: Float = 2
 
-private final class MacControlServer {
+private final class MacControlServer: MCPServer {
+    let name = "mac-control"
+    let instructions = "Use mac_status first. Use mac_screenshot before mac_mouse; mouse coordinates use the most recent screenshot. When mac_ui_tree or mac_find gives the element a ref, mac_ax_action can act on it without coordinates or focus; use mac_wait to wait for the result. Pass app with the name of the app you are working in to mac_screenshot, mac_mouse, mac_scroll, mac_type_text, and mac_key, so input cannot land in another app. A failed call also returns JSON with code, delivered, and retry; follow retry, and check the app before repeating an action whose retry is \"check\", since it may have happened. A mac_ax_action result says whether it was verified; when verified is false, read the app before relying on the result. Ask the user before irreversible actions."
+
     private var lastCapture: CaptureSize?
     private var recordings: [String: Recording] = [:]
     private var axRefs: [String: AXRef] = [:]
@@ -204,7 +203,7 @@ private final class MacControlServer {
     // Snapshots that were replaced or whose app quit, oldest first, with what happened to them.
     private var axRetired: [(snapshot: String, reason: String)] = []
 
-    private let tools: [[String: Any]] = [
+    let tools: [[String: Any]] = [
         [
             "name": "mac_status",
             "description": "Report macOS Screen Recording and Accessibility permission, whether the screen is locked, the frontmost app, and main display geometry. Call this before controlling the Mac. While screen_locked is true, mouse and keyboard tools refuse to send input.",
@@ -374,62 +373,18 @@ private final class MacControlServer {
         ]
     ]
 
-    func serve() {
-        while let line = readLine() {
-            guard let data = line.data(using: .utf8) else { continue }
-            do {
-                guard let message = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-                    send(error: -32600, message: "Invalid JSON-RPC request", id: NSNull())
-                    continue
-                }
-                handle(message)
-            } catch {
-                send(error: -32700, message: "Invalid JSON", id: NSNull())
-            }
-        }
-    }
-
-    private func handle(_ message: [String: Any]) {
-        guard let method = message["method"] as? String else {
-            send(error: -32600, message: "Missing method", id: message["id"] ?? NSNull())
-            return
-        }
-        guard let id = message["id"] else { return } // MCP notification
-        let params = message["params"] as? [String: Any] ?? [:]
-        switch method {
-        case "initialize":
-            let requested = params["protocolVersion"] as? String ?? ""
-            let selected = supportedProtocolVersions.contains(requested) ? requested : "2025-11-25"
-            send(result: [
-                "protocolVersion": selected,
-                "capabilities": ["tools": [:]],
-                "serverInfo": ["name": "mac-control", "version": productVersion],
-                "instructions": "Use mac_status first. Use mac_screenshot before mac_mouse; mouse coordinates use the most recent screenshot. When mac_ui_tree or mac_find gives the element a ref, mac_ax_action can act on it without coordinates or focus; use mac_wait to wait for the result. Pass app with the name of the app you are working in to mac_screenshot, mac_mouse, mac_scroll, mac_type_text, and mac_key, so input cannot land in another app. A failed call also returns JSON with code, delivered, and retry; follow retry, and check the app before repeating an action whose retry is \"check\", since it may have happened. A mac_ax_action result says whether it was verified; when verified is false, read the app before relying on the result. Ask the user before irreversible actions."
-            ], id: id)
-        case "ping":
-            send(result: [:], id: id)
-        case "tools/list":
-            send(result: ["tools": tools], id: id)
-        case "tools/call":
-            guard let name = params["name"] as? String else {
-                send(error: -32602, message: "Missing tool name", id: id)
-                return
-            }
-            do {
-                let arguments = params["arguments"] as? [String: Any] ?? [:]
-                let content = try callTool(name, arguments)
-                send(result: ["content": content], id: id)
-            } catch {
-                // Every known failure is a ToolFailure, so another error comes from a call whose effect is not known.
-                let kind = (error as? ToolFailure)?.kind ?? .outcomeUnknown
-                let delivered: Any = (error as? ToolFailure)?.delivered ?? kind.delivered
-                let base: [String: Any] = ["code": kind.rawValue, "delivered": delivered, "retry": kind.retry]
-                let details = ["error": base.merging((error as? ToolFailure)?.details ?? [:]) { current, _ in current }]
-                send(result: ["content": [textContent(String(describing: error)), textContent(jsonString(details))],
-                              "isError": true], id: id)
-            }
-        default:
-            send(error: -32601, message: "Method not found", id: id)
+    // Answers tools/call. A failure's result also carries JSON with its code, whether it was delivered, and how
+    // to retry.
+    func answer(tool name: String, arguments: [String: Any]) -> [String: Any] {
+        do {
+            return ["content": try callTool(name, arguments)]
+        } catch {
+            // Every known failure is a ToolFailure, so another error comes from a call whose effect is not known.
+            let kind = (error as? ToolFailure)?.kind ?? .outcomeUnknown
+            let delivered: Any = (error as? ToolFailure)?.delivered ?? kind.delivered
+            let base: [String: Any] = ["code": kind.rawValue, "delivered": delivered, "retry": kind.retry]
+            let details = ["error": base.merging((error as? ToolFailure)?.details ?? [:]) { current, _ in current }]
+            return ["content": [textContent(String(describing: error)), textContent(jsonString(details))], "isError": true]
         }
     }
 
@@ -464,10 +419,6 @@ private final class MacControlServer {
         case "mac_key": return [textContent(try key(args))]
         default: throw ToolFailure("Unknown tool: \(name)")
         }
-    }
-
-    private func textContent(_ text: String) -> [String: Any] {
-        ["type": "text", "text": text]
     }
 
     private func status() -> String {
@@ -1934,26 +1885,6 @@ private final class MacControlServer {
         guard !trimmed.isEmpty, trimmed.allSatisfy({ $0.isASCII && ($0.isNumber || "+-.eE".contains($0)) }),
               let number = Double(trimmed), number.isFinite else { return nil }
         return number
-    }
-
-    private func jsonString(_ value: Any) -> String {
-        guard let data = try? JSONSerialization.data(withJSONObject: value, options: [.sortedKeys]),
-              let string = String(data: data, encoding: .utf8) else { return "{}" }
-        return string
-    }
-
-    private func send(result: Any, id: Any) {
-        write(["jsonrpc": "2.0", "id": id, "result": result])
-    }
-
-    private func send(error code: Int, message: String, id: Any) {
-        write(["jsonrpc": "2.0", "id": id, "error": ["code": code, "message": message]])
-    }
-
-    private func write(_ value: [String: Any]) {
-        guard let data = try? JSONSerialization.data(withJSONObject: value, options: [.fragmentsAllowed]) else { return }
-        FileHandle.standardOutput.write(data)
-        FileHandle.standardOutput.write(Data([0x0a]))
     }
 }
 

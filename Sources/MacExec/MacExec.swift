@@ -1,8 +1,5 @@
 import Foundation
 
-private let supportedProtocolVersions: Set<String> = [
-    "2024-11-05", "2025-03-26", "2025-06-18", "2025-11-25"
-]
 private let defaultImage = "mac-exec-sandbox:latest"
 private let outputLimit = 100_000
 private let maxCommandLength = 20_000
@@ -118,12 +115,12 @@ private struct Settings {
 
 }
 
-private final class MacExecServer {
+private final class MacExecServer: MCPServer {
     private let settings = Settings.load()
     // The client's own name from initialize, such as claude-ai or codex, so the audit log shows who ran what.
     private var client: String?
 
-    private var tools: [[String: Any]] {
+    var tools: [[String: Any]] {
         let command: [String: Any] = ["type": "string", "maxLength": maxCommandLength]
         let timeout: [String: Any] = ["type": "integer", "minimum": 1, "maximum": 600, "description": "Seconds before the command is stopped. Default 120."]
         let path: [String: Any] = ["type": "string", "description": "Path relative to the workspace, or under /workspace."]
@@ -192,59 +189,21 @@ private final class MacExecServer {
         return list
     }
 
-    func serve() {
-        while let line = readLine() {
-            guard let data = line.data(using: .utf8) else { continue }
-            do {
-                guard let message = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-                    send(error: -32600, message: "Invalid JSON-RPC request", id: NSNull())
-                    continue
-                }
-                handle(message)
-            } catch {
-                send(error: -32700, message: "Invalid JSON", id: NSNull())
-            }
+    let name = "mac-exec"
+    let instructions = "Run commands with sandbox_exec, and keep files in the workspace. Use host_exec, when it is available, only when the sandbox cannot do the task, and explain why in reason."
+
+    func initialized(_ params: [String: Any]) {
+        if let clientName = (params["clientInfo"] as? [String: Any])?["name"] as? String {
+            let cleaned = String(clientName.unicodeScalars.filter { !CharacterSet.controlCharacters.contains($0) }).trimmingCharacters(in: .whitespaces)
+            client = cleaned.isEmpty ? nil : String(cleaned.prefix(64))
         }
     }
 
-    private func handle(_ message: [String: Any]) {
-        guard let method = message["method"] as? String else {
-            send(error: -32600, message: "Missing method", id: message["id"] ?? NSNull())
-            return
-        }
-        guard let id = message["id"] else { return } // MCP notification
-        let params = message["params"] as? [String: Any] ?? [:]
-        switch method {
-        case "initialize":
-            let requested = params["protocolVersion"] as? String ?? ""
-            if let name = (params["clientInfo"] as? [String: Any])?["name"] as? String {
-                let cleaned = String(name.unicodeScalars.filter { !CharacterSet.controlCharacters.contains($0) }).trimmingCharacters(in: .whitespaces)
-                client = cleaned.isEmpty ? nil : String(cleaned.prefix(64))
-            }
-            let selected = supportedProtocolVersions.contains(requested) ? requested : "2025-11-25"
-            send(result: [
-                "protocolVersion": selected,
-                "capabilities": ["tools": [:]],
-                "serverInfo": ["name": "mac-exec", "version": productVersion],
-                "instructions": "Run commands with sandbox_exec, and keep files in the workspace. Use host_exec, when it is available, only when the sandbox cannot do the task, and explain why in reason."
-            ], id: id)
-        case "ping":
-            send(result: [:], id: id)
-        case "tools/list":
-            send(result: ["tools": tools], id: id)
-        case "tools/call":
-            guard let name = params["name"] as? String else {
-                send(error: -32602, message: "Missing tool name", id: id)
-                return
-            }
-            do {
-                let arguments = params["arguments"] as? [String: Any] ?? [:]
-                send(result: ["content": [["type": "text", "text": try callTool(name, arguments)]]], id: id)
-            } catch {
-                send(result: ["content": [["type": "text", "text": String(describing: error)]], "isError": true], id: id)
-            }
-        default:
-            send(error: -32601, message: "Method not found", id: id)
+    func answer(tool name: String, arguments: [String: Any]) -> [String: Any] {
+        do {
+            return ["content": [textContent(try callTool(name, arguments))]]
+        } catch {
+            return ["content": [textContent(String(describing: error))], "isError": true]
         }
     }
 
@@ -539,26 +498,6 @@ private final class MacExecServer {
             "exit_code": result.exitCode, "stdout": result.stdout, "stderr": result.stderr,
             "timed_out": result.timedOut, "output_truncated": result.truncated, "duration_ms": result.durationMs
         ])
-    }
-
-    private func jsonString(_ value: Any) -> String {
-        guard let data = try? JSONSerialization.data(withJSONObject: value, options: [.sortedKeys]),
-              let string = String(data: data, encoding: .utf8) else { return "{}" }
-        return string
-    }
-
-    private func send(result: Any, id: Any) {
-        write(["jsonrpc": "2.0", "id": id, "result": result])
-    }
-
-    private func send(error code: Int, message: String, id: Any) {
-        write(["jsonrpc": "2.0", "id": id, "error": ["code": code, "message": message]])
-    }
-
-    private func write(_ value: [String: Any]) {
-        guard let data = try? JSONSerialization.data(withJSONObject: value, options: [.fragmentsAllowed]) else { return }
-        FileHandle.standardOutput.write(data)
-        FileHandle.standardOutput.write(Data([0x0a]))
     }
 }
 
