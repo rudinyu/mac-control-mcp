@@ -1,0 +1,86 @@
+// Unit tests for the error result every failed mac-control call returns. Built with Sources/MacControl/Failure.swift
+// and Sources/Shared/JSON.swift by scripts/ci.sh.
+
+import Foundation
+
+private var failures = 0
+
+private func check(_ name: String, _ passed: Bool, _ detail: @autoclosure () -> String = "") {
+    if passed {
+        print("ok   \(name)")
+    } else {
+        failures += 1
+        print("FAIL \(name)\(detail().isEmpty ? "" : "\n     \(detail())")")
+    }
+}
+
+// The message and the error JSON of a failure's result.
+private func parts(_ error: Error) -> (isError: Bool, message: String, error: [String: Any]) {
+    let result = failureResult(error)
+    let content = result["content"] as? [[String: Any]] ?? []
+    let message = content.first?["text"] as? String ?? ""
+    let json = (content.dropFirst().first?["text"] as? String).flatMap { $0.data(using: .utf8) }
+        .flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] } ?? [:]
+    return (result["isError"] as? Bool == true, message, json["error"] as? [String: Any] ?? [:])
+}
+
+private func describe(_ value: Any?) -> String {
+    value.map { String(describing: $0) } ?? "nil"
+}
+
+private struct OtherError: Error, CustomStringConvertible {
+    var description: String { "screencapture went away" }
+}
+
+@main
+private enum FailureTests {
+    static func main() {
+        // Every code with what it says about delivery and retrying. Changing one changes what agents do.
+        let expected: [(FailureKind, String, Any, String)] = [
+            (.invalidArgs, "INVALID_ARGS", false, "fix"), (.appNotFound, "APP_NOT_FOUND", false, "fix"),
+            (.appAmbiguous, "APP_AMBIGUOUS", false, "fix"), (.unsupported, "ACTION_UNSUPPORTED", false, "fix"),
+            (.permissionDenied, "PERMISSION_DENIED", false, "user"), (.screenLocked, "SCREEN_LOCKED", false, "user"),
+            (.setup, "SETUP_PROBLEM", false, "user"), (.clipboardUnsafe, "CLIPBOARD_UNSAFE", false, "user"),
+            (.staleScreenshot, "STALE_SCREENSHOT", false, "refresh"), (.staleRef, "STALE_REF", false, "refresh"),
+            (.focusLost, "FOCUS_LOST", false, "safe"), (.appUnresponsive, "APP_UNRESPONSIVE", false, "safe"),
+            (.busy, "BUSY", false, "safe"), (.internalError, "INTERNAL", false, "safe"), (.timeout, "TIMEOUT", false, "safe"),
+            (.outcomeUnknown, "OUTCOME_UNKNOWN", "unknown", "check"),
+        ]
+        for (kind, code, delivered, retry) in expected {
+            let error = parts(ToolFailure("message", kind)).error
+            let deliveredMatches = (error["delivered"] as? String).map { $0 == delivered as? String }
+                ?? ((error["delivered"] as? Bool).map { $0 == delivered as? Bool } ?? false)
+            check("\(code): delivered \(delivered), retry \(retry)",
+                  error["code"] as? String == code && deliveredMatches && error["retry"] as? String == retry,
+                  "got \(error)")
+        }
+
+        let accepted = parts(ToolFailure("The app accepted it but shows no change.", .outcomeUnknown, delivered: true))
+        check("an accepted action says delivered true", accepted.error["delivered"] as? Bool == true, "got \(describe(accepted.error["delivered"]))")
+        check("an accepted action still asks to check", accepted.error["code"] as? String == "OUTCOME_UNKNOWN" && accepted.error["retry"] as? String == "check")
+        check("the message is the first part", accepted.isError && accepted.message == "The app accepted it but shows no change.")
+
+        let refused = parts(ToolFailure("Nothing was sent.", .outcomeUnknown, delivered: false))
+        check("a known undelivered failure says delivered false", refused.error["delivered"] as? Bool == false, "got \(describe(refused.error["delivered"]))")
+
+        let other = parts(OtherError())
+        check("another error is treated as an unknown outcome",
+              other.error["code"] as? String == "OUTCOME_UNKNOWN" && other.error["delivered"] as? String == "unknown"
+                && other.error["retry"] as? String == "check", "got \(other.error)")
+        check("another error keeps its message", other.message == "screencapture went away")
+
+        var detailed = ToolFailure("A dialog opened.", .outcomeUnknown, delivered: true)
+        detailed.details = ["opened": [["kind": "dialog"]], "code": "INVALID_ARGS", "delivered": false, "retry": "safe"]
+        let withDetails = parts(detailed).error
+        check("details are added", (withDetails["opened"] as? [[String: Any]])?.first?["kind"] as? String == "dialog")
+        check("details cannot replace code, delivered, or retry",
+              withDetails["code"] as? String == "OUTCOME_UNKNOWN" && withDetails["delivered"] as? Bool == true
+                && withDetails["retry"] as? String == "check", "got \(withDetails)")
+
+        if failures > 0 {
+            print("\(failures) failure test(s) failed")
+            exit(1)
+        }
+        print("All failure tests passed")
+    }
+}
