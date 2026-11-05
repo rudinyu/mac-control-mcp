@@ -30,36 +30,6 @@ private struct Recording {
     let startedAt: Date
 }
 
-// An element mac_ui_tree gave a ref, kept alive so mac_ax_action acts on that exact object and never on
-// another element that merely looks the same.
-private struct AXRef {
-    let element: AXUIElement
-    let pid: pid_t
-    // A relaunched app, or another process given the same PID, has a different start time.
-    let processStart: timeval
-    let role: String
-}
-
-// The app and snapshot new refs belong to.
-private struct AXOwner {
-    let pid: pid_t
-    let start: timeval
-    let snapshot: String
-}
-
-// A ref is "<snapshot>.<element>", such as k3f9q2.12. Snapshot IDs are random, so a ref from before the
-// server restarted cannot name an element of a new snapshot that happens to reuse its number.
-private func parseRef(_ name: String) -> (snapshot: String, element: Int)? {
-    let parts = name.split(separator: ".", omittingEmptySubsequences: false)
-    guard parts.count == 2, parts[0].count == 6, let first = parts[0].first, first.isASCII, first.isLowercase,
-          parts[0].allSatisfy({ $0.isASCII && ($0.isLowercase || $0.isNumber) }),
-          parts[1].first != "0", parts[1].allSatisfy({ $0.isASCII && $0.isNumber }), let element = Int(parts[1]), element > 0 else { return nil }
-    return (String(parts[0]), element)
-}
-
-// How many replaced snapshots are remembered, so a ref from one is reported as replaced rather than unknown.
-private let retiredSnapshotLimit = 200
-
 // How much of an app mac_ui_tree reads, and why it stopped early. Elements whose children are not all listed
 // carry more_children and a ref, so the agent can read below them with root.
 private struct TreeBudget {
@@ -141,13 +111,7 @@ private final class MacControlServer: MCPServer {
 
     private var lastCapture: CaptureSize?
     private var recordings: [String: Recording] = [:]
-    private var axRefs: [String: AXRef] = [:]
-    // Each app's current snapshot. A full mac_ui_tree starts a new one; mac_find, mac_wait, mac_window list,
-    // and reading below a root ref add refs to it, so refs from the tree keep working.
-    private var axApps: [pid_t: AXOwner] = [:]
-    private var axRefCounts: [String: Int] = [:]
-    // Snapshots that were replaced or whose app quit, oldest first, with what happened to them.
-    private var axRetired: [(snapshot: String, reason: String)] = []
+    private let refs = RefRegistry()
 
     let tools: [[String: Any]] = [
         [
@@ -919,7 +883,7 @@ private final class MacControlServer: MCPServer {
         guard args["root"] != nil else {
             let app = try appToRead(args)
             let pid = app.processIdentifier
-            let owner = refOwner(pid, fresh: true)
+            let owner = refs.owner(pid, fresh: true)
             let appElement = AXUIElementCreateApplication(pid)
             // Elements obtained through the app element use its timeout, so a hung app cannot stall the tree.
             AXUIElementSetMessagingTimeout(appElement, axMessagingTimeout)
@@ -951,7 +915,7 @@ private final class MacControlServer: MCPServer {
         // one part of it.
         let ref = try resolveRef(args, key: "root", outcome: "nothing was read")
         let app = NSRunningApplication(processIdentifier: ref.pid)
-        let owner = refOwner(ref.pid, fresh: false)
+        let owner = refs.owner(ref.pid, fresh: false)
         let tree = describeElement(ref.element, depth: Int(depth), budget: &budget, owner: owner)
         return jsonString(["app": app?.localizedName ?? "Unknown", "bundle_id": app?.bundleIdentifier ?? "",
                            "snapshot": owner?.snapshot ?? NSNull(),
@@ -974,51 +938,6 @@ private final class MacControlServer: MCPServer {
             throw ToolFailure("No frontmost app found.", .internalError)
         }
         return app
-    }
-
-    // The owner for new refs in an app: a new snapshot when fresh, otherwise the app's current one. Without
-    // the start time a ref could not tell a relaunched app apart, so there are then no refs.
-    private func refOwner(_ pid: pid_t, fresh: Bool) -> AXOwner? {
-        guard let start = processStart(pid) else { return nil }
-        let current = axApps[pid]
-        if !fresh, let current, current.start.tv_sec == start.tv_sec, current.start.tv_usec == start.tv_usec {
-            return current
-        }
-        let snapshot = newSnapshotID()
-        let name = NSRunningApplication(processIdentifier: pid)?.localizedName ?? "the app"
-        if let current {
-            let replaced = current.start.tv_sec == start.tv_sec && current.start.tv_usec == start.tv_usec
-            retire(current.snapshot, replaced ? "was replaced by snapshot \(snapshot), a newer mac_ui_tree of \(name)"
-                                              : "belongs to an earlier run of \(name), which has since quit or relaunched")
-        }
-        // Also release the refs of apps that have quit, so a long session does not keep their elements.
-        let running = { (pid: pid_t) in NSRunningApplication(processIdentifier: pid) != nil }
-        for (otherPID, owner) in axApps where otherPID != pid && !running(otherPID) {
-            retire(owner.snapshot, "belongs to an app that has quit")
-        }
-        axRefs = axRefs.filter { $0.value.pid != pid && running($0.value.pid) }
-        axApps = axApps.filter { $0.key != pid && running($0.key) }
-        let owner = AXOwner(pid: pid, start: start, snapshot: snapshot)
-        axApps[pid] = owner
-        axRefCounts = axRefCounts.filter { count in axApps.values.contains { $0.snapshot == count.key } }
-        return owner
-    }
-
-    // A six-character ID, starting with a letter, that no current or remembered snapshot uses.
-    private func newSnapshotID() -> String {
-        let letters = Array("abcdefghijklmnopqrstuvwxyz")
-        let characters = letters + Array("0123456789")
-        while true {
-            let id = String(letters.randomElement()!) + String((0..<5).map { _ in characters.randomElement()! })
-            if !axApps.values.contains(where: { $0.snapshot == id }) && !axRetired.contains(where: { $0.snapshot == id }) {
-                return id
-            }
-        }
-    }
-
-    private func retire(_ snapshot: String, _ reason: String) {
-        axRetired.append((snapshot, reason))
-        if axRetired.count > retiredSnapshotLimit { axRetired.removeFirst(axRetired.count - retiredSnapshotLimit) }
     }
 
     private func describeElement(_ element: AXUIElement, depth: Int, budget: inout TreeBudget, owner: AXOwner?,
@@ -1093,27 +1012,15 @@ private final class MacControlServer: MCPServer {
         // Once the app has stopped answering, its actions are not asked for, but an element with children left
         // out still gets a ref, so they can be read later.
         if let owner, role != "unknown", budget.unanswered > 0 {
-            if alwaysRef || hidden > 0 { result["ref"] = ref(for: element, role: role, owner: owner) }
+            if alwaysRef || hidden > 0 { result["ref"] = refs.ref(for: element, role: role, owner: owner) }
         } else if let owner, role != "unknown" {
             let actions = availableActions(element, role: role)
             if alwaysRef || actions.contains(where: { !axWeakActions.contains($0) }) || hidden > 0 {
-                result["ref"] = ref(for: element, role: role, owner: owner)
+                result["ref"] = refs.ref(for: element, role: role, owner: owner)
                 result["actions"] = actions
             }
         }
         return result
-    }
-
-    // An element found again, by another read or as the focused element, keeps its ref.
-    private func ref(for element: AXUIElement, role: String, owner: AXOwner) -> String {
-        let prefix = "\(owner.snapshot)."
-        if let existing = axRefs.first(where: { $0.key.hasPrefix(prefix) && CFEqual($0.value.element, element) }) {
-            return existing.key
-        }
-        axRefCounts[owner.snapshot, default: 0] += 1
-        let name = prefix + String(axRefCounts[owner.snapshot]!)
-        axRefs[name] = AXRef(element: element, pid: owner.pid, processStart: owner.start, role: role)
-        return name
     }
 
     // Looks up the ref in args[key] and checks that it still names the same kind of element in the same
@@ -1122,18 +1029,17 @@ private final class MacControlServer: MCPServer {
         guard let refName = args[key] as? String, !refName.isEmpty else {
             throw ToolFailure("\(key) must be a ref from mac_ui_tree.")
         }
-        guard let parsed = parseRef(refName) else {
+        let ref: AXRef
+        switch refs.lookup(refName) {
+        case .found(let found): ref = found
+        case .notARef:
             throw ToolFailure("\(refName.count > 40 ? refName.prefix(40) + "…" : refName) is not a ref; \(outcome). Refs look like k3f9q2.12; use one from mac_ui_tree, mac_find, mac_wait, or mac_window list.")
-        }
-        guard let ref = axRefs[refName] else {
-            let snapshot = parsed.snapshot
-            if let retired = axRetired.last(where: { $0.snapshot == snapshot }) {
-                throw ToolFailure("Expired ref \(refName): snapshot \(snapshot) \(retired.reason); \(outcome). Use a ref from the newest mac_ui_tree, or call it again.", .staleRef)
-            }
-            if axApps.values.contains(where: { $0.snapshot == snapshot }) {
-                let detail = parsed.element <= axRefCounts[snapshot, default: 0] ? "that element no longer exists" : "it has no element \(parsed.element)"
-                throw ToolFailure("Unknown or expired ref \(refName): snapshot \(snapshot) is current, but \(detail); \(outcome). Call mac_ui_tree again.", .staleRef)
-            }
+        case .retired(let snapshot, let reason):
+            throw ToolFailure("Expired ref \(refName): snapshot \(snapshot) \(reason); \(outcome). Use a ref from the newest mac_ui_tree, or call it again.", .staleRef)
+        case .missing(let snapshot, let element, let existed):
+            let detail = existed ? "that element no longer exists" : "it has no element \(element)"
+            throw ToolFailure("Unknown or expired ref \(refName): snapshot \(snapshot) is current, but \(detail); \(outcome). Call mac_ui_tree again.", .staleRef)
+        case .unknownSnapshot(let snapshot):
             throw ToolFailure("Unknown or expired ref \(refName): snapshot \(snapshot) is unknown to this mac-control session, as when it is from before mac-control restarted or was replaced long ago; \(outcome). Call mac_ui_tree again and use a ref from it.", .staleRef)
         }
         let target = try targetApp(args)
@@ -1142,12 +1048,7 @@ private final class MacControlServer: MCPServer {
         if let target, target.processIdentifier != ref.pid {
             throw ToolFailure("Ref \(refName) belongs to \(name), not \(target.localizedName ?? "that app"); \(outcome).")
         }
-        guard let start = processStart(ref.pid), start.tv_sec == ref.processStart.tv_sec, start.tv_usec == ref.processStart.tv_usec else {
-            axRefs = axRefs.filter { $0.value.pid != ref.pid }
-            if let owner = axApps.removeValue(forKey: ref.pid) {
-                axRefCounts[owner.snapshot] = nil
-                retire(owner.snapshot, "belongs to an earlier run of the app, which has since quit or relaunched")
-            }
+        guard refs.isCurrentRun(ref) else {
             throw ToolFailure("\(name) has quit or relaunched since mac_ui_tree; \(outcome). Call mac_ui_tree again.", .staleRef)
         }
         AXUIElementSetMessagingTimeout(ref.element, axMessagingTimeout)
@@ -1159,7 +1060,7 @@ private final class MacControlServer: MCPServer {
         case .apiDisabled: throw ToolFailure("Accessibility permission is missing. \(PermissionHint.accessibility)", .permissionDenied)
         case .cannotComplete: throw ToolFailure("\(name) did not answer; \(outcome). Try again.", .appUnresponsive)
         default:
-            axRefs[refName] = nil
+            refs.forget(refName)
             throw ToolFailure("The element of ref \(refName) no longer exists or has changed; \(outcome). Call mac_ui_tree again.", .staleRef)
         }
     }
@@ -1265,7 +1166,7 @@ private final class MacControlServer: MCPServer {
 
     // Every match gets a ref, even one with no action of its own, so it can be read below or waited on.
     private func describeMatches(_ found: [AXUIElement], pid: pid_t) -> [[String: Any]] {
-        let owner = refOwner(pid, fresh: false)
+        let owner = refs.owner(pid, fresh: false)
         return found.map { element in
             var budget = TreeBudget(remaining: 1, deadline: .distantFuture)
             return describeElement(element, depth: 0, budget: &budget, owner: owner, alwaysRef: true)
@@ -1279,7 +1180,7 @@ private final class MacControlServer: MCPServer {
         let scope = try searchScope(args)
         let result = search(searchRoots(scope.pid, root: scope.root), query, limit: Int(limit), deadline: Date().addingTimeInterval(5))
         let matches = describeMatches(result.found, pid: scope.pid)
-        return jsonString(["app": scope.app?.localizedName ?? "Unknown", "snapshot": axApps[scope.pid]?.snapshot ?? NSNull(),
+        return jsonString(["app": scope.app?.localizedName ?? "Unknown", "snapshot": refs.snapshot(of: scope.pid) ?? NSNull(),
                            "matches": matches, "complete": result.complete])
     }
 
@@ -1310,8 +1211,8 @@ private final class MacControlServer: MCPServer {
             "main": boolState(element, kAXMainAttribute) ?? false,
             "focused": focused.map { CFEqual($0, element) } ?? false
         ]
-        if let owner = refOwner(app.processIdentifier, fresh: false) {
-            result["ref"] = ref(for: element, role: kAXWindowRole, owner: owner)
+        if let owner = refs.owner(app.processIdentifier, fresh: false) {
+            result["ref"] = refs.ref(for: element, role: kAXWindowRole, owner: owner)
         }
         return result
     }
@@ -1452,7 +1353,7 @@ private final class MacControlServer: MCPServer {
                 let matches = describeMatches(result.found, pid: scope.pid)
                 return jsonString(["app": scope.app?.localizedName ?? "Unknown", "state": state,
                                    "waited_seconds": (Date().timeIntervalSince(started) * 10).rounded() / 10,
-                                   "snapshot": axApps[scope.pid]?.snapshot ?? NSNull(), "matches": matches])
+                                   "snapshot": refs.snapshot(of: scope.pid) ?? NSNull(), "matches": matches])
             }
             // An element is only gone when the whole search finished without finding it.
             if state == "absent", result.found.isEmpty, result.complete {
@@ -1521,7 +1422,7 @@ private final class MacControlServer: MCPServer {
         case .illegalArgument:
             return ToolFailure("\(appName) rejected \(what) for ref \(refName), so it was not done.", .unsupported)
         case .invalidUIElement:
-            axRefs[refName] = nil
+            refs.forget(refName)
             return ToolFailure("The element of ref \(refName) no longer exists; nothing was sent. Call mac_ui_tree again.", .staleRef)
         case .apiDisabled:
             return ToolFailure("Accessibility permission is missing. \(PermissionHint.accessibility)", .permissionDenied)
@@ -1530,13 +1431,6 @@ private final class MacControlServer: MCPServer {
         default:
             return ToolFailure("\(what) returned Accessibility error \(error.rawValue), so it may or may not have happened. Call mac_ui_tree to check before trying again.", .outcomeUnknown)
         }
-    }
-
-    private func processStart(_ pid: pid_t) -> timeval? {
-        var info = proc_bsdinfo()
-        let size = Int32(MemoryLayout<proc_bsdinfo>.size)
-        guard proc_pidinfo(pid, PROC_PIDTBSDINFO, 0, &info, size) == size, info.pbi_pid == UInt32(pid) else { return nil }
-        return timeval(tv_sec: Int(info.pbi_start_tvsec), tv_usec: Int32(info.pbi_start_tvusec))
     }
 
     // A menu, sheet, dialog, popover, or window of an app, as seen before and after an action.
@@ -1718,7 +1612,7 @@ private final class MacControlServer: MCPServer {
             // An app can hold the reply until a modal dialog the action opened is up, so what opened tells
             // whether the action happened.
             if failure.kind == .outcomeUnknown, let before = surfacesBefore, let after = surfaces(ref.pid, near: ref.element) {
-                let changes = surfaceChanges(before: before, after: after, owner: refOwner(ref.pid, fresh: false))
+                let changes = surfaceChanges(before: before, after: after, owner: refs.owner(ref.pid, fresh: false))
                 if !changes.opened.isEmpty || !changes.closed.isEmpty {
                     let sheet = changes.opened.contains { ["sheet", "dialog"].contains($0["kind"] as? String ?? "") }
                     failure.description += surfaceSentence(changes.opened, changes.closed)
@@ -1757,7 +1651,7 @@ private final class MacControlServer: MCPServer {
             // Compared as sets, since windows can change order without anything opening or closing.
             let opened = after.contains { item in !before.contains { CFEqual($0.element, item.element) } }
             let closed = before.contains { item in !after.contains { CFEqual($0.element, item.element) } }
-            if opened || closed { return surfaceChanges(before: before, after: after, owner: refOwner(ref.pid, fresh: false)) }
+            if opened || closed { return surfaceChanges(before: before, after: after, owner: refs.owner(ref.pid, fresh: false)) }
         }
         return ([], [])
     }

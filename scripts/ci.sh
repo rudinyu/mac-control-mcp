@@ -17,6 +17,9 @@ swiftc -module-cache-path "$cache" -parse-as-library \
   "$project_dir/tests/FailureTests.swift" \
   -o "$project_dir/.build/failure-tests"
 swiftc -module-cache-path "$cache" -parse-as-library \
+  "$project_dir/Sources/MacControl/RefRegistry.swift" "$project_dir/tests/RefRegistryTests.swift" \
+  -o "$project_dir/.build/ref-registry-tests"
+swiftc -module-cache-path "$cache" -parse-as-library \
   "$project_dir/Sources/MacExec/ContainerRuntime.swift" "$project_dir/Sources/MacExec/ProcessRunner.swift" \
   "$project_dir/tests/ContainerRuntimeTests.swift" \
   -o "$project_dir/.build/container-runtime-tests"
@@ -28,6 +31,7 @@ swiftc -module-cache-path "$cache" -parse-as-library \
 "$project_dir/.build/terminal-text-tests"
 "$project_dir/.build/session-lock-tests"
 "$project_dir/.build/failure-tests"
+"$project_dir/.build/ref-registry-tests"
 sh "$project_dir/scripts/check-localization.sh"
 "$project_dir/.build/container-runtime-tests"
 "$project_dir/.build/app-logic-tests"
