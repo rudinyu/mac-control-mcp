@@ -84,6 +84,13 @@ private enum FailureTests {
               written["code"] as? String == "OUTCOME_UNKNOWN" && written["delivered"] as? Bool == true, "got \(written)")
         check("and are written as text", written["when"] is String && written["scale"] as? String == "nan"
               && (written["nested"] as? [[String: Any]])?.first?["at"] is String, "got \(written)")
+        let missing: String? = nil
+        let present: String? = "x"
+        check("optionals are written as null or their value",
+              jsonString(["missing": missing as Any, "present": present as Any, "date": Date?.none as Any]) == #"{"date":null,"missing":null,"present":"x"}"#,
+              jsonString(["missing": missing as Any, "present": present as Any]))
+        check("keys that are not text are written as text", jsonString(["byIndex": [1: "a", 2: Date?.none as Any]]) == #"{"byIndex":{"1":"a","2":null}}"#,
+              jsonString(["byIndex": [1: "a", 2: Date?.none as Any]]))
         check("JSON that is fine is left alone", jsonString(["a": 1, "b": [true, "x"]]) == #"{"a":1,"b":[true,"x"]}"#)
 
         if failures > 0 {

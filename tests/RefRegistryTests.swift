@@ -83,11 +83,7 @@ private enum RefRegistryTests {
 
         guard let second = refs.owner(100, fresh: true) else { exit(1) }
         check("a full read starts a new snapshot", second.snapshot != first.snapshot)
-        if case .replaced(second.snapshot, "App 100")? = retiredReason(refs.lookup(button)) {
-            check("the old snapshot's refs are replaced", true)
-        } else {
-            check("the old snapshot's refs are replaced", false, "\(refs.lookup(button))")
-        }
+        check("the old snapshot's refs are replaced", retiredReason(refs.lookup(button)) == .replaced(by: second.snapshot, app: "App 100"), "\(refs.lookup(button))")
         check("the reason reads as a sentence", retiredReason(refs.lookup(button))?.description
               == "was replaced by snapshot \(second.snapshot), a newer mac_ui_tree of App 100")
         check("the new snapshot numbers from 1 again", refs.ref(for: element(1), role: "AXButton", owner: second) == "\(second.snapshot).1")
@@ -96,11 +92,7 @@ private enum RefRegistryTests {
         processes.launch(100, at: 2)
         guard let third = refs.owner(100, fresh: false) else { exit(1) }
         check("a relaunched app gets a new snapshot", third.snapshot != second.snapshot)
-        if case .earlierRun("App 100")? = retiredReason(refs.lookup("\(second.snapshot).1")) {
-            check("refs of the earlier run say so", true)
-        } else {
-            check("refs of the earlier run say so", false, "\(refs.lookup("\(second.snapshot).1"))")
-        }
+        check("refs of the earlier run say so", retiredReason(refs.lookup("\(second.snapshot).1")) == .earlierRun(app: "App 100"), "\(refs.lookup("\(second.snapshot).1"))")
 
         // A relaunch is also noticed when a ref is used.
         let kept = refs.ref(for: element(3), role: "AXButton", owner: third)
@@ -108,11 +100,7 @@ private enum RefRegistryTests {
             check("a ref from the current run is current", refs.confirmCurrentRun(ref))
             processes.launch(100, at: 3)
             check("a ref from before a relaunch is not", !refs.confirmCurrentRun(ref))
-            if case .earlierRun("App 100")? = retiredReason(refs.lookup(kept)) {
-                check("and its snapshot is retired", true)
-            } else {
-                check("and its snapshot is retired", false, "\(refs.lookup(kept))")
-            }
+            check("and its snapshot is retired", retiredReason(refs.lookup(kept)) == .earlierRun(app: "App 100"), "\(refs.lookup(kept))")
             check("and the app has no current snapshot", refs.snapshot(of: 100) == nil)
         } else {
             check("a ref from the current run is found", false)
@@ -123,11 +111,7 @@ private enum RefRegistryTests {
         let otherRef = refs.ref(for: element(4), role: "AXButton", owner: other)
         processes.starts[200] = nil
         _ = refs.owner(100, fresh: true)
-        if case .quit? = retiredReason(refs.lookup(otherRef)) {
-            check("refs of an app that quit are released", true)
-        } else {
-            check("refs of an app that quit are released", false, "\(refs.lookup(otherRef))")
-        }
+        check("refs of an app that quit are released", retiredReason(refs.lookup(otherRef)) == .quit, "\(refs.lookup(otherRef))")
 
         check("an app without a start time gets no snapshot", refs.owner(300, fresh: true) == nil)
         if case .unknownSnapshot("zzzzzz") = refs.lookup("zzzzzz.1") {
@@ -159,11 +143,7 @@ private enum RefRegistryTests {
             if let ref = found(refs.lookup(inB)) {
                 processes.starts[600] = nil
                 check("a ref of an app that quit is not current", !refs.confirmCurrentRun(ref))
-                if case .earlierRun("the app")? = retiredReason(refs.lookup(inB)) {
-                    check("and names no app it cannot find", true)
-                } else {
-                    check("and names no app it cannot find", false, "\(refs.lookup(inB))")
-                }
+                check("and names no app it cannot find", retiredReason(refs.lookup(inB)) == .earlierRun(app: "the app"), "\(refs.lookup(inB))")
                 check("the other app's refs are kept", found(refs.lookup(again)) != nil)
             } else {
                 check("a ref in the second app is found", false)
@@ -172,13 +152,14 @@ private enum RefRegistryTests {
             check("two apps get snapshots", false)
         }
 
-        // Snapshot IDs never repeat while they are remembered.
+        // A new snapshot ID differs from the current ones and the 200 remembered replaced ones, so the current
+        // snapshot and the 200 before it are all different.
         processes.launch(700, at: 1)
         var seen = Set<String>()
-        for _ in 0..<300 {
+        for _ in 0...200 {
             if let owner = refs.owner(700, fresh: true) { seen.insert(owner.snapshot) }
         }
-        check("snapshot IDs are unique", seen.count == 300, "\(seen.count)")
+        check("remembered snapshot IDs are unique", seen.count == 201, "\(seen.count)")
         check("snapshot IDs make valid refs", seen.allSatisfy { parseRef($0 + ".1") != nil })
 
         // Only the newest 200 replaced snapshots are remembered. Making next retires oldest, and each read in the

@@ -45,7 +45,7 @@ private func sameStart(_ a: timeval, _ b: timeval) -> Bool {
 private let retiredSnapshotLimit = 200
 
 // Why a snapshot's refs stopped working. The description finishes a sentence that starts "snapshot <id>".
-enum RetireReason: CustomStringConvertible {
+enum RetireReason: Equatable, CustomStringConvertible {
     // A newer full mac_ui_tree of the same app started the snapshot named.
     case replaced(by: String, app: String)
     case earlierRun(app: String)
