@@ -5,6 +5,8 @@ import subprocess
 import sys
 import unittest
 
+from tool_descriptions import check_tool_descriptions
+
 SERVER = os.environ.get(
     "MAC_CONTROL_SERVER",
     os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".build", "mac-control-mcp"),
@@ -62,13 +64,7 @@ class MCPProtocolTests(unittest.TestCase):
                 "mac_record_status", "mac_record_stop", "mac_mouse", "mac_scroll", "mac_type_text", "mac_key",
             },
         )
-        # Rules about one parameter belong in its own description, so tool descriptions stay short.
-        for tool in listed:
-            with self.subTest(tool=tool["name"]):
-                self.assertLessEqual(len(tool["description"]), 800)
-                self.assertIn("readOnlyHint", tool["annotations"])
-                for name, schema in tool["inputSchema"]["properties"].items():
-                    self.assertTrue(schema.get("description"), f"{name} has no description")
+        check_tool_descriptions(self, listed)
 
     def test_02_status_reports_permissions_without_requesting_them(self):
         response = self.request("tools/call", {"name": "mac_status", "arguments": {}})

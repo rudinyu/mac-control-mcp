@@ -71,6 +71,7 @@ private let searchDepthLimit = 40
 
 // Limits and choices that the tool schemas, their descriptions, and the argument checks all use.
 private let treeDepthLimit = 8
+private let treeDefaultDepth = 5
 private let findMatchLimit = 50
 private let findDefaultLimit = 20
 private let waitMinSeconds = 0.5
@@ -167,7 +168,7 @@ private final class MacControlServer: MCPServer {
                 "inputSchema": [
                     "type": "object",
                     "properties": [
-                        "max_depth": ["type": "integer", "minimum": 0, "maximum": treeDepthLimit, "description": "Levels to read below the window or root. Default 5. Deeper children are counted in more_children."],
+                        "max_depth": ["type": "integer", "minimum": 0, "maximum": treeDepthLimit, "description": "Levels to read below the window or root. Default \(treeDefaultDepth). Deeper children are counted in more_children."],
                         "root": ["type": "string", "description": "A ref to read below instead of the focused window, such as one with more_children. This adds to the app's current snapshot instead of starting a new one."],
                         "app": readApp
                     ],
@@ -912,7 +913,7 @@ private final class MacControlServer: MCPServer {
     }
 
     private func uiTree(_ args: [String: Any]) throws -> String {
-        let depth = try args["max_depth"].map { _ in try number(args, "max_depth") } ?? 5
+        let depth = try args["max_depth"].map { _ in try number(args, "max_depth") } ?? Double(treeDefaultDepth)
         guard depth.rounded() == depth, depth >= 0, depth <= Double(treeDepthLimit) else { throw ToolFailure("max_depth must be 0 to \(treeDepthLimit).") }
         var budget = TreeBudget(remaining: treeElementLimit, deadline: Date().addingTimeInterval(treeTimeLimit))
         guard args["root"] != nil else {

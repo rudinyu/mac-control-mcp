@@ -8,6 +8,8 @@ import tempfile
 import time
 import unittest
 
+from tool_descriptions import check_tool_descriptions
+
 SERVER = os.environ.get(
     "MAC_EXEC_SERVER",
     os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".build", "mac-exec-mcp"),
@@ -318,16 +320,11 @@ class HostExecTests(unittest.TestCase):
     def setUp(self):
         self.server = Server(MAC_EXEC_ALLOW_HOST="1")
 
-    def test_every_tool_and_parameter_is_described(self):
-        for tool in self.server.request("tools/list")["result"]["tools"]:
-            with self.subTest(tool=tool["name"]):
-                self.assertLessEqual(len(tool["description"]), 800)
-                self.assertIn("annotations", tool)
-                for name, schema in tool["inputSchema"]["properties"].items():
-                    self.assertTrue(schema.get("description"), f"{name} has no description")
-
     def tearDown(self):
         self.server.close()
+
+    def test_every_tool_and_parameter_is_described(self):
+        check_tool_descriptions(self, self.server.request("tools/list")["result"]["tools"])
 
     def test_host_exec_runs_and_is_audited(self):
         self.assertIn("host_exec", self.server.tool_names())

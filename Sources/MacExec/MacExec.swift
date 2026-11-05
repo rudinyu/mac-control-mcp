@@ -4,6 +4,7 @@ private let defaultImage = "mac-exec-sandbox:latest"
 private let outputLimit = 100_000
 private let maxCommandLength = 20_000
 private let maxFileBytes = 1_000_000
+private let defaultReadBytes = 200_000
 private let maxListEntries = 500
 
 private struct ToolFailure: Error, CustomStringConvertible {
@@ -121,10 +122,13 @@ private final class MacExecServer: MCPServer {
     private var client: String?
 
     var tools: [[String: Any]] {
-        let command: [String: Any] = ["type": "string", "maxLength": maxCommandLength, "description": "The command, run with bash -c."]
+        // The two exec tools take the same command, run by different shells.
+        func command(runBy shell: String) -> [String: Any] {
+            ["type": "string", "maxLength": maxCommandLength, "description": "The command, run by \(shell)."]
+        }
         let timeout: [String: Any] = ["type": "integer", "minimum": 1, "maximum": 600, "description": "Seconds before the command is stopped. Default 120."]
         let path: [String: Any] = ["type": "string", "description": "Path relative to the workspace, or under /workspace."]
-        let runs: [String: Any] = ["destructiveHint": true, "openWorldHint": true]
+        let runs: [String: Any] = ["readOnlyHint": false, "destructiveHint": true, "openWorldHint": true]
         var list: [[String: Any]] = [
             [
                 "name": "exec_status",
@@ -137,7 +141,7 @@ private final class MacExecServer: MCPServer {
                 "description": "Run a bash command in a fresh, isolated Linux container. The workspace is mounted read-write at /workspace and is the only place where files persist; read-only folders are under /mnt/readonly. The container runs as a non-root user with a read-only system, no added privileges, and internet access. It cannot run macOS programs or see the rest of the Mac.",
                 "inputSchema": [
                     "type": "object",
-                    "properties": ["command": command, "cwd": path, "timeout_seconds": timeout],
+                    "properties": ["command": command(runBy: "bash -c"), "cwd": path, "timeout_seconds": timeout],
                     "required": ["command"], "additionalProperties": false
                 ],
                 "annotations": runs
@@ -147,7 +151,7 @@ private final class MacExecServer: MCPServer {
                 "description": "Read a UTF-8 text file from the workspace.",
                 "inputSchema": [
                     "type": "object",
-                    "properties": ["path": path, "max_bytes": ["type": "integer", "minimum": 1, "maximum": maxFileBytes, "description": "Most bytes to read. Default 200000."]],
+                    "properties": ["path": path, "max_bytes": ["type": "integer", "minimum": 1, "maximum": maxFileBytes, "description": "Most bytes to read. Default \(defaultReadBytes)."]],
                     "required": ["path"], "additionalProperties": false
                 ],
                 "annotations": ["readOnlyHint": true]
@@ -163,7 +167,7 @@ private final class MacExecServer: MCPServer {
                     ],
                     "required": ["path", "content"], "additionalProperties": false
                 ],
-                "annotations": ["destructiveHint": true]
+                "annotations": ["readOnlyHint": false, "destructiveHint": true]
             ],
             [
                 "name": "sandbox_list",
@@ -179,7 +183,7 @@ private final class MacExecServer: MCPServer {
                 "inputSchema": [
                     "type": "object",
                     "properties": [
-                        "command": command.merging(["description": "The command, run by a zsh login shell."]) { $1 },
+                        "command": command(runBy: "a zsh login shell"),
                         "reason": ["type": "string", "minLength": 10, "maxLength": 500, "description": "Why sandbox_exec cannot do this task."],
                         "cwd": ["type": "string", "description": "Absolute folder on the Mac. Default is the home folder."],
                         "timeout_seconds": timeout
@@ -437,7 +441,7 @@ private final class MacExecServer: MCPServer {
     private func readFile(_ args: [String: Any]) throws -> String {
         try requireUsableWorkspace()
         let url = try workspacePath(args, "path")
-        let limit = try integer(args, "max_bytes", default: 200_000, range: 1...maxFileBytes)
+        let limit = try integer(args, "max_bytes", default: defaultReadBytes, range: 1...maxFileBytes)
         let handle: FileHandle
         do { handle = try files.openFile(url.path, flags: O_RDONLY) } catch {
             throw ToolFailure("Cannot read \(displayPath(url)): \(error)")
