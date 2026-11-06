@@ -2,6 +2,7 @@ import json
 import os
 import plistlib
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
@@ -393,6 +394,23 @@ class HostExecTests(unittest.TestCase):
         self.assertTrue(end["cancelled"])
         self.assertFalse(end["timed_out"])
 
+    def test_stopping_the_server_kills_a_running_host_exec(self):
+        pid_file = os.path.join(self.server.temp, "child.pid")
+        self.server.next_id += 1
+        self.server.process.stdin.write(json.dumps({"jsonrpc": "2.0", "id": self.server.next_id, "method": "tools/call", "params": {
+            "name": "host_exec", "arguments": {"command": f"sleep 300 & echo $! > '{pid_file}'; sleep 300",
+                                               "reason": "testing shutdown"}}}) + "\n")
+        self.server.process.stdin.flush()
+        deadline = time.monotonic() + 10
+        while not (os.path.exists(pid_file) and os.path.getsize(pid_file)) and time.monotonic() < deadline:
+            time.sleep(0.05)
+        self.server.process.send_signal(signal.SIGTERM)
+        self.server.process.wait(timeout=10)
+        with open(pid_file) as f:
+            self.assertFalse(alive(int(f.read())), "a child of the command outlived the server")
+        end = [entry for entry in self.server.audit_entries() if entry["event"] == "end"][-1]
+        self.assertTrue(end["cancelled"])
+
     def test_host_exec_cwd_and_quoting(self):
         folder = os.path.join(self.server.temp, "dir with 'quote\" and space")
         os.makedirs(folder)
@@ -511,6 +529,20 @@ class SandboxTests(unittest.TestCase):
         docker = shutil.which("docker") or "/usr/local/bin/docker"
         running = subprocess.run([docker, "ps", "-q", "--filter", "label=mac-exec=1"], capture_output=True, text=True).stdout
         self.assertEqual(running.strip(), "")
+
+    def test_containers_left_by_an_ended_server_are_removed(self):
+        docker = shutil.which("docker") or "/usr/local/bin/docker"
+        # Named as if started by a server with process ID 1 at time 1; launchd started at another time.
+        name = "mac-exec-o1.1-leftover-test"
+        subprocess.run([docker, "run", "-d", "--rm", "--name", name, "--label", "mac-exec=1", IMAGE, "sleep", "300"],
+                       capture_output=True, check=True, timeout=60)
+        try:
+            self.server.ok("sandbox_exec", command="true")
+            listed = subprocess.run([docker, "ps", "-a", "-q", "--filter", f"name=^{name}$"], capture_output=True, text=True).stdout
+            self.assertEqual(listed.strip(), "")
+            self.assertIn("remove_leftovers", [entry["event"] for entry in self.server.audit_entries()])
+        finally:
+            subprocess.run([docker, "rm", "-f", name], capture_output=True)
 
     def test_read_only_folders_are_mounted_read_only(self):
         shared = make_temp("mac-exec-ro-")

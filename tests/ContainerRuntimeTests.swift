@@ -84,6 +84,20 @@ private enum ContainerRuntimeTests {
         check("DOCKER_HOST comes from MAC_EXEC_DOCKER_HOST", host?.environment["DOCKER_HOST"] == "unix:///tmp/colima.sock")
         check("runtime chosen by MAC_EXEC_RUNTIME", ContainerRuntime.find(["MAC_EXEC_RUNTIME": "apple", "MAC_EXEC_CONTAINER": "/bin/sh"])?.kind == .apple)
 
+        // Container owners: a name records the server that started it, so leftovers can be told from live runs.
+        let me = ContainerOwner(pid: 500, start: 1000)
+        let name = me.containerName()
+        check("owner is read back from a container name", ContainerOwner(containerName: name) == me, name)
+        // An older version's name, whose UUID could start with digits, has no owner.
+        check("a name in another form has no owner", ContainerOwner(containerName: "mac-exec-12345678-1234-4abc-8def-0123456789ab") == nil)
+        let starts: [pid_t: Int] = [500: 1000, 600: 2000, 700: 3000]
+        let names = ["mac-exec-o500.1000-a", "mac-exec-o600.2000-b", "mac-exec-o700.2999-c", "mac-exec-o800.1-d",
+                     "mac-exec-12345678-1234-4abc-8def-0123456789ab"]
+        let leftovers = ContainerOwner.leftovers(names, me: me, startOf: { starts[$0] })
+        check("leftovers are mine, a reused process ID's, and an ended server's",
+              leftovers == ["mac-exec-o500.1000-a", "mac-exec-o700.2999-c", "mac-exec-o800.1-d"], "\(leftovers)")
+        check("the current process has a start time", ContainerOwner.processStart(getpid()) != nil)
+
         if failures > 0 {
             print("\(failures) container runtime test(s) failed")
             exit(1)

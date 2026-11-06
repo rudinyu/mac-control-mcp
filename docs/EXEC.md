@@ -2,7 +2,7 @@
 
 English | [繁體中文](EXEC.zh-TW.md)
 
-`mac-exec` is a second MCP server in this repository. It lets an agent run commands, install packages, and read and write files. By default everything runs in an isolated Linux container, so a mistaken or malicious command cannot read or change anything on your Mac outside the folders you share. What it writes in the workspace can still run on your Mac later; see [What the workspace can do](#what-the-workspace-can-do). It is separate from `mac-control`, so clients ask you to approve it separately, and you can use either one without the other.
+`mac-exec` is a second MCP server in this repository. It lets an agent run commands, install packages, and read and write files. By default everything runs in an isolated Linux container, so a mistaken or malicious command cannot read or change your files outside the folders you share. It can still use the network, including services on your Mac, and what it writes in the workspace can run on your Mac later; see the network note below and [What the workspace can do](#what-the-workspace-can-do). It is separate from `mac-control`, so clients ask you to approve it separately, and you can use either one without the other.
 
 ## How it protects your Mac
 
@@ -85,7 +85,7 @@ Example `.mcp.json` entry that shares a project folder read-only and allows `hos
 | `sandbox_list` | `path` | Lists a workspace folder, up to 500 entries. |
 | `host_exec` | `command`, `reason` (required), `cwd`, `timeout_seconds` | Only when `MAC_EXEC_ALLOW_HOST=1`. Runs `zsh -lc command` on the Mac with your permissions. |
 
-Commands run one at a time. When the client cancels a `sandbox_exec` or `host_exec` call, the command is stopped the same way as at its timeout: the container, or every process the command started, is ended, no result is returned, and the audit log records `"cancelled": true`.
+Commands run one at a time. When the client cancels a `sandbox_exec` or `host_exec` call, the command is stopped the same way as at its timeout: the container, or every process the command started, is ended, no result is returned, and the audit log records `"cancelled": true`. The same happens when the client quits or restarts mac-exec during a command. If mac-exec is killed outright, its container can keep running until the next `sandbox_exec`, which first removes containers left by mac-exec servers that have ended. Containers of another client's mac-exec that is still running are left alone.
 
 Paths for the file tools may be relative, such as `notes/a.txt`, or start with `/workspace/`. Anything that resolves outside the workspace, including through a symbolic link, is refused.
 

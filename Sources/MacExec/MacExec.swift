@@ -122,6 +122,10 @@ private final class MacExecServer: MCPServer {
     private var client: String?
     // The running call's cancellation; calls run one at a time.
     private var cancellation = Cancellation()
+    // Whether to look for containers left behind before the next sandbox command: at first, since an earlier
+    // server may have been killed during a command, and after a command was stopped, since the runtime may have
+    // created its container after the kill was sent.
+    private var sweepContainers = true
 
     var tools: [[String: Any]] {
         // The two exec tools take the same command, run by different shells.
@@ -371,7 +375,11 @@ private final class MacExecServer: MCPServer {
         try ensureRuntimeRunning(runtime)
         let root = resolvedPath(settings.workspace)
         let containerCwd = "/workspace" + String(cwd.path.dropFirst(root.count))
-        let name = "mac-exec-\(UUID().uuidString.lowercased())"
+        if sweepContainers {
+            removeLeftoverContainers(runtime)
+            sweepContainers = false
+        }
+        let name = ContainerOwner.current.containerName()
         var readOnly: [(source: String, target: String)] = []
         var used: Set<String> = []
         for folder in settings.readOnlyDirs {
@@ -398,6 +406,7 @@ private final class MacExecServer: MCPServer {
             _ = try? runProcess(runtime.program, runtime.killArguments(name), environment: runtime.environment,
                                 timeout: 15, outputLimit: 1000)
         }
+        if result.timedOut || result.cancelled { sweepContainers = true }
         try? audit(["tool": "sandbox_exec", "event": "end", "container": name, "exit_code": result.exitCode,
                     "timed_out": result.timedOut, "cancelled": result.cancelled, "duration_ms": result.durationMs])
         if runtime.isMissingImage(result, image: settings.image) {
@@ -410,7 +419,8 @@ private final class MacExecServer: MCPServer {
     // after a restart starts the VM instead of failing. Without that information, nothing is started.
     private func ensureRuntimeRunning(_ runtime: ContainerRuntime) throws {
         let ready = try? runProcess(runtime.program, runtime.readyArguments(), environment: runtime.environment,
-                                    timeout: 20, outputLimit: 1000)
+                                    timeout: 20, outputLimit: 1000, cancellation: cancellation)
+        try cancellation.check()
         if ready?.exitCode == 0 { return }
         let env = ProcessInfo.processInfo.environment
         let program: String, arguments: [String]
@@ -429,10 +439,25 @@ private final class MacExecServer: MCPServer {
             arguments = ["system", "start", "--enable-kernel-install"]
         }
         try audit(["tool": "sandbox_exec", "event": "start_runtime", "command": ([program] + arguments).joined(separator: " ")])
-        let started = try runProcess(program, arguments, environment: startEnvironment, timeout: 600, outputLimit: 20_000)
+        let started = try runProcess(program, arguments, environment: startEnvironment, timeout: 600, outputLimit: 20_000,
+                                     cancellation: cancellation)
+        try cancellation.check()
         guard started.exitCode == 0 else {
             throw ToolFailure("The sandbox runtime was not running and could not be started: \(started.stderr.suffix(500)) Open MacControl.app to check it.")
         }
+    }
+
+    // Removes sandbox containers that are no longer wanted. Best effort: a failure here must not stop the command.
+    private func removeLeftoverContainers(_ runtime: ContainerRuntime) {
+        guard let list = runtime.listArguments(),
+              let listed = try? runProcess(runtime.program, list, environment: runtime.environment, timeout: 15, outputLimit: 100_000),
+              listed.exitCode == 0 else { return }
+        let names = listed.stdout.split(whereSeparator: \.isNewline).map(String.init)
+        let leftovers = ContainerOwner.leftovers(names, me: .current, startOf: ContainerOwner.processStart)
+        guard !leftovers.isEmpty else { return }
+        try? audit(["tool": "sandbox_exec", "event": "remove_leftovers", "containers": leftovers])
+        _ = try? runProcess(runtime.program, runtime.removeArguments(leftovers), environment: runtime.environment,
+                            timeout: 30, outputLimit: 1000)
     }
 
     private func hostExec(_ args: [String: Any]) throws -> [String: Any] {
@@ -540,5 +565,5 @@ private final class MacExecServer: MCPServer {
 
 @main
 private enum Main {
-    static func main() { MacExecServer().serve() }
+    static func main() { MacExecServer().serve(stoppingOnSignals: true) }
 }

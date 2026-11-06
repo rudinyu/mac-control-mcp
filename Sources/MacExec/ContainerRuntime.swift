@@ -76,6 +76,17 @@ struct ContainerRuntime {
 
     func killArguments(_ name: String) -> [String] { ["kill", name] }
 
+    // Lists the names of every sandbox container, running or not. Apple's container has no label filter
+    // with a plain name output, so leftovers are only found with Docker.
+    func listArguments() -> [String]? {
+        switch kind {
+        case .docker: return ["ps", "--all", "--filter", "label=mac-exec=1", "--format", "{{.Names}}"]
+        case .apple: return nil
+        }
+    }
+
+    func removeArguments(_ names: [String]) -> [String] { ["rm", "--force"] + names }
+
     func imageExistsArguments(_ image: String) -> [String] {
         switch kind {
         case .docker: return ["image", "inspect", "--format", "{{.Id}}", image]
@@ -143,5 +154,50 @@ struct ContainerRuntime {
         // Docker context is left alone.
         if kind == .docker, let host = env["MAC_EXEC_DOCKER_HOST"], !host.isEmpty { environment["DOCKER_HOST"] = host }
         return ContainerRuntime(kind: kind, program: program, environment: environment)
+    }
+}
+
+// The server process that started a sandbox container. Its name is mac-exec-o<pid>.<start>-<id>, where start is
+// when that process started, so a container left behind by a server that has ended can be told apart from one
+// that another server, such as Codex's while Claude Code's starts, is still running.
+struct ContainerOwner: Equatable {
+    let pid: pid_t
+    let start: Int
+
+    static var current: ContainerOwner { ContainerOwner(pid: getpid(), start: processStart(getpid()) ?? 0) }
+
+    // When the process started, in seconds, or nil when no such process exists.
+    static func processStart(_ pid: pid_t) -> Int? {
+        var info = kinfo_proc()
+        var size = MemoryLayout<kinfo_proc>.stride
+        var mib: [Int32] = [CTL_KERN, KERN_PROC, KERN_PROC_PID, pid]
+        guard sysctl(&mib, 4, &info, &size, nil, 0) == 0, size > 0 else { return nil }
+        return info.kp_proc.p_starttime.tv_sec
+    }
+
+    func containerName() -> String { "mac-exec-o\(pid).\(start)-\(UUID().uuidString.lowercased())" }
+
+    // The owner a container name records, or nil for a name in another form. Older versions named containers
+    // mac-exec-<uuid>, which never starts with o, so their containers are left alone.
+    init?(containerName name: String) {
+        let prefix = "mac-exec-o"
+        guard name.hasPrefix(prefix), let tag = name.dropFirst(prefix.count).split(separator: "-").first else { return nil }
+        let parts = tag.split(separator: ".")
+        guard parts.count == 2, let pid = pid_t(parts[0]), let start = Int(parts[1]) else { return nil }
+        self.init(pid: pid, start: start)
+    }
+
+    init(pid: pid_t, start: Int) {
+        self.pid = pid
+        self.start = start
+    }
+
+    // Containers that are no longer wanted: this server's own, since it runs one command at a time and none is
+    // running when it looks, and those of servers that have ended. Names it cannot read are left alone.
+    static func leftovers(_ names: [String], me: ContainerOwner, startOf: (pid_t) -> Int?) -> [String] {
+        names.filter { name in
+            guard let owner = ContainerOwner(containerName: name) else { return false }
+            return owner == me || startOf(owner.pid) != owner.start
+        }
     }
 }

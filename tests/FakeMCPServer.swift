@@ -45,5 +45,5 @@ private final class FakeServer: MCPServer {
 
 @main
 private enum Main {
-    static func main() { FakeServer().serve() }
+    static func main() { FakeServer().serve(stoppingOnSignals: true) }
 }

@@ -105,12 +105,18 @@ func runProcess(_ executable: String, _ arguments: [String], environment: [Strin
     }
     // A new process group lets one signal reach every process the command starts. Closing every
     // other descriptor by default keeps the server's own pipes out of the command.
+    // The server ignores SIGTERM, SIGINT, and SIGHUP so it can stop cleanly, and an ignored signal stays ignored
+    // across exec, so the command gets the default handling back and can still be stopped with SIGTERM.
+    var defaults = sigset_t()
+    sigemptyset(&defaults)
+    [SIGTERM, SIGINT, SIGHUP].forEach { sigaddset(&defaults, $0) }
     let setup = [
         posix_spawn_file_actions_addopen(&actions, 0, "/dev/null", O_RDONLY, 0),
         posix_spawn_file_actions_adddup2(&actions, outPipe[1], 1),
         posix_spawn_file_actions_adddup2(&actions, errPipe[1], 2),
-        posix_spawnattr_setflags(&attributes, Int16(POSIX_SPAWN_SETPGROUP | POSIX_SPAWN_CLOEXEC_DEFAULT)),
+        posix_spawnattr_setflags(&attributes, Int16(POSIX_SPAWN_SETPGROUP | POSIX_SPAWN_CLOEXEC_DEFAULT | POSIX_SPAWN_SETSIGDEF)),
         posix_spawnattr_setpgroup(&attributes, 0),
+        posix_spawnattr_setsigdefault(&attributes, &defaults),
     ]
     let env = (environment ?? ProcessInfo.processInfo.environment).map { "\($0.key)=\($0.value)" }
     var argv = ([executable] + arguments).map { strdup($0) } + [nil]

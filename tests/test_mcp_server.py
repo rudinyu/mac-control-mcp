@@ -4,6 +4,7 @@ while a tool runs, tools run one at a time on the main thread, and a cancelled r
 import json
 import os
 import queue
+import signal
 import subprocess
 import sys
 import threading
@@ -143,6 +144,17 @@ class TransportTests(unittest.TestCase):
         self.assertEqual([self.server.reply()["id"], self.server.reply()["id"]], [1, 2])
         self.assertEqual(self.server.process.wait(timeout=5), 0)
 
+
+    def test_sigterm_stops_the_running_call_and_ends_the_server(self):
+        self.server.call(1, "sleep", seconds=30)
+        self.server.call(2, "echo", text="queued")
+        time.sleep(0.2)
+        started = time.monotonic()
+        self.server.process.send_signal(signal.SIGTERM)
+        self.assertEqual(self.server.process.wait(timeout=5), 0)
+        self.assertLess(time.monotonic() - started, 5)
+        # Neither the stopped call nor the queued one is answered.
+        self.server.no_reply(0.3)
 
 if __name__ == "__main__":
     if len(sys.argv) > 1:

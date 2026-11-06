@@ -20,9 +20,11 @@ let supportedProtocolVersions: Set<String> = [
 extension MCPServer {
     func initialized(_ params: [String: Any]) {}
 
-    // Serves until standard input closes and every request read before that is answered.
-    func serve() {
-        MCPConnection(server: self).run()
+    // Serves until standard input closes and every request read before that is answered. With stoppingOnSignals,
+    // SIGTERM, SIGINT, and SIGHUP cancel the running call and end the server. It is left to servers whose child
+    // processes reset those signals, since a signal the server ignores stays ignored in a Foundation Process.
+    func serve(stoppingOnSignals: Bool = false) {
+        MCPConnection(server: self).run(stoppingOnSignals: stoppingOnSignals)
     }
 }
 
@@ -46,12 +48,14 @@ private final class MCPConnection {
     private var active: [String: Cancellation] = [:]
     private var ended = false
     private let output = NSLock()
+    private var signalSources: [DispatchSourceSignal] = []
 
     init(server: MCPServer) {
         self.server = server
     }
 
-    func run() {
+    func run(stoppingOnSignals: Bool) {
+        if stoppingOnSignals { stopOnSignals() }
         Thread { [self] in read() }.start()
         while let request = next() {
             if !request.cancellation.isCancelled { handle(request) }
@@ -78,6 +82,27 @@ private final class MCPConnection {
         ended = true
         pending.signal()
         pending.unlock()
+    }
+
+    // A client that quits or restarts the server sends SIGTERM, or SIGHUP or SIGINT from a terminal. The running
+    // call is cancelled, so a command it started is stopped as at its timeout instead of running on unwatched,
+    // and nothing else is handled. If the call does not stop in time, the server exits anyway.
+    private func stopOnSignals() {
+        for number in [SIGTERM, SIGINT, SIGHUP] {
+            signal(number, SIG_IGN)
+            let source = DispatchSource.makeSignalSource(signal: number, queue: .global())
+            source.setEventHandler { [self] in
+                pending.lock()
+                ended = true
+                queue.removeAll()
+                active.values.forEach { $0.cancel() }
+                pending.signal()
+                pending.unlock()
+                DispatchQueue.global().asyncAfter(deadline: .now() + 20) { exit(128 + number) }
+            }
+            source.resume()
+            signalSources.append(source)
+        }
     }
 
     private func receive(_ message: [String: Any]) {
