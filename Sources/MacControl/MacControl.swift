@@ -155,10 +155,22 @@ private final class MacControlServer: MCPServer {
         let snapshot: [String: Any] = ["type": ["string", "null"], "description": "The snapshot the refs belong to."]
         let element: [String: Any] = [
             "type": "object",
-            "description": "An element: role, and title, value, and description when it has them. An element that can be acted on has a ref and its actions. children lists the elements below it; more_children counts those not listed, which can be read by passing its ref as root. unanswered is true when the app did not answer for it."
+            "properties": [
+                "role": string, "title": string, "value": string, "description": string,
+                "ref": ["type": "string", "description": "Given when the element can be acted on, or has children not listed."],
+                "actions": ["type": "array", "items": string, "description": "What mac_ax_action can do with the ref."],
+                "children": ["type": "array", "description": "The elements below it, each like this one."],
+                "more_children": ["type": "integer", "description": "Children not listed; pass the ref as root to read them."],
+                "unanswered": ["type": "boolean", "description": "The app did not answer for this element."]
+            ],
+            "required": ["role"]
         ]
         let elements: [String: Any] = ["type": "array", "items": element]
-        let point: [String: Any] = ["type": "object", "properties": ["x": ["type": "number"], "y": ["type": "number"]]]
+        let surfaceProperties: [String: Any] = ["kind": ["type": "string", "enum": ["menu", "sheet", "dialog", "popover", "panel", "window"]]]
+        let number: [String: Any] = ["type": "number"]
+        let point: [String: Any] = ["type": "object", "properties": ["x": number, "y": number]]
+        let rectangle: [String: Any] = ["type": "object", "properties": ["x": number, "y": number, "width": number, "height": number],
+                                        "required": ["x", "y", "width", "height"]]
         let window: [String: Any] = [
             "type": "object",
             "properties": ["app": string, "bundle_id": string, "title": string, "frame": ["type": ["object", "null"], "description": "x, y, width, and height in screen points."],
@@ -178,8 +190,9 @@ private final class MacControlServer: MCPServer {
                     "screen_recording": boolean, "accessibility": boolean, "display_available": boolean,
                     "screen_locked": ["type": "boolean", "description": "While true, mouse and keyboard tools refuse to send input."],
                     "screen_locked_reason": optionalString, "frontmost_app": optionalString, "frontmost_bundle_id": optionalString,
-                    "main_display": ["type": "object", "description": "x, y, width, and height in screen points."],
-                    "last_screenshot": ["type": ["object", "null"], "description": "width and height in pixels of the last mac_screenshot."],
+                    "main_display": rectangle.merging(["description": "In screen points."]) { $1 },
+                    "last_screenshot": ["type": ["object", "null"], "properties": ["width": integer, "height": integer],
+                                        "description": "The size in pixels of the last mac_screenshot."],
                     "cursor_display": point, "cursor_screenshot": point
                 ], required: ["screen_recording", "accessibility", "display_available", "screen_locked", "main_display"]),
                 "annotations": readsOnly
@@ -311,8 +324,12 @@ private final class MacControlServer: MCPServer {
                     "delivered": ["type": "boolean", "description": "Whether anything was sent to the app."],
                     "verified": ["type": "boolean", "description": "Whether the element was read back afterwards and shows the result."],
                     "checked": ["type": ["string", "null"], "description": "The attribute read back."],
-                    "opened": ["type": "array", "items": ["type": "object"], "description": "Menus, sheets, dialogs, popovers, panels, and windows the action opened, each with kind, a ref, and its direct children."],
-                    "closed": ["type": "array", "items": ["type": "object"], "description": "Those it closed, each with kind and title."],
+                    "opened": ["type": "array", "items": element.merging(["properties": surfaceProperties.merging(element["properties"] as! [String: Any]) { $1 },
+                                                                          "required": ["kind", "role"]]) { $1 },
+                               "description": "Menus, sheets, dialogs, popovers, panels, and windows the action opened, each with a ref and its direct children."],
+                    "closed": ["type": "array", "items": ["type": "object", "properties": surfaceProperties.merging(["title": optionalString]) { $1 },
+                                                          "required": ["kind", "title"]],
+                               "description": "Those it closed."],
                     "message": message
                 ], required: ["delivered", "verified", "checked", "opened", "closed", "message"]),
                 "annotations": sendsInput
@@ -442,11 +459,9 @@ private final class MacControlServer: MCPServer {
         case "mac_screenshot": return try screenshot(args)
         case "mac_request_screen_recording":
             let granted = CGRequestScreenCaptureAccess()
-            return toolResult(["granted": granted], message: granted ? "Screen Recording access is granted." : "Screen Recording access is not granted yet. Complete the macOS permission prompt. \(PermissionHint.screenRecording)")
+            return toolResult(["granted": granted, "message": granted ? "Screen Recording access is granted." : "Screen Recording access is not granted yet. Complete the macOS permission prompt. \(PermissionHint.screenRecording)"])
         case "mac_ui_tree": return toolResult(try uiTree(args))
-        case "mac_ax_action":
-            let outcome = try axAction(args)
-            return toolResult(outcome.report, message: outcome.message)
+        case "mac_ax_action": return toolResult(try axAction(args).report)
         case "mac_find": return toolResult(try find(args))
         case "mac_window": return toolResult(try window(args))
         case "mac_wait": return toolResult(try wait(args))
@@ -529,10 +544,11 @@ private final class MacControlServer: MCPServer {
         var description = "Main display screenshot: \(image.pixelsWide) x \(image.pixelsHigh) pixels. Use these pixel coordinates with mac_mouse."
         if let focused { description += " \(focused.localizedName ?? "An app") is in front." }
         if trusted, !steady { description += " The front app or its window changed during the capture; take another screenshot before clicking with app." }
-        var info: [String: Any] = ["width": image.pixelsWide, "height": image.pixelsHigh, "front_app": focused?.localizedName ?? NSNull()]
+        var info: [String: Any] = ["width": image.pixelsWide, "height": image.pixelsHigh, "front_app": focused?.localizedName ?? NSNull(),
+                                   "message": description]
         // Only known with Accessibility permission.
         if trusted { info["changed_during_capture"] = !steady }
-        return toolResult(info, message: description, images: [["type": "image", "data": data.base64EncodedString(), "mimeType": "image/jpeg"]])
+        return toolResult(info, images: [["type": "image", "data": data.base64EncodedString(), "mimeType": "image/jpeg"]])
     }
 
     private func recordStart(_ args: [String: Any]) throws -> [String: Any] {
@@ -1687,7 +1703,8 @@ private final class MacControlServer: MCPServer {
         var opened: [[String: Any]] = []
         var closed: [[String: Any]] = []
         var report: [String: Any] {
-            ["delivered": delivered, "verified": verified, "checked": checked ?? NSNull(), "opened": opened, "closed": closed]
+            ["delivered": delivered, "verified": verified, "checked": checked ?? NSNull(), "opened": opened, "closed": closed,
+             "message": message]
         }
     }
 

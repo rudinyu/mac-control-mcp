@@ -230,7 +230,7 @@ App 停止回應時（例如忙碌或當掉），讀取會在那裡停止，不�
 {"delivered": true, "verified": false, "checked": null,
   "opened": [{"kind": "menu", "role": "AXMenu", "ref": "aflg2p.5", "children": [
     {"role": "AXMenuItem", "title": "Apple", "ref": "aflg2p.2", "actions": ["cancel", "press", "select", "deselect"]}]}],
-  "closed": [], "message": "…"}
+  "closed": [], "message": "Sent show_menu to AXPopUpButton ref aflg2p.1 in Finder. show_menu leaves no state on the element to check, so call mac_ui_tree to see the result. Opened: menu (ref aflg2p.5); its items are listed in opened, or read below its ref with mac_ui_tree root."}
 ```
 
 | `kind` | 是什麼 |

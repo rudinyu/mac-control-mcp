@@ -197,7 +197,9 @@ private final class MacExecServer: MCPServer {
                 "inputSchema": ["type": "object", "properties": ["path": path], "additionalProperties": false],
                 "outputSchema": output([
                     "path": string, "truncated": boolean,
-                    "entries": ["type": "array", "items": ["type": "object"], "description": "Each entry's name, type, and size."]
+                    "entries": ["type": "array", "items": output([
+                        "name": string, "type": ["type": "string", "enum": ["file", "folder", "link", "other"]], "bytes": integer
+                    ], required: ["name", "type", "bytes"])]
                 ], required: ["path", "entries", "truncated"]),
                 "annotations": ["readOnlyHint": true]
             ],

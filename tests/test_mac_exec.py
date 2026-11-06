@@ -8,7 +8,7 @@ import tempfile
 import time
 import unittest
 
-from tool_descriptions import check_output_schemas, check_structured_result, check_tool_descriptions
+from tool_descriptions import check_output_schemas, check_tool_descriptions, structured_result_problems
 
 SERVER = os.environ.get(
     "MAC_EXEC_SERVER",
@@ -62,6 +62,7 @@ class Server:
         self.process = subprocess.Popen([SERVER], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                                         stderr=subprocess.PIPE, text=True, bufsize=1, env=environment)
         self.next_id = 0
+        self.tools = None
         # The server creates the workspace while starting; wait until it answers.
         self.request("ping")
 
@@ -80,13 +81,14 @@ class Server:
         result = self.request("tools/call", {"name": name, "arguments": arguments})["result"]
         return result.get("isError", False), result["content"][0]["text"]
 
-    def ok(self, name, test=None, **arguments):
-        """The result of a call that must succeed. With test, it is also checked against the tool's outputSchema."""
+    def ok(self, name, **arguments):
+        """The result of a call that must succeed, checked against the tool's outputSchema."""
         result = self.request("tools/call", {"name": name, "arguments": arguments})["result"]
         assert not result.get("isError", False), result["content"][0]["text"]
-        if test is not None:
-            tools = {tool["name"]: tool for tool in self.request("tools/list")["result"]["tools"]}
-            check_structured_result(test, tools[name], result)
+        if self.tools is None:
+            self.tools = {tool["name"]: tool for tool in self.request("tools/list")["result"]["tools"]}
+        problems = structured_result_problems(self.tools[name], result)
+        assert not problems, f"{name}: {problems}"
         return json.loads(result["content"][0]["text"])
 
     def tool_names(self):
@@ -123,17 +125,17 @@ class ProtocolAndFileTests(unittest.TestCase):
         self.assertIn("turned off", text)
 
     def test_workspace_is_created_and_reported(self):
-        status = self.server.ok("exec_status", self)
+        status = self.server.ok("exec_status")
         self.assertEqual(os.path.realpath(status["workspace"]), os.path.realpath(self.server.workspace))
         self.assertTrue(os.path.isdir(self.server.workspace))
         self.assertFalse(status["host_exec_enabled"])
 
     def test_file_round_trip(self):
-        written = self.server.ok("sandbox_write_file", self, path="notes/a.txt", content="中文 line\n")
+        written = self.server.ok("sandbox_write_file", path="notes/a.txt", content="中文 line\n")
         self.assertEqual(written["path"], "/workspace/notes/a.txt")
-        self.server.ok("sandbox_write_file", self, path="/workspace/notes/a.txt", content="more\n", append=True)
-        self.assertEqual(self.server.ok("sandbox_read_file", self, path="notes/a.txt")["content"], "中文 line\nmore\n")
-        entries = self.server.ok("sandbox_list", self, path="notes")["entries"]
+        self.server.ok("sandbox_write_file", path="/workspace/notes/a.txt", content="more\n", append=True)
+        self.assertEqual(self.server.ok("sandbox_read_file", path="notes/a.txt")["content"], "中文 line\nmore\n")
+        entries = self.server.ok("sandbox_list", path="notes")["entries"]
         self.assertEqual([(e["name"], e["type"]) for e in entries], [("a.txt", "file")])
 
     def test_paths_cannot_leave_the_workspace(self):
@@ -167,10 +169,10 @@ class ProtocolAndFileTests(unittest.TestCase):
                 self.assertTrue(self.server.call(name, **arguments)[0])
 
     def test_utf8_is_not_split_at_the_limit(self):
-        self.server.ok("sandbox_write_file", self, path="zh.txt", content="中文字")  # 3 bytes per character
+        self.server.ok("sandbox_write_file", path="zh.txt", content="中文字")  # 3 bytes per character
         for limit, expected in ((1, ""), (3, "中"), (4, "中"), (5, "中"), (6, "中文"), (9, "中文字")):
             with self.subTest(limit=limit):
-                result = self.server.ok("sandbox_read_file", self, path="zh.txt", max_bytes=limit)
+                result = self.server.ok("sandbox_read_file", path="zh.txt", max_bytes=limit)
                 self.assertEqual(result["content"], expected)
                 self.assertEqual(result["truncated"], limit < 9)
 
@@ -188,18 +190,18 @@ class ProtocolAndFileTests(unittest.TestCase):
         os.makedirs(folder)
         for i in range(600):
             open(os.path.join(folder, f"f{i:04}"), "w").close()
-        result = self.server.ok("sandbox_list", self, path="many")
+        result = self.server.ok("sandbox_list", path="many")
         self.assertEqual(len(result["entries"]), 500)
         self.assertTrue(result["truncated"])
 
     def test_append_and_nested_folders(self):
-        self.server.ok("sandbox_write_file", self, path="a/b/c/log.txt", content="one\n")
-        self.server.ok("sandbox_write_file", self, path="a/b/c/log.txt", content="two\n", append=True)
-        self.assertEqual(self.server.ok("sandbox_read_file", self, path="a/b/c/log.txt")["content"], "one\ntwo\n")
+        self.server.ok("sandbox_write_file", path="a/b/c/log.txt", content="one\n")
+        self.server.ok("sandbox_write_file", path="a/b/c/log.txt", content="two\n", append=True)
+        self.assertEqual(self.server.ok("sandbox_read_file", path="a/b/c/log.txt")["content"], "one\ntwo\n")
 
     def test_links_are_listed_as_links(self):
         os.symlink("/etc", os.path.join(self.server.workspace, "etc-link"))
-        entries = self.server.ok("sandbox_list", self)["entries"]
+        entries = self.server.ok("sandbox_list")["entries"]
         self.assertEqual([(e["name"], e["type"]) for e in entries], [("etc-link", "link")])
         self.assertTrue(self.server.call("sandbox_list", path="etc-link")[0])
 
@@ -217,7 +219,7 @@ class ProtocolAndFileTests(unittest.TestCase):
     def test_sensitive_workspace_is_refused(self):
         server = Server(MAC_EXEC_WORKSPACE="~/.ssh")
         try:
-            status = server.ok("exec_status", self)
+            status = server.ok("exec_status")
             self.assertTrue(any(".ssh" in problem for problem in status["problems"]))
             is_error, text = server.call("sandbox_list")
             self.assertTrue(is_error)
@@ -230,7 +232,7 @@ class SettingsTests(unittest.TestCase):
     def check_refused(self, expected, **env):
         server = Server(**env)
         try:
-            problems = server.ok("exec_status", self)["problems"]
+            problems = server.ok("exec_status")["problems"]
             self.assertTrue(any(expected in problem for problem in problems), problems)
             self.assertTrue(server.call("sandbox_list")[0])
         finally:
@@ -248,7 +250,7 @@ class SettingsTests(unittest.TestCase):
     def test_unknown_runtime_is_reported(self):
         server = Server(MAC_EXEC_RUNTIME="podman")
         try:
-            status = server.ok("exec_status", self)
+            status = server.ok("exec_status")
             self.assertTrue(any("MAC_EXEC_RUNTIME" in problem for problem in status["problems"]), status["problems"])
             self.assertIsNone(status["runtime"])
         finally:
@@ -273,7 +275,7 @@ class SettingsTests(unittest.TestCase):
         try:
             server = Server(MAC_EXEC_WORKSPACE=os.path.join(parent, "workspace"), MAC_EXEC_READONLY_DIRS=parent)
             try:
-                self.assertEqual(server.ok("exec_status", self)["problems"], [])
+                self.assertEqual(server.ok("exec_status")["problems"], [])
             finally:
                 server.close()
         finally:
@@ -334,7 +336,7 @@ class HostExecTests(unittest.TestCase):
 
     def test_host_exec_runs_and_is_audited(self):
         self.assertIn("host_exec", self.server.tool_names())
-        result = self.server.ok("host_exec", self, command="echo host-ok", reason="testing host execution")
+        result = self.server.ok("host_exec", command="echo host-ok", reason="testing host execution")
         self.assertEqual(result["exit_code"], 0)
         self.assertEqual(result["stdout"].strip(), "host-ok")
         events = [(e["tool"], e["event"]) for e in self.server.audit_entries()]
@@ -343,7 +345,7 @@ class HostExecTests(unittest.TestCase):
 
     def test_audit_names_the_client(self):
         self.server.request("initialize", {"protocolVersion": "2025-11-25", "clientInfo": {"name": "test-client\n", "version": "1"}})
-        self.server.ok("host_exec", self, command="echo hi", reason="testing the client name")
+        self.server.ok("host_exec", command="echo hi", reason="testing the client name")
         self.assertEqual({e.get("client") for e in self.server.audit_entries()}, {"test-client"})
 
     def test_host_exec_refusals(self):
@@ -356,7 +358,7 @@ class HostExecTests(unittest.TestCase):
 
     def test_host_exec_timeout_kills_every_process(self):
         pid_file = os.path.join(self.server.temp, "child.pid")
-        result = self.server.ok("host_exec", self, command=f"sleep 300 & echo $! > '{pid_file}'; sleep 30",
+        result = self.server.ok("host_exec", command=f"sleep 300 & echo $! > '{pid_file}'; sleep 30",
                                 reason="testing the timeout", timeout_seconds=1)
         self.assertTrue(result["timed_out"])
         self.assertLess(result["duration_ms"], 10_000)
@@ -390,16 +392,16 @@ class HostExecTests(unittest.TestCase):
     def test_host_exec_cwd_and_quoting(self):
         folder = os.path.join(self.server.temp, "dir with 'quote\" and space")
         os.makedirs(folder)
-        result = self.server.ok("host_exec", self, command='pwd -P; printf "%s\\n" "a  b"', cwd=folder, reason="testing the working folder")
+        result = self.server.ok("host_exec", command='pwd -P; printf "%s\\n" "a  b"', cwd=folder, reason="testing the working folder")
         self.assertEqual(result["stdout"].split("\n")[:2], [os.path.realpath(folder), "a  b"])
 
     def test_background_processes_do_not_outlive_the_command(self):
-        result = self.server.ok("host_exec", self, command="sleep 300 & echo $!", reason="testing leftover processes")
+        result = self.server.ok("host_exec", command="sleep 300 & echo $!", reason="testing leftover processes")
         self.assertEqual(result["exit_code"], 0)
         self.assertFalse(alive(int(result["stdout"].strip())))
 
     def test_output_is_capped(self):
-        result = self.server.ok("host_exec", self, command="head -c 300000 /dev/zero | tr '\\0' a", reason="testing the output limit")
+        result = self.server.ok("host_exec", command="head -c 300000 /dev/zero | tr '\\0' a", reason="testing the output limit")
         self.assertTrue(result["output_truncated"])
         self.assertEqual(len(result["stdout"]), 100_000)
 
@@ -440,7 +442,7 @@ class HostExecTests(unittest.TestCase):
             os.chmod(log, 0o644)
             server = Server(MAC_EXEC_ALLOW_HOST="1", MAC_EXEC_AUDIT_LOG=log)
             try:
-                server.ok("host_exec", self, command="true", reason="testing audit modes")
+                server.ok("host_exec", command="true", reason="testing audit modes")
                 self.assertEqual(os.stat(log).st_mode & 0o777, 0o600)
             finally:
                 server.close()
@@ -479,7 +481,7 @@ class SandboxTests(unittest.TestCase):
         self.server.close()
 
     def test_runs_as_unprivileged_user_with_read_only_system(self):
-        result = self.server.ok("sandbox_exec", self, command=(
+        result = self.server.ok("sandbox_exec", command=(
             "id -u; "
             "touch /etc/probe 2>/dev/null && echo etc-writable || echo etc-readonly; "
             "touch /tmp/probe && echo tmp-writable; "
@@ -488,19 +490,19 @@ class SandboxTests(unittest.TestCase):
         self.assertEqual(result["stdout"].split(), ["1000", "etc-readonly", "tmp-writable", "0000000000000000"])
 
     def test_workspace_is_shared_and_cwd_applies(self):
-        self.server.ok("sandbox_write_file", self, path="sub/in.txt", content="from host")
-        result = self.server.ok("sandbox_exec", self, command="pwd; cat in.txt; echo from-sandbox > out.txt", cwd="sub")
+        self.server.ok("sandbox_write_file", path="sub/in.txt", content="from host")
+        result = self.server.ok("sandbox_exec", command="pwd; cat in.txt; echo from-sandbox > out.txt", cwd="sub")
         self.assertEqual(result["stdout"].split("\n")[:2], ["/workspace/sub", "from host"])
-        self.assertEqual(self.server.ok("sandbox_read_file", self, path="sub/out.txt")["content"], "from-sandbox\n")
+        self.assertEqual(self.server.ok("sandbox_read_file", path="sub/out.txt")["content"], "from-sandbox\n")
 
     def test_home_folder_is_not_visible(self):
         home = os.path.expanduser("~")
-        result = self.server.ok("sandbox_exec", self, command=f"ls {home} 2>&1; ls /Users 2>&1; echo done")
+        result = self.server.ok("sandbox_exec", command=f"ls {home} 2>&1; ls /Users 2>&1; echo done")
         self.assertIn("No such file or directory", result["stdout"])
         self.assertTrue(result["stdout"].strip().endswith("done"))
 
     def test_timeout_stops_the_container(self):
-        result = self.server.ok("sandbox_exec", self, command="sleep 60", timeout_seconds=2)
+        result = self.server.ok("sandbox_exec", command="sleep 60", timeout_seconds=2)
         self.assertTrue(result["timed_out"])
         docker = shutil.which("docker") or "/usr/local/bin/docker"
         running = subprocess.run([docker, "ps", "-q", "--filter", "label=mac-exec=1"], capture_output=True, text=True).stdout
@@ -514,7 +516,7 @@ class SandboxTests(unittest.TestCase):
             server = Server(MAC_EXEC_READONLY_DIRS=shared)
             try:
                 name = os.path.basename(shared)
-                result = server.ok("sandbox_exec", self, command=(
+                result = server.ok("sandbox_exec", command=(
                     f"cat /mnt/readonly/{name}/data.txt; echo; "
                     f"touch /mnt/readonly/{name}/new 2>/dev/null && echo writable || echo read-only"))
                 self.assertEqual(result["stdout"].split(), ["shared", "read-only"])
@@ -532,7 +534,7 @@ class SandboxTests(unittest.TestCase):
             os.symlink(os.path.join(folder, "real"), link)
             server = Server(MAC_EXEC_READONLY_DIRS=link)
             try:
-                self.assertEqual(server.ok("sandbox_exec", self, command="echo first")["exit_code"], 0)
+                self.assertEqual(server.ok("sandbox_exec", command="echo first")["exit_code"], 0)
                 inside = os.path.join(server.workspace, "inside")
                 os.mkdir(inside)
                 os.remove(link)
@@ -546,7 +548,7 @@ class SandboxTests(unittest.TestCase):
             shutil.rmtree(folder)
 
     def test_commands_are_audited(self):
-        self.server.ok("sandbox_exec", self, command="echo audited")
+        self.server.ok("sandbox_exec", command="echo audited")
         entries = self.server.audit_entries()
         self.assertEqual([(e["tool"], e["event"]) for e in entries], [("sandbox_exec", "start"), ("sandbox_exec", "end")])
         self.assertEqual(entries[0]["command"], "echo audited")

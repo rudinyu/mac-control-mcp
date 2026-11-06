@@ -28,18 +28,23 @@ def check_output_schemas(test, tools):
 TYPES = {"object": dict, "array": list, "string": str, "boolean": bool, "null": type(None)}
 
 
+def fits(kind, value):
+    """Whether value is of the JSON Schema type kind. A bool is not a number, though Python counts it as one."""
+    if kind == "integer":
+        return isinstance(value, int) and not isinstance(value, bool)
+    if kind == "number":
+        return isinstance(value, (int, float)) and not isinstance(value, bool)
+    return isinstance(value, TYPES[kind])
+
+
 def schema_problems(schema, value, where="result"):
-    """What in value does not match the schema, for the parts of JSON Schema the servers use."""
+    """What in value does not match the schema. Only the keywords the servers' schemas use are checked: type, enum,
+    required, properties, and items. Others, such as additionalProperties, minimum, and maximum, are ignored, since
+    the output schemas leave objects open so that a new field does not break a client."""
     allowed = schema.get("type")
     if allowed is not None:
         allowed = allowed if isinstance(allowed, list) else [allowed]
-        def fits(kind):
-            if kind == "integer":
-                return isinstance(value, int) and not isinstance(value, bool)
-            if kind == "number":
-                return isinstance(value, (int, float)) and not isinstance(value, bool)
-            return isinstance(value, TYPES[kind])
-        if not any(fits(kind) for kind in allowed):
+        if not any(fits(kind, value) for kind in allowed):
             return [f"{where} is {type(value).__name__}, not {' or '.join(allowed)}"]
     if "enum" in schema and value not in schema["enum"]:
         return [f"{where} is {value!r}, not one of {schema['enum']}"]
@@ -55,9 +60,17 @@ def schema_problems(schema, value, where="result"):
     return problems
 
 
-def check_structured_result(test, tool, result):
-    """A successful result's structuredContent matches the tool's outputSchema, and its first text is that JSON."""
+def structured_result_problems(tool, result):
+    """What is wrong with a successful result: its structuredContent must match the tool's outputSchema, and its
+    first text must be that same JSON."""
     structured = result.get("structuredContent")
-    test.assertIsInstance(structured, dict, "no structuredContent")
-    test.assertEqual(json.loads(result["content"][0]["text"]), structured)
-    test.assertEqual(schema_problems(tool["outputSchema"], structured), [])
+    if not isinstance(structured, dict):
+        return ["no structuredContent"]
+    problems = schema_problems(tool["outputSchema"], structured)
+    if json.loads(result["content"][0]["text"]) != structured:
+        problems.append("the text is not the structuredContent JSON")
+    return problems
+
+
+def check_structured_result(test, tool, result):
+    test.assertEqual(structured_result_problems(tool, result), [])
