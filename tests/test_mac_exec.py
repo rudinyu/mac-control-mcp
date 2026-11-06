@@ -84,11 +84,13 @@ class Server:
     def ok(self, name, **arguments):
         """The result of a call that must succeed, checked against the tool's outputSchema."""
         result = self.request("tools/call", {"name": name, "arguments": arguments})["result"]
-        assert not result.get("isError", False), result["content"][0]["text"]
+        if result.get("isError", False):
+            raise AssertionError(result["content"][0]["text"])
         if self.tools is None:
             self.tools = {tool["name"]: tool for tool in self.request("tools/list")["result"]["tools"]}
         problems = structured_result_problems(self.tools[name], result)
-        assert not problems, f"{name}: {problems}"
+        if problems:
+            raise AssertionError(f"{name}: {problems}")
         return json.loads(result["content"][0]["text"])
 
     def tool_names(self):
@@ -136,7 +138,9 @@ class ProtocolAndFileTests(unittest.TestCase):
         self.server.ok("sandbox_write_file", path="/workspace/notes/a.txt", content="more\n", append=True)
         self.assertEqual(self.server.ok("sandbox_read_file", path="notes/a.txt")["content"], "中文 line\nmore\n")
         entries = self.server.ok("sandbox_list", path="notes")["entries"]
-        self.assertEqual([(e["name"], e["type"]) for e in entries], [("a.txt", "file")])
+        self.assertEqual([(e["name"], e["type"], e["bytes"]) for e in entries], [("a.txt", "file", len("中文 line\nmore\n".encode()))])
+        entries = self.server.ok("sandbox_list")["entries"]
+        self.assertEqual([(e["name"], e["type"]) for e in entries], [("notes", "folder")])
 
     def test_paths_cannot_leave_the_workspace(self):
         outside = os.path.join(self.server.temp, "outside.txt")

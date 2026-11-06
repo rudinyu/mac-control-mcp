@@ -153,20 +153,21 @@ private final class MacControlServer: MCPServer {
         let message: [String: Any] = ["type": "string", "description": "What happened, in a sentence."]
         let inputApp: [String: Any] = ["type": "string", "description": "The app in front when the input was sent."]
         let snapshot: [String: Any] = ["type": ["string", "null"], "description": "The snapshot the refs belong to."]
-        let element: [String: Any] = [
-            "type": "object",
-            "properties": [
-                "role": string, "title": string, "value": string, "description": string,
-                "ref": ["type": "string", "description": "Given when the element can be acted on, or has children not listed."],
-                "actions": ["type": "array", "items": string, "description": "What mac_ax_action can do with the ref."],
-                "children": ["type": "array", "description": "The elements below it, each like this one."],
-                "more_children": ["type": "integer", "description": "Children not listed; pass the ref as root to read them."],
-                "unanswered": ["type": "boolean", "description": "The app did not answer for this element."]
-            ],
-            "required": ["role"]
+        let elementProperties: [String: Any] = [
+            "role": string, "title": string, "value": string, "description": string,
+            "ref": ["type": "string", "description": "Given when the element can be acted on, or has children not listed."],
+            "actions": ["type": "array", "items": string, "description": "What mac_ax_action can do with the ref."],
+            "children": ["type": "array", "description": "The elements below it, each like this one."],
+            "more_children": ["type": "integer", "description": "Children not listed; pass the ref as root to read them."],
+            "unanswered": ["type": "boolean", "description": "The app did not answer for this element."]
         ]
+        let element: [String: Any] = ["type": "object", "properties": elementProperties, "required": ["role"]]
         let elements: [String: Any] = ["type": "array", "items": element]
-        let surfaceProperties: [String: Any] = ["kind": ["type": "string", "enum": ["menu", "sheet", "dialog", "popover", "panel", "window"]]]
+        let kind: [String: Any] = ["type": "string", "enum": ["menu", "sheet", "dialog", "popover", "panel", "window"]]
+        var openedProperties = elementProperties
+        openedProperties["kind"] = kind
+        let openedSurface: [String: Any] = ["type": "object", "properties": openedProperties, "required": ["kind", "role"]]
+        let closedSurface: [String: Any] = ["type": "object", "properties": ["kind": kind, "title": optionalString], "required": ["kind", "title"]]
         let number: [String: Any] = ["type": "number"]
         let point: [String: Any] = ["type": "object", "properties": ["x": number, "y": number]]
         let rectangle: [String: Any] = ["type": "object", "properties": ["x": number, "y": number, "width": number, "height": number],
@@ -324,11 +325,9 @@ private final class MacControlServer: MCPServer {
                     "delivered": ["type": "boolean", "description": "Whether anything was sent to the app."],
                     "verified": ["type": "boolean", "description": "Whether the element was read back afterwards and shows the result."],
                     "checked": ["type": ["string", "null"], "description": "The attribute read back."],
-                    "opened": ["type": "array", "items": element.merging(["properties": surfaceProperties.merging(element["properties"] as! [String: Any]) { $1 },
-                                                                          "required": ["kind", "role"]]) { $1 },
+                    "opened": ["type": "array", "items": openedSurface,
                                "description": "Menus, sheets, dialogs, popovers, panels, and windows the action opened, each with a ref and its direct children."],
-                    "closed": ["type": "array", "items": ["type": "object", "properties": surfaceProperties.merging(["title": optionalString]) { $1 },
-                                                          "required": ["kind", "title"]],
+                    "closed": ["type": "array", "items": closedSurface,
                                "description": "Those it closed."],
                     "message": message
                 ], required: ["delivered", "verified", "checked", "opened", "closed", "message"]),
