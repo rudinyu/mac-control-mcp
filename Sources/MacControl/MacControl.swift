@@ -508,6 +508,8 @@ private final class MacControlServer: MCPServer {
     }
 
     private func screenshot(_ args: [String: Any]) throws -> [String: Any] {
+        if let value = args["full_resolution"], !(value is Bool) { throw ToolFailure("full_resolution must be true or false.") }
+        let fullResolution = args["full_resolution"] as? Bool ?? false
         let target = try targetApp(args)
         guard CGDisplayBounds(CGMainDisplayID()).width > 0 else {
             throw ToolFailure("No Mac display is available to this process. Run the MCP host in a logged-in local desktop session.", .setup)
@@ -525,8 +527,6 @@ private final class MacControlServer: MCPServer {
         let frame = focused.flatMap(windowFrame)
         let path = FileManager.default.temporaryDirectory.appendingPathComponent("mac-control-\(UUID().uuidString).jpg")
         defer { try? FileManager.default.removeItem(at: path) }
-        if let value = args["full_resolution"], !(value is Bool) { throw ToolFailure("full_resolution must be true or false.") }
-        let fullResolution = args["full_resolution"] as? Bool ?? false
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/sbin/screencapture")
         process.arguments = ["-x", "-m", "-t", "jpg", path.path]
@@ -544,7 +544,7 @@ private final class MacControlServer: MCPServer {
         let bounds = CGDisplayBounds(CGMainDisplayID())
         // By default the image is scaled to the screen's size in points: a quarter of the data on a Retina
         // display, under the size clients shrink images to, and in the units of window frames.
-        let (image, jpeg) = fullResolution ? (captured, data) : try scaled(captured, data, to: bounds.size)
+        let (image, jpeg) = try fullResolution ? (captured, data) : scaled(captured, data, to: bounds.size)
         let after = trusted ? focusedApp() : nil
         let steady = after?.processIdentifier == focused?.processIdentifier && after.flatMap(windowFrame) == frame
         lastCapture = CaptureSize(width: image.pixelsWide, height: image.pixelsHigh, displayBounds: bounds,
@@ -564,18 +564,18 @@ private final class MacControlServer: MCPServer {
     private func scaled(_ image: NSBitmapImageRep, _ data: Data, to size: CGSize) throws -> (NSBitmapImageRep, Data) {
         let width = Int(size.width.rounded()), height = Int(size.height.rounded())
         guard image.pixelsWide > width || image.pixelsHigh > height else { return (image, data) }
+        // No input has been sent, so the call is safe to repeat.
+        let failure = ToolFailure("The screenshot could not be scaled. Try full_resolution.", .internalError)
         guard let source = image.cgImage,
               let context = CGContext(data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: 0,
                                       space: CGColorSpace(name: CGColorSpace.sRGB)!, bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue) else {
-            throw ToolFailure("The screenshot could not be scaled. Try full_resolution.", .setup)
+            throw failure
         }
         context.interpolationQuality = .high
         context.draw(source, in: CGRect(x: 0, y: 0, width: width, height: height))
-        guard let scaledImage = context.makeImage() else { throw ToolFailure("The screenshot could not be scaled. Try full_resolution.", .setup) }
+        guard let scaledImage = context.makeImage() else { throw failure }
         let result = NSBitmapImageRep(cgImage: scaledImage)
-        guard let jpeg = result.representation(using: .jpeg, properties: [.compressionFactor: 0.8]) else {
-            throw ToolFailure("The screenshot could not be scaled. Try full_resolution.", .setup)
-        }
+        guard let jpeg = result.representation(using: .jpeg, properties: [.compressionFactor: 0.8]) else { throw failure }
         return (result, jpeg)
     }
 
