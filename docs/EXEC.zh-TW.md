@@ -85,7 +85,7 @@ MacControl.app 另外會設定 `MAC_EXEC_COLIMA`、`MAC_EXEC_COLIMA_PROFILE`、`
 | `sandbox_list` | `path` | 列出工作資料夾裡的資料夾內容，最多 500 項。 |
 | `host_exec` | `command`、`reason`（必填）、`cwd`、`timeout_seconds` | 只在 `MAC_EXEC_ALLOW_HOST=1` 時出現。用你的權限在 Mac 上執行 `zsh -lc command`。 |
 
-指令一次執行一個。客戶端取消 `sandbox_exec` 或 `host_exec` 時，指令會像逾時一樣被停止：結束容器，或結束這個指令啟動的所有程序；不回傳結果，稽核紀錄會記下 `"cancelled": true`。客戶端在指令執行中關閉或重新啟動 mac-exec 時也一樣。如果 mac-exec 是被強制結束的，它的容器可能會繼續跑，直到下一次 `sandbox_exec`：這時會先移除已結束的 mac-exec 留下的容器，其他客戶端仍在執行的 mac-exec 的容器則不會動。
+指令一次執行一個。客戶端取消 `sandbox_exec` 或 `host_exec` 時，指令會像逾時一樣被停止：結束容器，或結束這個指令啟動的所有程序；不回傳結果，稽核紀錄會記下 `"cancelled": true`。客戶端在指令執行中關閉或重新啟動 mac-exec 時也一樣。如果 mac-exec 是被強制結束的，它的容器可能會繼續跑，直到下一次 `sandbox_exec`：這時會先移除已結束的 mac-exec 留下的容器，其他客戶端仍在執行的 mac-exec 的容器則不會動。這項清理只支援 Docker；使用 Apple 的 `container` 時，請用 `container ls --all` 和 `container rm` 自行移除。
 
 檔案工具的路徑可以是相對路徑，例如 `notes/a.txt`，也可以用 `/workspace/` 開頭。任何解析後落在工作資料夾外的路徑，包括經由符號連結的，一律拒絕。
 

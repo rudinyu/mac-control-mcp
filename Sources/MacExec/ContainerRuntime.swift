@@ -164,7 +164,8 @@ struct ContainerOwner: Equatable {
     let pid: pid_t
     let start: Int
 
-    static var current: ContainerOwner { ContainerOwner(pid: getpid(), start: processStart(getpid()) ?? 0) }
+    // A process can always look up its own start time; 0 is only a fallback that cannot match a real start.
+    static let current = ContainerOwner(pid: getpid(), start: processStart(getpid()) ?? 0)
 
     // When the process started, in seconds, or nil when no such process exists.
     static func processStart(_ pid: pid_t) -> Int? {

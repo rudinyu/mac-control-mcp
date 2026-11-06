@@ -375,10 +375,7 @@ private final class MacExecServer: MCPServer {
         try ensureRuntimeRunning(runtime)
         let root = resolvedPath(settings.workspace)
         let containerCwd = "/workspace" + String(cwd.path.dropFirst(root.count))
-        if sweepContainers {
-            removeLeftoverContainers(runtime)
-            sweepContainers = false
-        }
+        if sweepContainers { sweepContainers = try !removeLeftoverContainers(runtime) }
         let name = ContainerOwner.current.containerName()
         var readOnly: [(source: String, target: String)] = []
         var used: Set<String> = []
@@ -447,17 +444,22 @@ private final class MacExecServer: MCPServer {
         }
     }
 
-    // Removes sandbox containers that are no longer wanted. Best effort: a failure here must not stop the command.
-    private func removeLeftoverContainers(_ runtime: ContainerRuntime) {
-        guard let list = runtime.listArguments(),
-              let listed = try? runProcess(runtime.program, list, environment: runtime.environment, timeout: 15, outputLimit: 100_000),
-              listed.exitCode == 0 else { return }
+    // Removes sandbox containers that are no longer wanted. Best effort: a failure here must not stop the command,
+    // but returns false so the next command tries again. Only cancellation is thrown.
+    private func removeLeftoverContainers(_ runtime: ContainerRuntime) throws -> Bool {
+        guard let list = runtime.listArguments() else { return true }
+        let listed = try? runProcess(runtime.program, list, environment: runtime.environment, timeout: 15,
+                                     outputLimit: 100_000, cancellation: cancellation)
+        try cancellation.check()
+        guard let listed, listed.exitCode == 0 else { return false }
         let names = listed.stdout.split(whereSeparator: \.isNewline).map(String.init)
         let leftovers = ContainerOwner.leftovers(names, me: .current, startOf: ContainerOwner.processStart)
-        guard !leftovers.isEmpty else { return }
+        guard !leftovers.isEmpty else { return true }
         try? audit(["tool": "sandbox_exec", "event": "remove_leftovers", "containers": leftovers])
         _ = try? runProcess(runtime.program, runtime.removeArguments(leftovers), environment: runtime.environment,
-                            timeout: 30, outputLimit: 1000)
+                            timeout: 30, outputLimit: 1000, cancellation: cancellation)
+        try cancellation.check()
+        return true
     }
 
     private func hostExec(_ args: [String: Any]) throws -> [String: Any] {

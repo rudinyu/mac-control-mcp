@@ -540,7 +540,8 @@ class SandboxTests(unittest.TestCase):
             self.server.ok("sandbox_exec", command="true")
             listed = subprocess.run([docker, "ps", "-a", "-q", "--filter", f"name=^{name}$"], capture_output=True, text=True).stdout
             self.assertEqual(listed.strip(), "")
-            self.assertIn("remove_leftovers", [entry["event"] for entry in self.server.audit_entries()])
+            removed = [entry["containers"] for entry in self.server.audit_entries() if entry.get("event") == "remove_leftovers"]
+            self.assertIn(name, sum(removed, []))
         finally:
             subprocess.run([docker, "rm", "-f", name], capture_output=True)
 
