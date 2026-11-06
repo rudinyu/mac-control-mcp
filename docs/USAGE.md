@@ -25,7 +25,13 @@ Example requests:
 
 **Mouse coordinates come from the latest screenshot.** `mac_mouse` uses positions in the most recent `mac_screenshot` image. The image is the size of the screen in points, as `mac_status` reports it, for example 1920 × 1080, so its positions are also the units of `mac_window` frames. With `full_resolution` it keeps every pixel of a Retina display, usually twice the width and height, and `mac_mouse` then takes pixel positions. Always go by the size the screenshot reports. Take a new screenshot after anything moves, and after the resolution changes.
 
-**Always name the target app.** When the agent runs in a terminal or in Claude Desktop, focus often returns to that window between two tool calls. Input sent without a target then lands in the agent's own window, or in whatever app came to the front. Pass `app` to `mac_screenshot`, `mac_mouse`, `mac_scroll`, `mac_type_text`, and `mac_key`. The server brings that app to the front, checks again just before sending, and sends nothing if another app has taken focus. For `mac_mouse`, it also refuses to click when the last screenshot was not taken with that app in front, when its window has moved or resized since, or when the point is over another app, such as a window on top, the Dock, or a menu bar icon. `mac_scroll` refuses when the pointer is over another app. Some panels, such as Open and Save in sandboxed apps, run in a separate process; to click in one, leave out `app` for that click. Add a line like this to your request:
+**Always name the target app.** When the agent runs in a terminal or in Claude Desktop, focus often returns to that window between two tool calls. Input sent without a target then lands in the agent's own window, or in whatever app came to the front. Pass `app` to `mac_screenshot`, `mac_mouse`, `mac_scroll`, `mac_type_text`, and `mac_key`. The server brings that app to the front, checks again just before sending, and sends nothing if another app has taken focus. For `mac_mouse`, it also refuses to click when the last screenshot was not taken with that app in front, when its window has moved or resized since, or when the point is over another app, such as a window on top, the Dock, or a menu bar icon. `mac_scroll` refuses when the pointer is over another app. Some panels, such as Open and Save in sandboxed apps, run in a separate process; to click in one, leave out `app` for that click.
+
+Without `app`, the server still refuses input that would reach the app the agent itself runs in, such as the terminal, Claude, or Codex: keys and text while that app is in front, and clicks and scrolls over it. Pass `app` with that app's name to send input there on purpose. A click without `app` also needs the app that was in front for the last screenshot to still be in front, with its window unchanged. The app running the agent is found through the server's parent processes, so it is not found when the server runs under tmux or a similar tool.
+
+To make sure keys and text go to one window of an app, such as one document of several, pass `window` with a ref from `mac_window list`. Nothing is sent unless that window is the app's focused window; use `mac_window` `focus` first. The results of `mac_type_text` and `mac_key` name the window that had focus.
+
+Add a line like this to your request:
 
 > Use `"app": "TextEdit"` with every mac-control tool.
 
@@ -88,6 +94,7 @@ It scrolls wherever the pointer is, so move the pointer over the target with `ma
 | --- | --- | --- |
 | `text` | string, required | 1 to 2000 characters; any Unicode, including Chinese and emoji |
 | `app` | string | Name or bundle ID of a running app to type into, such as `TextEdit` or `com.apple.TextEdit` |
+| `window` | string | A window ref from `mac_window list`; nothing is pasted unless it is its app's focused window |
 
 ```json
 {"text": "測試中文 abc", "app": "TextEdit"}
@@ -95,7 +102,7 @@ It scrolls wherever the pointer is, so move the pointer over the target with `ma
 
 The text is pasted: the server puts it on the clipboard, presses Command-V, and then restores your previous clipboard. Pasting works with input methods such as Zhuyin, where simulated key presses would not. If another app changes the clipboard during the paste, the server leaves that change alone. A clipboard over 40 MB, or one that cannot be saved exactly, cancels the input instead of losing your data.
 
-The result names the app that received the text, for example `Inserted 8 characters into TextEdit via Command-V.`
+The result names the app that received the text, for example `Inserted 8 characters into TextEdit via Command-V.`, and in `window` the title of its focused window.
 
 ### `mac_key`
 
@@ -104,6 +111,7 @@ The result names the app that received the text, for example `Inserted 8 charact
 | `key` | string, required | `a`–`z`, `0`–`9`, `enter`/`return`, `tab`, `space`, `backspace`, `delete`, `escape`, `home`, `end`, `pageup`, `pagedown`, `left`, `right`, `up`, `down` |
 | `modifiers` | array | Any of `cmd`, `shift`, `alt`, `ctrl` |
 | `app` | string | Same as for `mac_type_text` |
+| `window` | string | Same as for `mac_type_text` |
 
 ```json
 {"key": "n", "modifiers": ["cmd"], "app": "TextEdit"}

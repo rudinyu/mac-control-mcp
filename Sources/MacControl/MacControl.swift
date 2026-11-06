@@ -130,6 +130,21 @@ private final class MacControlServer: MCPServer {
     private let refs = RefRegistry()
     // The running call's cancellation; calls run one at a time.
     private var cancellation = Cancellation()
+    // The app this server runs under, such as the terminal, Claude, or Codex: the nearest parent process with a
+    // Dock icon. Input that reaches it without being aimed at it could answer the agent's own prompts. There is
+    // none when the server runs under tmux or another process that launchd started.
+    private lazy var hostApp: NSRunningApplication? = {
+        var pid = getppid()
+        while pid > 1 {
+            if let app = NSRunningApplication(processIdentifier: pid), app.activationPolicy == .regular { return app }
+            var info = kinfo_proc()
+            var size = MemoryLayout<kinfo_proc>.stride
+            var name: [Int32] = [CTL_KERN, KERN_PROC, KERN_PROC_PID, pid]
+            guard sysctl(&name, 4, &info, &size, nil, 0) == 0, size > 0 else { return nil }
+            pid = info.kp_eproc.e_ppid
+        }
+        return nil
+    }()
 
     let tools: [[String: Any]] = {
         let role: [String: Any] = ["type": "string", "description": "Accessibility role, with or without the AX prefix, such as button or AXTextField."]
@@ -152,6 +167,8 @@ private final class MacControlServer: MCPServer {
         let optionalString: [String: Any] = ["type": ["string", "null"]]
         let message: [String: Any] = ["type": "string", "description": "What happened, in a sentence."]
         let inputApp: [String: Any] = ["type": "string", "description": "The app in front when the input was sent."]
+        let inputWindow: [String: Any] = ["type": ["string", "null"], "description": "The title of the focused window when the input was sent."]
+        let keyboardWindow: [String: Any] = ["type": "string", "description": "A window ref from mac_window list. Nothing is sent unless it is the focused window of its app; use mac_window focus with it first. Its app is used when app is left out."]
         let snapshot: [String: Any] = ["type": ["string", "null"], "description": "The snapshot the refs belong to."]
         let elementProperties: [String: Any] = [
             "role": string, "title": string, "value": string, "description": string,
@@ -381,7 +398,7 @@ private final class MacControlServer: MCPServer {
                         "y": ["type": "number", "description": "From the top of the most recent mac_screenshot image, in the same units."],
                         "to_x": ["type": "number", "description": "For drag: where it ends, in the same units."],
                         "to_y": ["type": "number", "description": "For drag: where it ends, in the same units."],
-                        "app": appProperty("It is brought to the front first, and nothing is sent unless it is still in front, the last mac_screenshot was taken with it in front, its window has not moved or resized since, and the point is over it.")
+                        "app": appProperty("It is brought to the front first, and nothing is sent unless it is still in front, the last mac_screenshot was taken with it in front, its window has not moved or resized since, and the point is over it. Without app, a click needs the app that was in front for the last mac_screenshot to still be in front with its window unchanged, and may not land on the app running this agent.")
                     ],
                     "required": ["action", "x", "y"],
                     "additionalProperties": false
@@ -397,7 +414,7 @@ private final class MacControlServer: MCPServer {
                     "properties": [
                         "vertical": ["type": "integer", "minimum": -scrollLimit, "maximum": scrollLimit, "description": "Lines to scroll; positive scrolls up."],
                         "horizontal": ["type": "integer", "minimum": -scrollLimit, "maximum": scrollLimit, "description": "Lines to scroll; positive scrolls left."],
-                        "app": appProperty("It is brought to the front first, and nothing is scrolled unless it is still in front and the pointer is over it.")
+                        "app": appProperty("It is brought to the front first, and nothing is scrolled unless it is still in front and the pointer is over it. Without app, the pointer may not be over the app running this agent.")
                     ],
                     "additionalProperties": false
                 ],
@@ -411,11 +428,12 @@ private final class MacControlServer: MCPServer {
                     "type": "object",
                     "properties": [
                         "text": ["type": "string", "maxLength": textLimit, "description": "The text to insert."],
-                        "app": appProperty("It is brought to the front first, and nothing is pasted unless it is still in front.")
+                        "app": appProperty("It is brought to the front first, and nothing is pasted unless it is still in front. Without app or window, nothing is pasted while the app running this agent is in front."),
+                        "window": keyboardWindow
                     ],
                     "required": ["text"], "additionalProperties": false
                 ],
-                "outputSchema": output(["characters": integer, "app": inputApp, "message": message], required: ["characters", "app", "message"]),
+                "outputSchema": output(["characters": integer, "app": inputApp, "window": inputWindow, "message": message], required: ["characters", "app", "window", "message"]),
                 "annotations": sendsInput
             ],
             [
@@ -426,11 +444,12 @@ private final class MacControlServer: MCPServer {
                     "properties": [
                         "key": ["type": "string", "description": "A letter a-z, a digit 0-9, or one of \(namedKeys.joined(separator: ", ")). delete is forward delete."],
                         "modifiers": ["type": "array", "items": ["type": "string", "enum": keyModifiers], "uniqueItems": true, "description": "Keys to hold down while pressing key."],
-                        "app": appProperty("It is brought to the front first, and no key is sent unless it is still in front.")
+                        "app": appProperty("It is brought to the front first, and no key is sent unless it is still in front. Without app or window, no key is sent while the app running this agent is in front."),
+                        "window": keyboardWindow
                     ],
                     "required": ["key"], "additionalProperties": false
                 ],
-                "outputSchema": output(["keys": ["type": "string", "description": "The keys pressed, such as cmd+c."], "app": inputApp, "message": message], required: ["keys", "app", "message"]),
+                "outputSchema": output(["keys": ["type": "string", "description": "The keys pressed, such as cmd+c."], "app": inputApp, "window": inputWindow, "message": message], required: ["keys", "app", "window", "message"]),
                 "annotations": sendsInput
             ]
         ]
@@ -723,12 +742,23 @@ private final class MacControlServer: MCPServer {
     // Asks Accessibility rather than NSWorkspace, whose frontmostApplication can be stale without a run loop.
     // Returns nil when focus is unknown, so focus checks before input fail closed.
     private func focusedApp() -> NSRunningApplication? {
-        guard let element = elementAttribute(AXUIElementCreateSystemWide(), kAXFocusedApplicationAttribute as CFString) else {
-            return nil
+        if let element = elementAttribute(AXUIElementCreateSystemWide(), kAXFocusedApplicationAttribute as CFString) {
+            var pid: pid_t = 0
+            guard AXUIElementGetPid(element, &pid) == .success else { return nil }
+            return NSRunningApplication(processIdentifier: pid)
         }
-        var pid: pid_t = 0
-        guard AXUIElementGetPid(element, &pid) == .success else { return nil }
-        return NSRunningApplication(processIdentifier: pid)
+        // The system-wide query can fail for every app, with kAXErrorCannotComplete, as on macOS 26. Then ask the
+        // apps themselves: NSWorkspace's guess first, after letting it catch up, and the others only if that is wrong.
+        RunLoop.current.run(until: Date())
+        let guess = NSWorkspace.shared.frontmostApplication
+        let others = NSWorkspace.shared.runningApplications.filter {
+            $0.activationPolicy == .regular && !$0.isTerminated && $0.processIdentifier != guess?.processIdentifier
+        }
+        return ([guess].compactMap { $0 } + others).first { app in
+            let element = AXUIElementCreateApplication(app.processIdentifier)
+            AXUIElementSetMessagingTimeout(element, 0.25)
+            return (attribute(element, kAXFrontmostAttribute as CFString) as? Bool) == true
+        }
     }
 
     private func waitUntilFocused(_ app: NSRunningApplication) -> Bool {
@@ -764,6 +794,13 @@ private final class MacControlServer: MCPServer {
             if waitUntilFocused(app) { return }
         }
         throw focusFailure(app, focusedApp())
+    }
+
+    // The app's focused window, or nil when it has none or does not answer.
+    private func focusedWindow(_ pid: pid_t) -> AXUIElement? {
+        let appElement = AXUIElementCreateApplication(pid)
+        AXUIElementSetMessagingTimeout(appElement, axMessagingTimeout)
+        return elementAttribute(appElement, kAXFocusedWindowAttribute as CFString)
     }
 
     // The frame of the app's focused or main window, in screen points.
@@ -816,10 +853,49 @@ private final class MacControlServer: MCPServer {
         }
     }
 
+    // Input that was not aimed at an app may not reach the app running this agent.
+    private func refuseHost(_ pid: pid_t?, _ what: String) throws {
+        guard let host = hostApp, let pid, pid == host.processIdentifier else { return }
+        let name = host.localizedName ?? "the app running this agent"
+        throw ToolFailure("\(what) would go to \(name), the app running this agent; no input was sent. Pass app with the app you mean to use, or app \"\(name)\" to send it there on purpose.")
+    }
+
+    // A click without app must still land on the screen the agent saw: the app that was in front for the last
+    // screenshot is still in front, and its window has not moved or resized.
+    private func requireSameFrontSinceScreenshot() throws {
+        guard let capture = lastCapture, let pid = capture.focusedPID else {
+            throw ToolFailure("The front app or its window changed during the last mac_screenshot, or Accessibility could not tell which app was in front; no input was sent. Call mac_screenshot again.", .staleScreenshot)
+        }
+        let front = focusedApp()
+        guard front?.processIdentifier == pid, let app = front else {
+            let was = NSRunningApplication(processIdentifier: pid)?.localizedName ?? "another app"
+            throw ToolFailure("\(front?.localizedName ?? "Another app") is in front, but \(was) was in front for the last mac_screenshot; no input was sent. Call mac_screenshot again, or pass app.", .staleScreenshot)
+        }
+        guard windowFrame(app) == capture.windowFrame else {
+            throw ToolFailure("\(app.localizedName ?? "The front app")'s window moved, resized, or changed since the last mac_screenshot; no input was sent. Call mac_screenshot again.", .staleScreenshot)
+        }
+    }
+
+    // The window ref a keyboard tool was given, and its app.
+    private func inputWindow(_ args: [String: Any]) throws -> (element: AXUIElement, app: NSRunningApplication)? {
+        guard args["window"] != nil else { return nil }
+        let ref = try resolveRef(args, key: "window", outcome: "no input was sent")
+        guard ref.role == kAXWindowRole else {
+            throw ToolFailure("Ref \(args["window"] as? String ?? "") has role \(ref.role), not AXWindow. Use a ref from mac_window list.")
+        }
+        guard let app = NSRunningApplication(processIdentifier: ref.pid) else {
+            throw ToolFailure("The window's app has quit; no input was sent.", .staleRef)
+        }
+        return (ref.element, app)
+    }
+
     // Re-checks focus immediately before posting input, since another app can take focus between tool calls.
     // A terminal hosting the agent may grab focus back right after activation, so re-activate once.
+    // With window, that window must also be its app's focused window. Keyboard input without a target may not
+    // go to the app running this agent. Returns the app and the title of its focused window.
     // This is best effort: focus can still change in the moment between this check and the posted event.
-    private func confirmFocus(_ target: NSRunningApplication?) throws -> String {
+    private func confirmFocus(_ target: NSRunningApplication?, window: AXUIElement? = nil,
+                              keyboard: Bool = false) throws -> (app: String, window: String?) {
         // The screen can lock while the target app is being brought to the front.
         try requireUnlocked()
         var current = focusedApp()
@@ -828,9 +904,21 @@ private final class MacControlServer: MCPServer {
             current = focusedApp()
             guard current?.processIdentifier == target.processIdentifier else { throw focusFailure(target, current) }
         }
+        if keyboard, target == nil {
+            guard let current else {
+                throw ToolFailure("Could not determine which app has focus, so the input could go anywhere; no input was sent. Pass app, or check Accessibility permission.", .focusLost)
+            }
+            try refuseHost(current.processIdentifier, "The input")
+        }
+        let focused = current.flatMap { focusedWindow($0.processIdentifier) }
+        if let window, !(focused.map { CFEqual($0, window) } ?? false) {
+            let title = focused.flatMap { shortString(attribute($0, kAXTitleAttribute as CFString)) }
+            let name = current?.localizedName ?? "The app"
+            throw ToolFailure("The window given is not \(name)'s focused window\(title.map { "; \"\($0)\" is" } ?? ""); no input was sent. Use mac_window focus with it first.", .focusLost)
+        }
         // The last moment a cancelled call can stop with nothing sent.
         try cancellation.check()
-        return current?.localizedName ?? "the frontmost app"
+        return (current?.localizedName ?? "the frontmost app", focused.flatMap { shortString(attribute($0, kAXTitleAttribute as CFString)) })
     }
 
     private func number(_ args: [String: Any], _ key: String) throws -> Double {
@@ -872,11 +960,14 @@ private final class MacControlServer: MCPServer {
         try requireAccessibility()
         try requireUnlocked()
         if let target { try bringToFront(target) }
-        let receiver = try confirmFocus(target)
+        let receiver = try confirmFocus(target).app
         if let target {
             try requireUnchangedSinceScreenshot(target)
             // Moving the pointer sends nothing to an app; a drag may end over another app, as a drop onto Finder does.
             if action != "move" { try requirePoint(start, in: target, what: "The point") }
+        } else if action != "move" {
+            try requireSameFrontSinceScreenshot()
+            try refuseHost(appAt(start), "The \(action.replacingOccurrences(of: "_", with: " "))")
         }
         // Every event is created before any is posted, so a failure cannot leave half a click or a button held down.
         var events: [CGEvent] = []
@@ -925,13 +1016,12 @@ private final class MacControlServer: MCPServer {
         try requireAccessibility()
         try requireUnlocked()
         if let target { try bringToFront(target) }
-        let receiver = try confirmFocus(target)
-        if let target {
-            guard let pointer = CGEvent(source: nil)?.location else {
-                throw ToolFailure("Could not read the pointer position; no input was sent.", .internalError)
-            }
-            try requirePoint(pointer, in: target, what: "The pointer")
+        let receiver = try confirmFocus(target).app
+        guard let pointer = CGEvent(source: nil)?.location else {
+            throw ToolFailure("Could not read the pointer position; no input was sent.", .internalError)
         }
+        if let target { try requirePoint(pointer, in: target, what: "The pointer") }
+        else { try refuseHost(appAt(pointer), "The scroll") }
         guard let event = CGEvent(scrollWheelEvent2Source: nil, units: .line, wheelCount: 2,
                                   wheel1: Int32(vertical), wheel2: Int32(horizontal), wheel3: 0) else {
             throw ToolFailure("Could not create a scroll event.", .internalError)
@@ -945,7 +1035,8 @@ private final class MacControlServer: MCPServer {
         guard let value = args["text"] as? String, !value.isEmpty, value.count <= textLimit else {
             throw ToolFailure("text must contain 1 to \(textLimit) characters.")
         }
-        let target = try targetApp(args)
+        let window = try inputWindow(args)
+        let target = try targetApp(args) ?? window?.app
         try requireAccessibility()
         try requireUnlocked()
         if let target { try bringToFront(target) }
@@ -991,13 +1082,14 @@ private final class MacControlServer: MCPServer {
               let up = CGEvent(keyboardEventSource: nil, virtualKey: 9, keyDown: false) else {
             throw ToolFailure("Could not create a paste keyboard event.", .internalError)
         }
-        let receiver = try confirmFocus(target)
+        let receiver = try confirmFocus(target, window: window?.element, keyboard: true)
         down.flags = .maskCommand
         up.flags = .maskCommand
         down.post(tap: .cghidEventTap)
         up.post(tap: .cghidEventTap)
         usleep(pasteSettleMicroseconds)
-        return ["characters": value.count, "app": receiver, "message": "Inserted \(value.count) characters into \(receiver) via Command-V."]
+        return ["characters": value.count, "app": receiver.app, "window": receiver.window ?? NSNull(),
+                "message": "Inserted \(value.count) characters into \(receiver.app) via Command-V."]
     }
 
 
@@ -1010,7 +1102,8 @@ private final class MacControlServer: MCPServer {
               names.allSatisfy({ keyModifiers.contains($0) }) else {
             throw ToolFailure("Invalid modifiers")
         }
-        let target = try targetApp(args)
+        let window = try inputWindow(args)
+        let target = try targetApp(args) ?? window?.app
         try requireAccessibility()
         try requireUnlocked()
         if let target { try bringToFront(target) }
@@ -1023,13 +1116,13 @@ private final class MacControlServer: MCPServer {
               let up = CGEvent(keyboardEventSource: nil, virtualKey: code, keyDown: false) else {
             throw ToolFailure("Could not create a keyboard event.", .internalError)
         }
-        let receiver = try confirmFocus(target)
+        let receiver = try confirmFocus(target, window: window?.element, keyboard: true)
         down.flags = flags
         up.flags = flags
         down.post(tap: .cghidEventTap)
         up.post(tap: .cghidEventTap)
         let keys = (names + [keyName]).joined(separator: "+")
-        return ["keys": keys, "app": receiver, "message": "Pressed \(keys) in \(receiver)."]
+        return ["keys": keys, "app": receiver.app, "window": receiver.window ?? NSNull(), "message": "Pressed \(keys) in \(receiver.app)."]
     }
 
     private func attribute(_ element: AXUIElement, _ name: CFString) -> CFTypeRef? {

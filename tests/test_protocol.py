@@ -119,6 +119,20 @@ class MCPProtocolTests(unittest.TestCase):
             with self.subTest(name=name):
                 self.assertEqual(listed[name]["inputSchema"]["properties"]["app"]["type"], "string")
 
+    def test_14_keyboard_window_must_be_a_window_ref(self):
+        listed = {tool["name"]: tool for tool in self.request("tools/list")["result"]["tools"]}
+        for name, arguments in [("mac_type_text", {"text": "x"}), ("mac_key", {"key": "a"})]:
+            self.assertEqual(listed[name]["inputSchema"]["properties"]["window"]["type"], "string")
+            for window, expected in [
+                (7, "window must be"),
+                ("3.12", "3.12 is not a ref; no input was sent"),
+                ("zzzzzz.1", "Unknown or expired ref zzzzzz.1"),
+            ]:
+                with self.subTest(name=name, window=window):
+                    response = self.request("tools/call", {"name": name, "arguments": {**arguments, "window": window}})
+                    self.assertTrue(response["result"]["isError"])
+                    self.assertIn(expected, response["result"]["content"][0]["text"])
+
     def test_06_unknown_parameter_names_the_accepted_ones(self):
         response = self.request("tools/call", {"name": "mac_scroll", "arguments": {"dy": -5}})
         self.assertTrue(response["result"]["isError"])

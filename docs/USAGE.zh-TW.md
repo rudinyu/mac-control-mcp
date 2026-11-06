@@ -25,7 +25,13 @@
 
 **滑鼠座標以最新的截圖為準。** `mac_mouse` 使用最近一次 `mac_screenshot` 影像裡的位置。影像的大小就是 `mac_status` 回報的螢幕尺寸（以點為單位），例如 1920 × 1080，所以影像上的位置也就是 `mac_window` 視窗座標的單位。加上 `full_resolution` 時會保留 Retina 螢幕的每個像素，寬高通常是兩倍，`mac_mouse` 這時改用像素位置。請一律以截圖回報的尺寸為準。畫面有任何移動，或解析度改變之後，都要重新截圖。
 
-**一定要指定目標 App。** 代理在終端機或 Claude Desktop 裡執行時，焦點常常會在兩次工具呼叫之間回到那個視窗。沒有指定目標的輸入，就會送進代理自己的視窗，或剛好跑到前景的 App。請在 `mac_screenshot`、`mac_mouse`、`mac_scroll`、`mac_type_text` 和 `mac_key` 加上 `app`。伺服器會先把該 App 切到前景，送出前再確認一次；如果焦點已經被其他 App 搶走，就什麼都不送。`mac_mouse` 另外會檢查：上一張截圖不是在該 App 位於前景時拍的，或它的視窗之後移動或改變了大小，或那個位置上是其他 App（例如蓋在上面的視窗、Dock 或選單列圖示），就不點擊。`mac_scroll` 在游標位於其他 App 上時不會捲動。有些面板（例如沙盒 App 的「打開」和「儲存」）在另一個程序裡執行；要點擊這種面板時，那一次點擊不要加 `app`。可以在指示裡加一句：
+**一定要指定目標 App。** 代理在終端機或 Claude Desktop 裡執行時，焦點常常會在兩次工具呼叫之間回到那個視窗。沒有指定目標的輸入，就會送進代理自己的視窗，或剛好跑到前景的 App。請在 `mac_screenshot`、`mac_mouse`、`mac_scroll`、`mac_type_text` 和 `mac_key` 加上 `app`。伺服器會先把該 App 切到前景，送出前再確認一次；如果焦點已經被其他 App 搶走，就什麼都不送。`mac_mouse` 另外會檢查：上一張截圖不是在該 App 位於前景時拍的，或它的視窗之後移動或改變了大小，或那個位置上是其他 App（例如蓋在上面的視窗、Dock 或選單列圖示），就不點擊。`mac_scroll` 在游標位於其他 App 上時不會捲動。有些面板（例如沙盒 App 的「打開」和「儲存」）在另一個程序裡執行；要點擊這種面板時，那一次點擊不要加 `app`。
+
+沒有加 `app` 時，伺服器仍會拒絕送到代理本身所在 App（例如終端機、Claude 或 Codex）的輸入：那個 App 在前景時不送按鍵和文字，也不在它上面點擊或捲動。真的要送到那裡時，請在 `app` 寫上那個 App 的名稱。沒有加 `app` 的點擊，還需要上一張截圖時位於前景的 App 仍在前景、視窗也沒有改變。代理所在的 App 是從伺服器的上層程序找出來的，所以伺服器在 tmux 之類的工具底下執行時找不到。
+
+要確保按鍵和文字送進某個 App 的特定視窗（例如好幾份文件中的一份），請在 `window` 傳入 `mac_window list` 的 ref。只有那個視窗是該 App 的焦點視窗時才會送出；請先對它使用 `mac_window` 的 `focus`。`mac_type_text` 和 `mac_key` 的結果會寫出當時的焦點視窗。
+
+可以在指示裡加一句：
 
 > 每個 mac-control 工具都使用 `"app": "TextEdit"`。
 
@@ -88,6 +94,7 @@
 | --- | --- | --- |
 | `text` | 字串，必填 | 1 到 2000 個字元；任何 Unicode 都可以，包括中文和 emoji |
 | `app` | 字串 | 要輸入的執行中 App 名稱或 bundle ID，例如 `TextEdit` 或 `com.apple.TextEdit` |
+| `window` | 字串 | `mac_window list` 的視窗 ref；只有它是所屬 App 的焦點視窗時才會貼上 |
 
 ```json
 {"text": "測試中文 abc", "app": "TextEdit"}
@@ -95,7 +102,7 @@
 
 文字是用貼上的方式輸入：伺服器把文字放到剪貼簿、按下 Command-V，再還原你原本的剪貼簿內容。所以用注音等輸入法時也能正常輸入，模擬按鍵就做不到。如果貼上期間有其他 App 改了剪貼簿，伺服器不會覆蓋那個變更。剪貼簿內容超過 40 MB，或無法完整保存時，會取消輸入，避免你的資料遺失。
 
-結果會寫出收到文字的 App，例如 `Inserted 8 characters into TextEdit via Command-V.`
+結果會寫出收到文字的 App，例如 `Inserted 8 characters into TextEdit via Command-V.`，並在 `window` 寫出它焦點視窗的標題。
 
 ### `mac_key`
 
@@ -104,6 +111,7 @@
 | `key` | 字串，必填 | `a`–`z`、`0`–`9`、`enter`/`return`、`tab`、`space`、`backspace`、`delete`、`escape`、`home`、`end`、`pageup`、`pagedown`、`left`、`right`、`up`、`down` |
 | `modifiers` | 陣列 | `cmd`、`shift`、`alt`、`ctrl` 任意組合 |
 | `app` | 字串 | 同 `mac_type_text` |
+| `window` | 字串 | 同 `mac_type_text` |
 
 ```json
 {"key": "n", "modifiers": ["cmd"], "app": "TextEdit"}
