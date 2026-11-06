@@ -23,7 +23,7 @@ Example requests:
 
 ## Two rules that prevent most mistakes
 
-**Mouse coordinates come from the latest screenshot.** `mac_mouse` uses pixel positions in the most recent `mac_screenshot` image. On a Retina display the image usually has twice the pixels of the screen size that `mac_status` reports, for example 3840 × 2160 for a 1920 × 1080 display, and the server converts for you. Always go by the size the screenshot reports. Take a new screenshot after anything moves, and after the resolution changes.
+**Mouse coordinates come from the latest screenshot.** `mac_mouse` uses positions in the most recent `mac_screenshot` image. The image is the size of the screen in points, as `mac_status` reports it, for example 1920 × 1080, so its positions are also the units of `mac_window` frames. With `full_resolution` it keeps every pixel of a Retina display, usually twice the width and height, and `mac_mouse` then takes pixel positions. Always go by the size the screenshot reports. Take a new screenshot after anything moves, and after the resolution changes.
 
 **Always name the target app.** When the agent runs in a terminal or in Claude Desktop, focus often returns to that window between two tool calls. Input sent without a target then lands in the agent's own window, or in whatever app came to the front. Pass `app` to `mac_screenshot`, `mac_mouse`, `mac_scroll`, `mac_type_text`, and `mac_key`. The server brings that app to the front, checks again just before sending, and sends nothing if another app has taken focus. For `mac_mouse`, it also refuses to click when the last screenshot was not taken with that app in front, when its window has moved or resized since, or when the point is over another app, such as a window on top, the Dock, or a menu bar icon. `mac_scroll` refuses when the pointer is over another app. Some panels, such as Open and Save in sandboxed apps, run in a separate process; to click in one, leave out `app` for that click. Add a line like this to your request:
 
@@ -41,11 +41,12 @@ Reports Accessibility and Screen Recording permission, whether the screen is loc
 
 ### `mac_screenshot`
 
-Captures the main display as a JPEG. The image size sets the coordinate space for `mac_mouse` until the next screenshot. It needs Screen Recording permission.
+Captures the main display as a JPEG, scaled to the screen's size in points. The image size sets the coordinate space for `mac_mouse` until the next screenshot, and the result's `width`, `height`, and `full_resolution` say what it is. It needs Screen Recording permission.
 
 | Parameter | Type | Notes |
 | --- | --- | --- |
 | `app` | string | App to bring to the front before capturing, as for `mac_type_text`. Also brings its window back from the Stage Manager strip; an app with no open window may open a new one. Needs Accessibility permission. |
+| `full_resolution` | boolean | Keep every pixel of a Retina display, for reading small text. The image is about four times the data, and `mac_mouse` takes positions in its pixels. Default false. |
 
 ### `mac_request_screen_recording`
 
@@ -56,7 +57,7 @@ Shows the macOS Screen Recording permission prompt. Use it once if `mac_status` 
 | Parameter | Type | Notes |
 | --- | --- | --- |
 | `action` | string, required | `move`, `click`, `double_click`, `right_click`, or `drag` |
-| `x`, `y` | number, required | Pixel position in the latest screenshot |
+| `x`, `y` | number, required | Position in the latest screenshot: screen points, or pixels with `full_resolution` |
 | `to_x`, `to_y` | number | End position, required for `drag` |
 | `app` | string | App the click is meant for. Take the screenshot with the same `app` first. |
 
@@ -183,7 +184,7 @@ Checks about four times a second, looking up the app's windows each time, so a d
 | `width`, `height` | number | For `resize` |
 | `app` | string | For `list`, the app to list; otherwise, act on this app's focused window when `window` is left out |
 
-`list` returns each window's app, title, `frame`, `minimized`, `main`, and `focused`, and a `ref`. Without `app` it lists the windows of every app with a Dock icon, up to 100. Frames are in screen points, the units of `main_display` in `mac_status`, not the pixels of `mac_screenshot`.
+`list` returns each window's app, title, `frame`, `minimized`, `main`, and `focused`, and a `ref`. Without `app` it lists the windows of every app with a Dock icon, up to 100. Frames are in screen points, the units of `main_display` in `mac_status`, the same units as the default `mac_screenshot` image.
 
 `focus` restores a minimized window, raises it, and brings its app to the front. `move` and `resize` return the window with `as_requested`, which is `false` when the app placed or sized it differently, for example to keep it on screen. A window whose size is fixed is refused with `ACTION_UNSUPPORTED`. `minimize` and `restore` send nothing when the window is already in that state. With Stage Manager on, macOS can ignore them; the tool then reports `OUTCOME_UNKNOWN`.
 

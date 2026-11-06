@@ -23,7 +23,7 @@
 
 ## 避免大部分錯誤的兩條規則
 
-**滑鼠座標以最新的截圖為準。** `mac_mouse` 使用最近一次 `mac_screenshot` 影像裡的像素位置。在 Retina 螢幕上，影像的像素通常是 `mac_status` 回報的螢幕尺寸的兩倍，例如 1920 × 1080 的螢幕會得到 3840 × 2160 的影像，伺服器會自動換算。請一律以截圖回報的尺寸為準。畫面有任何移動，或解析度改變之後，都要重新截圖。
+**滑鼠座標以最新的截圖為準。** `mac_mouse` 使用最近一次 `mac_screenshot` 影像裡的位置。影像的大小就是 `mac_status` 回報的螢幕尺寸（以點為單位），例如 1920 × 1080，所以影像上的位置也就是 `mac_window` 視窗座標的單位。加上 `full_resolution` 時會保留 Retina 螢幕的每個像素，寬高通常是兩倍，`mac_mouse` 這時改用像素位置。請一律以截圖回報的尺寸為準。畫面有任何移動，或解析度改變之後，都要重新截圖。
 
 **一定要指定目標 App。** 代理在終端機或 Claude Desktop 裡執行時，焦點常常會在兩次工具呼叫之間回到那個視窗。沒有指定目標的輸入，就會送進代理自己的視窗，或剛好跑到前景的 App。請在 `mac_screenshot`、`mac_mouse`、`mac_scroll`、`mac_type_text` 和 `mac_key` 加上 `app`。伺服器會先把該 App 切到前景，送出前再確認一次；如果焦點已經被其他 App 搶走，就什麼都不送。`mac_mouse` 另外會檢查：上一張截圖不是在該 App 位於前景時拍的，或它的視窗之後移動或改變了大小，或那個位置上是其他 App（例如蓋在上面的視窗、Dock 或選單列圖示），就不點擊。`mac_scroll` 在游標位於其他 App 上時不會捲動。有些面板（例如沙盒 App 的「打開」和「儲存」）在另一個程序裡執行；要點擊這種面板時，那一次點擊不要加 `app`。可以在指示裡加一句：
 
@@ -41,11 +41,12 @@
 
 ### `mac_screenshot`
 
-把主螢幕擷取成 JPEG。影像尺寸就是下一次截圖之前 `mac_mouse` 使用的座標系。需要螢幕錄製權限。
+把主螢幕擷取成 JPEG，縮放成螢幕以點為單位的大小。影像尺寸就是下一次截圖之前 `mac_mouse` 使用的座標系，結果裡的 `width`、`height` 和 `full_resolution` 會說明是哪一種。需要螢幕錄製權限。
 
 | 參數 | 型別 | 說明 |
 | --- | --- | --- |
 | `app` | 字串 | 截圖前要切到前景的 App，用法同 `mac_type_text`。也會把它的視窗從「幕前調度」側邊帶回來；沒有開啟視窗的 App 可能會開一個新視窗。需要輔助使用權限。 |
+| `full_resolution` | 布林 | 保留 Retina 螢幕的每個像素，用來看清小字。資料量約為四倍，`mac_mouse` 這時使用它的像素位置。預設 false。 |
 
 ### `mac_request_screen_recording`
 
@@ -56,7 +57,7 @@
 | 參數 | 型別 | 說明 |
 | --- | --- | --- |
 | `action` | 字串，必填 | `move`、`click`、`double_click`、`right_click` 或 `drag` |
-| `x`、`y` | 數字，必填 | 最新截圖裡的像素位置 |
+| `x`、`y` | 數字，必填 | 最新截圖裡的位置：螢幕的點，加上 `full_resolution` 時則是像素 |
 | `to_x`、`to_y` | 數字 | 終點位置，`drag` 時必填 |
 | `app` | 字串 | 要點擊的 App。請先用同一個 `app` 截圖。 |
 
@@ -183,7 +184,7 @@ App 停止回應時（例如忙碌或當掉），讀取會在那裡停止，不�
 | `width`、`height` | 數字 | `resize` 用 |
 | `app` | 字串 | `list` 時是要列出的 App；其他動作沒有給 `window` 時，操作這個 App 的焦點視窗 |
 
-`list` 回傳每個視窗的 App、標題、`frame`、`minimized`、`main`、`focused` 和 `ref`。沒有給 `app` 時，列出所有有 Dock 圖示的 App 的視窗，最多 100 個。座標單位是螢幕的點，也就是 `mac_status` 裡 `main_display` 的單位，不是 `mac_screenshot` 的像素。
+`list` 回傳每個視窗的 App、標題、`frame`、`minimized`、`main`、`focused` 和 `ref`。沒有給 `app` 時，列出所有有 Dock 圖示的 App 的視窗，最多 100 個。座標單位是螢幕的點，也就是 `mac_status` 裡 `main_display` 的單位，和預設的 `mac_screenshot` 影像單位相同。
 
 `focus` 會還原最小化的視窗、把它移到最上層，並把它的 App 切到前景。`move` 和 `resize` 會回傳視窗和 `as_requested`；App 把視窗放到或調成不同的位置或大小時（例如為了留在螢幕內），它是 `false`。大小固定的視窗會以 `ACTION_UNSUPPORTED` 拒絕。視窗已經是要求的狀態時，`minimize` 和 `restore` 不會送出任何東西。開啟「幕前調度」（Stage Manager）時，macOS 可能會忽略這兩個動作，工具會回報 `OUTCOME_UNKNOWN`。
 

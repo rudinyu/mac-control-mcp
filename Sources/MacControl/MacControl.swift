@@ -193,26 +193,30 @@ private final class MacControlServer: MCPServer {
                     "screen_locked_reason": optionalString, "frontmost_app": optionalString, "frontmost_bundle_id": optionalString,
                     "main_display": rectangle.merging(["description": "In screen points."]) { $1 },
                     "last_screenshot": ["type": ["object", "null"], "properties": ["width": integer, "height": integer],
-                                        "description": "The size in pixels of the last mac_screenshot."],
+                                        "description": "The image size of the last mac_screenshot."],
                     "cursor_display": point, "cursor_screenshot": point
                 ], required: ["screen_recording", "accessibility", "display_available", "screen_locked", "main_display"]),
                 "annotations": readsOnly
             ],
             [
                 "name": "mac_screenshot",
-                "description": "Capture the main display. The image's pixels are the x/y coordinates for mac_mouse until the next screenshot. Requires Screen Recording permission, and Accessibility permission when app is given.",
+                "description": "Capture the main display. The image is the size of the screen in points, the units of mac_window frames, and its x/y positions are the coordinates for mac_mouse until the next screenshot. Requires Screen Recording permission, and Accessibility permission when app is given.",
                 "inputSchema": [
                     "type": "object",
-                    "properties": ["app": appProperty("It is brought to the front first, which also brings back a window from the Stage Manager strip; an app with no open window may open a new one. mac_mouse with the same app then checks that its window has not changed since.")],
+                    "properties": [
+                        "app": appProperty("It is brought to the front first, which also brings back a window from the Stage Manager strip; an app with no open window may open a new one. mac_mouse with the same app then checks that its window has not changed since."),
+                        "full_resolution": ["type": "boolean", "description": "Keep every pixel of a Retina display, for reading small text. The image is then larger, usually twice the width and height, and mac_mouse takes positions in it. Default false."]
+                    ],
                     "additionalProperties": false
                 ],
                 "outputSchema": output([
-                    "width": ["type": "integer", "description": "Image width in pixels, the x range for mac_mouse."],
-                    "height": ["type": "integer", "description": "Image height in pixels, the y range for mac_mouse."],
+                    "width": ["type": "integer", "description": "Image width, the x range for mac_mouse."],
+                    "height": ["type": "integer", "description": "Image height, the y range for mac_mouse."],
+                    "full_resolution": ["type": "boolean", "description": "The image keeps every pixel, so its positions are pixels, not screen points."],
                     "front_app": optionalString,
                     "changed_during_capture": ["type": "boolean", "description": "The front app or its window changed during the capture; take another screenshot before clicking with app. Missing without Accessibility permission."],
                     "message": message
-                ], required: ["width", "height", "front_app", "message"]),
+                ], required: ["width", "height", "full_resolution", "front_app", "message"]),
                 "annotations": ["readOnlyHint": false, "destructiveHint": false, "idempotentHint": true, "openWorldHint": false]
             ],
             [
@@ -285,7 +289,7 @@ private final class MacControlServer: MCPServer {
             ],
             [
                 "name": "mac_window",
-                "description": "List or arrange windows. Frames are in screen points, as in mac_status main_display, not screenshot pixels. With Stage Manager on, macOS may ignore move, resize, minimize, and restore, which is reported as OUTCOME_UNKNOWN. Requires Accessibility permission.",
+                "description": "List or arrange windows. Frames are in screen points, as in mac_status main_display and the default mac_screenshot image. With Stage Manager on, macOS may ignore move, resize, minimize, and restore, which is reported as OUTCOME_UNKNOWN. Requires Accessibility permission.",
                 "inputSchema": [
                     "type": "object",
                     "properties": [
@@ -368,15 +372,15 @@ private final class MacControlServer: MCPServer {
             ],
             [
                 "name": "mac_mouse",
-                "description": "Move, click, double-click, right-click, or drag on the main display, at pixels of the most recent mac_screenshot image. Requires Accessibility permission.",
+                "description": "Move, click, double-click, right-click, or drag on the main display, at a position in the most recent mac_screenshot image. Requires Accessibility permission.",
                 "inputSchema": [
                     "type": "object",
                     "properties": [
                         "action": ["type": "string", "enum": mouseActions, "description": "What to do at x, y. drag goes from x, y to to_x, to_y."],
-                        "x": ["type": "number", "description": "Pixels from the left of the most recent mac_screenshot image."],
-                        "y": ["type": "number", "description": "Pixels from the top of the most recent mac_screenshot image."],
-                        "to_x": ["type": "number", "description": "For drag: where it ends, in the same pixels."],
-                        "to_y": ["type": "number", "description": "For drag: where it ends, in the same pixels."],
+                        "x": ["type": "number", "description": "From the left of the most recent mac_screenshot image, in its units: screen points, or pixels with full_resolution."],
+                        "y": ["type": "number", "description": "From the top of the most recent mac_screenshot image, in the same units."],
+                        "to_x": ["type": "number", "description": "For drag: where it ends, in the same units."],
+                        "to_y": ["type": "number", "description": "For drag: where it ends, in the same units."],
                         "app": appProperty("It is brought to the front first, and nothing is sent unless it is still in front, the last mac_screenshot was taken with it in front, its window has not moved or resized since, and the point is over it.")
                     ],
                     "required": ["action", "x", "y"],
@@ -521,6 +525,8 @@ private final class MacControlServer: MCPServer {
         let frame = focused.flatMap(windowFrame)
         let path = FileManager.default.temporaryDirectory.appendingPathComponent("mac-control-\(UUID().uuidString).jpg")
         defer { try? FileManager.default.removeItem(at: path) }
+        if let value = args["full_resolution"], !(value is Bool) { throw ToolFailure("full_resolution must be true or false.") }
+        let fullResolution = args["full_resolution"] as? Bool ?? false
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/sbin/screencapture")
         process.arguments = ["-x", "-m", "-t", "jpg", path.path]
@@ -532,22 +538,45 @@ private final class MacControlServer: MCPServer {
         process.waitUntilExit()
         guard process.terminationStatus == 0,
               let data = try? Data(contentsOf: path),
-              let image = NSBitmapImageRep(data: data) else {
+              let captured = NSBitmapImageRep(data: data) else {
             throw ToolFailure("Screen capture failed. Check Screen Recording permission and that this process runs in a logged-in Mac desktop session.", .setup)
         }
         let bounds = CGDisplayBounds(CGMainDisplayID())
+        // By default the image is scaled to the screen's size in points: a quarter of the data on a Retina
+        // display, under the size clients shrink images to, and in the units of window frames.
+        let (image, jpeg) = fullResolution ? (captured, data) : try scaled(captured, data, to: bounds.size)
         let after = trusted ? focusedApp() : nil
         let steady = after?.processIdentifier == focused?.processIdentifier && after.flatMap(windowFrame) == frame
         lastCapture = CaptureSize(width: image.pixelsWide, height: image.pixelsHigh, displayBounds: bounds,
                                   focusedPID: steady ? focused?.processIdentifier : nil, windowFrame: steady ? frame : nil)
-        var description = "Main display screenshot: \(image.pixelsWide) x \(image.pixelsHigh) pixels. Use these pixel coordinates with mac_mouse."
+        let units = fullResolution ? "pixels" : "screen points"
+        var description = "Main display screenshot: \(image.pixelsWide) x \(image.pixelsHigh) \(units). Use these coordinates with mac_mouse."
         if let focused { description += " \(focused.localizedName ?? "An app") is in front." }
         if trusted, !steady { description += " The front app or its window changed during the capture; take another screenshot before clicking with app." }
-        var info: [String: Any] = ["width": image.pixelsWide, "height": image.pixelsHigh, "front_app": focused?.localizedName ?? NSNull(),
-                                   "message": description]
+        var info: [String: Any] = ["width": image.pixelsWide, "height": image.pixelsHigh, "full_resolution": fullResolution,
+                                   "front_app": focused?.localizedName ?? NSNull(), "message": description]
         // Only known with Accessibility permission.
         if trusted { info["changed_during_capture"] = !steady }
-        return toolResult(info, images: [["type": "image", "data": data.base64EncodedString(), "mimeType": "image/jpeg"]])
+        return toolResult(info, images: [["type": "image", "data": jpeg.base64EncodedString(), "mimeType": "image/jpeg"]])
+    }
+
+    // The capture redrawn at size, as JPEG. A capture already that size or smaller is kept as it is.
+    private func scaled(_ image: NSBitmapImageRep, _ data: Data, to size: CGSize) throws -> (NSBitmapImageRep, Data) {
+        let width = Int(size.width.rounded()), height = Int(size.height.rounded())
+        guard image.pixelsWide > width || image.pixelsHigh > height else { return (image, data) }
+        guard let source = image.cgImage,
+              let context = CGContext(data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: 0,
+                                      space: CGColorSpace(name: CGColorSpace.sRGB)!, bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue) else {
+            throw ToolFailure("The screenshot could not be scaled. Try full_resolution.", .setup)
+        }
+        context.interpolationQuality = .high
+        context.draw(source, in: CGRect(x: 0, y: 0, width: width, height: height))
+        guard let scaledImage = context.makeImage() else { throw ToolFailure("The screenshot could not be scaled. Try full_resolution.", .setup) }
+        let result = NSBitmapImageRep(cgImage: scaledImage)
+        guard let jpeg = result.representation(using: .jpeg, properties: [.compressionFactor: 0.8]) else {
+            throw ToolFailure("The screenshot could not be scaled. Try full_resolution.", .setup)
+        }
+        return (result, jpeg)
     }
 
     private func recordStart(_ args: [String: Any]) throws -> [String: Any] {

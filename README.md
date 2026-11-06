@@ -28,7 +28,7 @@ The repository also contains **mac-exec**, a separate MCP server that runs comma
 | `mac_key` | Presses Enter, arrow keys, letter keys, and combinations with Command and other modifiers |
 | `mac_record_start` / `mac_record_status` / `mac_record_stop` | Records the main display to a local MOV file, up to 120 seconds at a time |
 
-Mouse coordinates are **pixel coordinates in the most recent `mac_screenshot` image**. Take a new screenshot after the screen resolution changes. Recordings are saved in `~/Movies/MacControl/` with MacControl.app, or in `.build/recordings/` (not tracked by Git) for a source build, and the recording tools return the file path for local viewing or further processing. Recordings do not capture the microphone or system audio.
+Mouse coordinates are **positions in the most recent `mac_screenshot` image**, which is the size of the screen in points unless `full_resolution` is set. Take a new screenshot after the screen resolution changes. Recordings are saved in `~/Movies/MacControl/` with MacControl.app, or in `.build/recordings/` (not tracked by Git) for a source build, and the recording tools return the file path for local viewing or further processing. Recordings do not capture the microphone or system audio.
 
 `mac_screenshot`, `mac_mouse`, `mac_scroll`, `mac_type_text`, `mac_key`, and `mac_ui_tree` accept an `app` parameter: the name or bundle ID of a running app with a Dock icon, such as `TextEdit` or `com.apple.TextEdit`. If a name matches several apps, the one in front is chosen; if none of them is in front, the tool reports an error that lists the candidates, and you should use a bundle ID instead. `mac_screenshot`, `mac_mouse`, `mac_scroll`, `mac_type_text`, and `mac_key` bring the app to the front first and check again just before sending. If another app has taken focus by then, no input is sent and the tool reports an error. `mac_mouse` with `app` also refuses to click when the last screenshot was not taken with that app in front, when its window has moved or resized since, or when the point is over another app; `mac_scroll` refuses when the pointer is over another app. With `app`, `mac_ui_tree` only reads and does not change which app is in front. When the agent runs in a terminal, focus often returns to the terminal between tool calls, so always pass `app`.
 
@@ -99,6 +99,6 @@ The server must run in a **logged-in Mac desktop session**. CI and some sandboxe
 
 ## Usage
 
-Call `mac_status` first, then `mac_screenshot`. To click, call `mac_mouse` with pixel positions from the screenshot. Type text with `mac_type_text` and press shortcuts with `mac_key`, for example `{"key":"c","modifiers":["cmd"]}`.
+Call `mac_status` first, then `mac_screenshot`. To click, call `mac_mouse` with positions from the screenshot. Type text with `mac_type_text` and press shortcuts with `mac_key`, for example `{"key":"c","modifiers":["cmd"]}`.
 
 Recording example: call `mac_record_start` with `{"duration_seconds":10}` and keep the returned `recording_id`, then check it with `mac_record_status`. When the state is `ready`, it returns the absolute path of the MOV file. Call `mac_record_stop` to stop early. If macOS has not granted permission, the recording tools report the missing permission.
