@@ -133,8 +133,10 @@ private final class MacControlServer: MCPServer {
     // The app this server runs under, such as the terminal, Claude, or Codex: the nearest parent process with a
     // Dock icon. Input that reaches it without being aimed at it could answer the agent's own prompts. There is
     // none when the server runs under tmux or another process that launchd started.
+    // The parent is read at startup: if it exits later, the server is moved under launchd and the host is lost.
+    private let parentPID = getppid()
     private lazy var hostApp: NSRunningApplication? = {
-        var pid = getppid()
+        var pid = parentPID
         while pid > 1 {
             if let app = NSRunningApplication(processIdentifier: pid), app.activationPolicy == .regular { return app }
             var info = kinfo_proc()
@@ -749,16 +751,20 @@ private final class MacControlServer: MCPServer {
         }
         // The system-wide query can fail for every app, with kAXErrorCannotComplete, as on macOS 26. Then ask the
         // apps themselves: NSWorkspace's guess first, after letting it catch up, and the others only if that is wrong.
+        // Hung apps could each take the timeout, so the search stops after a second, leaving focus unknown.
         RunLoop.current.run(until: Date())
         let guess = NSWorkspace.shared.frontmostApplication
         let others = NSWorkspace.shared.runningApplications.filter {
             $0.activationPolicy == .regular && !$0.isTerminated && $0.processIdentifier != guess?.processIdentifier
         }
-        return ([guess].compactMap { $0 } + others).first { app in
+        let deadline = Date().addingTimeInterval(1)
+        for app in [guess].compactMap({ $0 }) + others {
+            guard Date() < deadline else { return nil }
             let element = AXUIElementCreateApplication(app.processIdentifier)
             AXUIElementSetMessagingTimeout(element, 0.25)
-            return (attribute(element, kAXFrontmostAttribute as CFString) as? Bool) == true
+            if (attribute(element, kAXFrontmostAttribute as CFString) as? Bool) == true { return app }
         }
+        return nil
     }
 
     private func waitUntilFocused(_ app: NSRunningApplication) -> Bool {
@@ -871,6 +877,7 @@ private final class MacControlServer: MCPServer {
             let was = NSRunningApplication(processIdentifier: pid)?.localizedName ?? "another app"
             throw ToolFailure("\(front?.localizedName ?? "Another app") is in front, but \(was) was in front for the last mac_screenshot; no input was sent. Call mac_screenshot again, or pass app.", .staleScreenshot)
         }
+        // Both are nil when the app has no window, as when Finder's desktop is in front; that has not changed either.
         guard windowFrame(app) == capture.windowFrame else {
             throw ToolFailure("\(app.localizedName ?? "The front app")'s window moved, resized, or changed since the last mac_screenshot; no input was sent. Call mac_screenshot again.", .staleScreenshot)
         }
@@ -911,14 +918,18 @@ private final class MacControlServer: MCPServer {
             try refuseHost(current.processIdentifier, "The input")
         }
         let focused = current.flatMap { focusedWindow($0.processIdentifier) }
+        let title = focused.flatMap(windowTitle)
         if let window, !(focused.map { CFEqual($0, window) } ?? false) {
-            let title = focused.flatMap { shortString(attribute($0, kAXTitleAttribute as CFString)) }
             let name = current?.localizedName ?? "The app"
             throw ToolFailure("The window given is not \(name)'s focused window\(title.map { "; \"\($0)\" is" } ?? ""); no input was sent. Use mac_window focus with it first.", .focusLost)
         }
         // The last moment a cancelled call can stop with nothing sent.
         try cancellation.check()
-        return (current?.localizedName ?? "the frontmost app", focused.flatMap { shortString(attribute($0, kAXTitleAttribute as CFString)) })
+        return (current?.localizedName ?? "the frontmost app", title)
+    }
+
+    private func windowTitle(_ window: AXUIElement) -> String? {
+        shortString(attribute(window, kAXTitleAttribute as CFString))
     }
 
     private func number(_ args: [String: Any], _ key: String) throws -> Double {
@@ -966,6 +977,7 @@ private final class MacControlServer: MCPServer {
             // Moving the pointer sends nothing to an app; a drag may end over another app, as a drop onto Finder does.
             if action != "move" { try requirePoint(start, in: target, what: "The point") }
         } else if action != "move" {
+            // Only where it starts: a drag may drop onto any app, as with app.
             try requireSameFrontSinceScreenshot()
             try refuseHost(appAt(start), "The \(action.replacingOccurrences(of: "_", with: " "))")
         }
@@ -1020,8 +1032,11 @@ private final class MacControlServer: MCPServer {
         guard let pointer = CGEvent(source: nil)?.location else {
             throw ToolFailure("Could not read the pointer position; no input was sent.", .internalError)
         }
-        if let target { try requirePoint(pointer, in: target, what: "The pointer") }
-        else { try refuseHost(appAt(pointer), "The scroll") }
+        if let target {
+            try requirePoint(pointer, in: target, what: "The pointer")
+        } else {
+            try refuseHost(appAt(pointer), "The scroll")
+        }
         guard let event = CGEvent(scrollWheelEvent2Source: nil, units: .line, wheelCount: 2,
                                   wheel1: Int32(vertical), wheel2: Int32(horizontal), wheel3: 0) else {
             throw ToolFailure("Could not create a scroll event.", .internalError)
