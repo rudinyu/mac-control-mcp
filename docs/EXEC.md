@@ -2,7 +2,7 @@
 
 English | [繁體中文](EXEC.zh-TW.md)
 
-`mac-exec` is a second MCP server in this repository. It lets an agent run commands, install packages, and read and write files. By default everything runs in an isolated Linux container, so a mistaken or malicious command cannot touch the rest of your Mac. It is separate from `mac-control`, so clients ask you to approve it separately, and you can use either one without the other.
+`mac-exec` is a second MCP server in this repository. It lets an agent run commands, install packages, and read and write files. By default everything runs in an isolated Linux container, so a mistaken or malicious command cannot read or change anything on your Mac outside the folders you share. What it writes in the workspace can still run on your Mac later; see [What the workspace can do](#what-the-workspace-can-do). It is separate from `mac-control`, so clients ask you to approve it separately, and you can use either one without the other.
 
 ## How it protects your Mac
 
@@ -11,14 +11,22 @@ English | [繁體中文](EXEC.zh-TW.md)
 | Fresh container per command | Each `sandbox_exec` starts a new container and deletes it afterwards. Nothing carries over except files in the workspace. |
 | Only the workspace is shared | The workspace folder, `~/AgentWorkspace` by default, is the only Mac folder the container can write to. It appears at `/workspace`. Your home folder, SSH keys, keychains, and browser data are not visible. |
 | Sensitive folders are refused | The workspace and any read-only folders may not be, contain, or sit inside `~/.ssh`, `~/.gnupg`, `~/.aws`, `~/.config`, `~/Library`, shell startup files such as `~/.zshrc`, agent settings such as `~/.claude` and `~/.codex`, and similar locations, or overlap this project, whose scripts run on the Mac. Sharing your whole home folder is refused for the same reason. |
-| No root, no privileges | Commands run as the user `agent` (uid 1000) with every Linux capability dropped and `no-new-privileges`, so they cannot become root. |
-| Read-only system | The container's system files are read-only. Only `/workspace`, `/tmp`, and the home folder `/home/agent` are writable, and the last two are erased when the command ends. |
-| Resource limits | 2 GB of memory, 2 CPUs, and 256 processes per command, and a timeout of 120 seconds by default, up to 600. A command that runs too long is killed with its container, and `host_exec` kills every process in the command's process group. |
+| No root, no privileges | Commands run as the user `agent` (uid 1000) with every Linux capability dropped. With Docker, `no-new-privileges` also stops them from becoming root through a setuid program. Apple's `container` has no such option; there, the VM around each container is the main boundary. |
+| Read-only system | The container's system files are read-only. Only `/workspace`, `/tmp`, and the home folder are writable, and the last two are erased when the command ends. The home folder is `/home/agent` with Docker and `/tmp/home` with Apple's `container`. |
+| Resource limits | 2 GB of memory and 2 CPUs per command, and with Docker also 256 processes and 512 MB in `/tmp`. The timeout is 120 seconds by default, up to 600. A command that runs too long is killed with its container, and `host_exec` kills every process in the command's process group. |
 | Audit log | Every command is written to `~/Library/Logs/mac-exec/audit.log` before it runs, with its result afterwards. Each entry names the client that sent it, such as `claude-ai` or `codex`, as the client reports itself. If the log cannot be written, the command does not run. |
 | Approval prompts | Command and write tools are marked as destructive. Whether the client asks you before each call depends on its permission settings: keep Claude Code's prompts on, and keep `default_tools_approval_mode = "prompt"` in Codex. `sandbox_write_file` can overwrite files in the workspace. |
 | Running on the Mac is off by default | `host_exec`, which runs a command directly on the Mac, exists only when you turn it on. Each call must give a reason, and `sudo`, `su`, and `doas` are refused. |
 
 The container has normal internet access, so it can download packages and call web APIs. It can also reach your Mac and your local network through Docker's network, for example `host.docker.internal` or your router. If that matters to you, do not run services on your Mac or network that trust connections without a password.
+
+### What the workspace can do
+
+The sandbox can write anything into the workspace, and some files run code when a program on your Mac later opens the folder. Examples are Git hooks in `.git/hooks`, a `.envrc` for direnv, `.vscode/tasks.json`, a Makefile, a `package.json` script, and agent settings such as `.mcp.json` or `.claude/settings.json`. A command in the sandbox could plant one of these, and it would then run with your permissions when you or an agent use that folder on the Mac.
+
+So keep the workspace a folder used only for the agent's work, such as the default `~/AgentWorkspace`. Do not point it at a project you develop on the Mac, a folder of tools such as `/opt/homebrew`, or an external drive. Before opening something the agent made with a Mac program, read what it contains.
+
+The checks above refuse sensitive folders in your home folder. They do not refuse folders elsewhere, so this choice is yours.
 
 ## Setup
 
@@ -43,8 +51,13 @@ Set these in the `env` section of the server's entry in your client configuratio
 | `MAC_EXEC_READONLY_DIRS` | none | Extra folders to share read-only, separated by `:`. Each appears at `/mnt/readonly/<folder name>`. A folder may not be inside the workspace or reached through a link in it, and each one is checked again before every command. |
 | `MAC_EXEC_ALLOW_HOST` | off | Set to `1` to make `host_exec` available. |
 | `MAC_EXEC_IMAGE` | `mac-exec-sandbox:latest` | The Docker image to run. |
+| `MAC_EXEC_RUNTIME` | `docker` | `docker` for Docker or a Docker-compatible runtime such as Colima, or `apple` for Apple's `container` on macOS 26 or later. Other values are reported by `exec_status`. |
 | `MAC_EXEC_DOCKER` | found automatically | Path of the `docker` program, if it is not in a usual place. |
+| `MAC_EXEC_CONTAINER` | found automatically | Path of Apple's `container` program, when `MAC_EXEC_RUNTIME` is `apple`. |
+| `MAC_EXEC_DOCKER_HOST` | none | The Docker socket to use, passed as `DOCKER_HOST`, so your own Docker context is left alone. |
 | `MAC_EXEC_AUDIT_LOG` | `~/Library/Logs/mac-exec/audit.log` | Where commands are logged. It may not be inside the workspace or reached through a link in it, and the log file itself may not be a link. |
+
+MacControl.app also sets `MAC_EXEC_COLIMA`, `MAC_EXEC_COLIMA_PROFILE`, `MAC_EXEC_COLIMA_PATH`, and `MAC_EXEC_COLIMA_DOCKER_CONFIG` so the server can start the app's own Colima. Leave them to the app.
 
 Example `.mcp.json` entry that shares a project folder read-only and allows `host_exec`:
 

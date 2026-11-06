@@ -75,7 +75,7 @@ macOS does not let any app turn these switches on for you. After turning them on
 ## Settings
 
 - **Run commands in a sandbox (mac-exec)**: turn off if you only want screen control.
-- **Workspace**: the only Mac folder the sandbox can write to. The default is `~/AgentWorkspace`. Folders with credentials or settings, such as `~/.ssh` or `~/Library`, are refused.
+- **Workspace**: the only Mac folder the sandbox can write to. The default is `~/AgentWorkspace`. Folders with credentials or settings, such as `~/.ssh` or `~/Library`, are refused. Keep it a folder only for the agent's work, not a project you develop on the Mac: files the sandbox writes there, such as Git hooks, can run on the Mac later. See [What the workspace can do](EXEC.md#what-the-workspace-can-do).
 - **Allow host_exec**: lets the agent run commands directly on the Mac, outside the sandbox. Off by default; see [mac-exec](EXEC.md#when-to-use-host_exec).
 
 After changing a setting, click **Apply** in the banner to update the clients. Turning on host_exec asks you to confirm first.

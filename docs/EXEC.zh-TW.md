@@ -2,7 +2,7 @@
 
 [English](EXEC.md) | 繁體中文
 
-`mac-exec` 是這個 repo 裡的第二個 MCP 伺服器，讓代理可以執行指令、安裝套件、讀寫檔案。預設所有東西都在隔離的 Linux 容器裡執行，就算指令有誤或是惡意的，也碰不到你 Mac 的其他部分。它跟 `mac-control` 是分開的，客戶端會要你分別核准，兩個也可以只用其中一個。
+`mac-exec` 是這個 repo 裡的第二個 MCP 伺服器，讓代理可以執行指令、安裝套件、讀寫檔案。預設所有東西都在隔離的 Linux 容器裡執行，就算指令有誤或是惡意的，也讀不到、改不到你共用的資料夾以外的東西。不過它寫進工作資料夾的檔案，之後仍可能在 Mac 上執行；請見[工作資料夾能做什麼](#工作資料夾能做什麼)。它跟 `mac-control` 是分開的，客戶端會要你分別核准，兩個也可以只用其中一個。
 
 ## 它怎麼保護你的 Mac
 
@@ -11,14 +11,22 @@
 | 每個指令一個新容器 | 每次 `sandbox_exec` 都會開一個新容器，跑完就刪掉。除了工作資料夾裡的檔案，什麼都不會留下。 |
 | 只共用工作資料夾 | 工作資料夾（預設 `~/AgentWorkspace`）是容器唯一能寫入的 Mac 資料夾，在容器裡是 `/workspace`。你的家目錄、SSH key、鑰匙圈和瀏覽器資料都看不到。 |
 | 拒絕敏感資料夾 | 工作資料夾和唯讀資料夾不能是、不能包含，也不能位於 `~/.ssh`、`~/.gnupg`、`~/.aws`、`~/.config`、`~/Library`、`~/.zshrc` 這類 shell 啟動檔、`~/.claude` 和 `~/.codex` 這類代理設定等位置之內，也不能跟這個專案重疊，因為專案裡的腳本會在 Mac 上執行。同樣的理由，也不能共用整個家目錄。 |
-| 不是 root、沒有特權 | 指令以使用者 `agent`（uid 1000）執行，拿掉所有 Linux capability，並開啟 `no-new-privileges`，所以無法變成 root。 |
-| 系統唯讀 | 容器的系統檔案是唯讀的。只有 `/workspace`、`/tmp` 和家目錄 `/home/agent` 可以寫入，後兩者在指令結束後就會清掉。 |
-| 資源限制 | 每個指令最多 2 GB 記憶體、2 顆 CPU、256 個程序；逾時預設 120 秒，最多 600 秒。跑太久的指令會連同容器一起被終止；`host_exec` 則會終止指令所屬程序群組裡的所有程序。 |
+| 不是 root、沒有特權 | 指令以使用者 `agent`（uid 1000）執行，拿掉所有 Linux capability。使用 Docker 時另外開啟 `no-new-privileges`，所以也無法透過 setuid 程式變成 root。Apple 的 `container` 沒有這個選項，這時主要的防線是包住每個容器的 VM。 |
+| 系統唯讀 | 容器的系統檔案是唯讀的。只有 `/workspace`、`/tmp` 和家目錄可以寫入，後兩者在指令結束後就會清掉。家目錄在 Docker 是 `/home/agent`，在 Apple 的 `container` 是 `/tmp/home`。 |
+| 資源限制 | 每個指令最多 2 GB 記憶體、2 顆 CPU；使用 Docker 時另外限制 256 個程序，`/tmp` 最多 512 MB。逾時預設 120 秒，最多 600 秒。跑太久的指令會連同容器一起被終止；`host_exec` 則會終止指令所屬程序群組裡的所有程序。 |
 | 稽核紀錄 | 每個指令在執行前都會寫進 `~/Library/Logs/mac-exec/audit.log`，執行完再記下結果。每筆紀錄都會寫上送出指令的客戶端，例如 `claude-ai` 或 `codex`（客戶端自己回報的名稱）。紀錄寫不進去，指令就不會執行。 |
 | 核准提示 | 執行指令和寫入檔案的工具都標記為破壞性。客戶端會不會每次都先問你，取決於它的權限設定：請保持 Claude Code 的核准提示開啟，Codex 則保留 `default_tools_approval_mode = "prompt"`。`sandbox_write_file` 會覆蓋工作資料夾裡的檔案。 |
 | 預設不能直接在 Mac 上執行 | 直接在 Mac 上執行指令的 `host_exec`，只有在你開啟後才會出現。每次呼叫都要寫理由，並拒絕 `sudo`、`su` 和 `doas`。 |
 
 容器可以正常上網，所以能下載套件、呼叫網路 API。它也能透過 Docker 的網路連到你的 Mac 和區網，例如 `host.docker.internal` 或你的路由器。如果這對你很重要，就不要在 Mac 或區網上開著不需要密碼就能連的服務。
+
+### 工作資料夾能做什麼
+
+sandbox 可以把任何東西寫進工作資料夾，而有些檔案會在 Mac 上的程式之後打開這個資料夾時執行程式碼，例如 `.git/hooks` 裡的 Git hook、direnv 的 `.envrc`、`.vscode/tasks.json`、Makefile、`package.json` 的 script，以及 `.mcp.json`、`.claude/settings.json` 這類代理設定。sandbox 裡的指令可以放進這種檔案，之後你或代理在 Mac 上使用這個資料夾時，它就會以你的權限執行。
+
+所以工作資料夾請只拿來放代理的工作，例如預設的 `~/AgentWorkspace`。不要把它設成你在 Mac 上開發的專案、`/opt/homebrew` 這類工具資料夾，或外接磁碟。用 Mac 上的程式打開代理產生的東西之前，先看看裡面有什麼。
+
+上面的檢查只會拒絕家目錄裡的敏感資料夾，不會拒絕其他位置，所以這要由你來選擇。
 
 ## 設定步驟
 
@@ -43,8 +51,13 @@
 | `MAC_EXEC_READONLY_DIRS` | 無 | 額外以唯讀方式共用的資料夾，用 `:` 分隔。每個會出現在 `/mnt/readonly/<資料夾名稱>`。資料夾不能在 workspace 裡，也不能經由 workspace 裡的連結到達，每次執行指令前都會重新檢查。 |
 | `MAC_EXEC_ALLOW_HOST` | 關閉 | 設成 `1` 才會出現 `host_exec`。 |
 | `MAC_EXEC_IMAGE` | `mac-exec-sandbox:latest` | 要執行的 Docker 映像檔。 |
+| `MAC_EXEC_RUNTIME` | `docker` | `docker` 代表 Docker 或 Colima 這類相容 Docker 的執行環境；`apple` 代表 macOS 26 以後的 Apple `container`。其他值會由 `exec_status` 回報為問題。 |
 | `MAC_EXEC_DOCKER` | 自動尋找 | `docker` 程式的路徑，如果它不在常見的位置。 |
+| `MAC_EXEC_CONTAINER` | 自動尋找 | `MAC_EXEC_RUNTIME` 為 `apple` 時，Apple `container` 程式的路徑。 |
+| `MAC_EXEC_DOCKER_HOST` | 無 | 要使用的 Docker socket，會以 `DOCKER_HOST` 傳入，不會動到你自己的 Docker context。 |
 | `MAC_EXEC_AUDIT_LOG` | `~/Library/Logs/mac-exec/audit.log` | 指令紀錄的位置。不能在 workspace 裡，也不能經由 workspace 裡的連結到達，紀錄檔本身也不能是連結。 |
+
+MacControl.app 另外會設定 `MAC_EXEC_COLIMA`、`MAC_EXEC_COLIMA_PROFILE`、`MAC_EXEC_COLIMA_PATH` 和 `MAC_EXEC_COLIMA_DOCKER_CONFIG`，讓伺服器能啟動 App 自己的 Colima。這幾個請交給 App 設定。
 
 `.mcp.json` 範例：唯讀共用一個專案資料夾，並開啟 `host_exec`：
 

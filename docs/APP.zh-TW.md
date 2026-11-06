@@ -75,7 +75,7 @@ macOS 不允許任何 App 代替你打開這些開關。打開後，完全結束
 ## 設定
 
 - **Run commands in a sandbox (mac-exec)**：如果只需要畫面控制，可以關掉。
-- **Workspace**：sandbox 唯一能寫入的 Mac 資料夾，預設 `~/AgentWorkspace`。含有憑證或設定的資料夾，例如 `~/.ssh`、`~/Library`，一律拒絕。
+- **Workspace**：sandbox 唯一能寫入的 Mac 資料夾，預設 `~/AgentWorkspace`。含有憑證或設定的資料夾，例如 `~/.ssh`、`~/Library`，一律拒絕。請只拿它來放代理的工作，不要設成你在 Mac 上開發的專案：sandbox 寫進去的檔案（例如 Git hook）之後可能在 Mac 上執行。請見[工作資料夾能做什麼](EXEC.zh-TW.md#工作資料夾能做什麼)。
 - **Allow host_exec**：讓代理直接在 Mac 上、sandbox 之外執行指令。預設關閉；見 [mac-exec](EXEC.zh-TW.md#什麼時候用-host_exec)。
 
 修改設定後，按橫幅上的 **Apply** 更新客戶端。開啟 host_exec 前會先要求確認。
