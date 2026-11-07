@@ -181,6 +181,9 @@ private final class MacControlServer: MCPServer {
     private var lastCapture: CaptureSize?
     private var recordings: [String: Recording] = [:]
     private let refs = RefRegistry()
+    // Shared with the other mac-control servers of this user, which other clients start.
+    private let inputLock = SharedLock("input")
+    private let recordingLock = SharedLock("recording")
     // The running call's cancellation; calls run one at a time.
     private var cancellation = Cancellation()
     // The app this server runs under, such as the terminal, Claude, or Codex: the nearest parent process with a
@@ -534,6 +537,15 @@ private final class MacControlServer: MCPServer {
                 throw ToolFailure("\(name) does not take \(unknown.sorted().joined(separator: ", ")). It accepts: \(accepted.isEmpty ? "no parameters" : accepted).")
             }
         }
+        // Input from two servers must not interleave, and one must not restore the clipboard over another's paste.
+        let sendsInput = ["mac_mouse", "mac_scroll", "mac_type_text", "mac_key", "mac_ax_action"].contains(name)
+            || (name == "mac_window" && args["action"] as? String != "list")
+        if sendsInput {
+            guard try inputLock.lock(timeout: 10, cancellation: cancellation) else {
+                throw ToolFailure("Another mac-control server, started by another client, has been sending input for 10 seconds; nothing was sent. Try again.", .busy)
+            }
+        }
+        defer { if sendsInput { inputLock.unlock() } }
         switch name {
         case "mac_status": return toolResult(status())
         case "mac_screenshot": return try screenshot(args)
@@ -670,6 +682,10 @@ private final class MacControlServer: MCPServer {
         guard !recordings.values.contains(where: { $0.process.isRunning }) else {
             throw ToolFailure("A screen recording is already running.", .busy)
         }
+        // Held while screencapture runs, so another client's server sees this recording too.
+        guard try recordingLock.tryLock() else {
+            throw ToolFailure("Another mac-control server, started by another client, is recording the screen. Wait for it to finish.", .busy)
+        }
         let directory = try Self.privateRecordingsFolder()
         let id = UUID().uuidString
         let path = directory.appendingPathComponent("\(id).mov")
@@ -678,7 +694,10 @@ private final class MacControlServer: MCPServer {
         process.arguments = ["-x", "-m", "-v", "-V", String(Int(seconds)), path.path]
         process.standardOutput = FileHandle.nullDevice
         process.standardError = FileHandle.nullDevice
+        let lock = recordingLock
+        process.terminationHandler = { _ in lock.unlock() }
         do { try process.run() } catch {
+            recordingLock.unlock()
             throw ToolFailure("Could not start screencapture; recording was not started: \(error.localizedDescription)", .setup)
         }
         recordings[id] = Recording(process: process, path: path, duration: Int(seconds), startedAt: Date())

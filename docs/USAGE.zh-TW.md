@@ -276,7 +276,7 @@ App 停止回應時（例如忙碌或當掉），讀取會在那裡停止，不�
 | `mac_record_status` | `recording_id`，必填 | 回報 `recording`、`ready` 或 `failed`；`ready` 時附上檔案路徑 |
 | `mac_record_stop` | `recording_id`，必填 | 提前停止 |
 
-一次只能有一個錄影。檔案是 QuickTime MOV，使用 MacControl.app 時存在 `~/Movies/MacControl/`，從原始碼建置時存在 clone 裡的 `.build/recordings/`。只有你的帳號能開啟這個資料夾。錄影不含聲音。呼叫 `mac_record_stop` 之後，檔案可能要稍等一下，`mac_record_status` 才會回報 `ready`。
+所有客戶端加起來一次只能有一個錄影；錄影結束前，其他客戶端的 `mac_record_start` 會以 `BUSY` 失敗。檔案是 QuickTime MOV，使用 MacControl.app 時存在 `~/Movies/MacControl/`，從原始碼建置時存在 clone 裡的 `.build/recordings/`。只有你的帳號能開啟這個資料夾。錄影不含聲音。呼叫 `mac_record_stop` 之後，檔案可能要稍等一下，`mac_record_status` 才會回報 `ready`。
 
 ## 錯誤結果
 
@@ -298,7 +298,7 @@ App 停止回應時（例如忙碌或當掉），讀取會在那裡停止，不�
 
 ## 取消呼叫
 
-呼叫會依抵達順序一次執行一個，所以兩個輸入動作不會交錯。客戶端取消呼叫時（例如你中止了代理），伺服器會停下它，而且不回傳結果：
+呼叫會依抵達順序一次執行一個，所以兩個輸入動作不會交錯。每個客戶端都會啟動自己的伺服器，所以同時連接多個客戶端（例如 Claude Code 和 Codex）時，這些伺服器也會輪流：另一個伺服器正在送出輸入時，輸入呼叫最多等 10 秒，之後就以 `BUSY` 失敗，什麼都不送。讀取類工具不必等待。客戶端取消呼叫時（例如你中止了代理），伺服器會停下它，而且不回傳結果：
 
 - 還沒開始的呼叫不會執行。
 - `mac_wait`、`mac_find`，以及等待 App 移到最前面，都會在一秒內停下。
