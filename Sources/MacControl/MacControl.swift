@@ -247,7 +247,7 @@ private final class MacControlServer: MCPServer {
             ],
             [
                 "name": "mac_ui_tree",
-                "description": "Read a limited Accessibility tree of an app's focused window and focused element: at most \(treeElementLimit) elements, for at most \(Int(treeTimeLimit)) seconds. Elements that can be acted on get a ref and their actions, for mac_ax_action. Reading the whole tree again starts a new snapshot and retires the app's old refs. For a large window, read with a small max_depth, then pass a ref as root. In the result, more_children counts the children not listed; complete is false when the read stopped early (stopped_by: element_limit, time_limit, or app_not_answering) or an element is marked unanswered, but not for children left out by max_depth. Password values are left out. Does not change which app is in front. Requires Accessibility permission.",
+                "description": "Read a limited Accessibility tree of an app's focused window and focused element: at most \(treeElementLimit) elements, for at most \(Int(treeTimeLimit)) seconds. Elements that can be acted on get a ref and their actions, for mac_ax_action. An element read again keeps its ref, and refs keep working until the element goes away or the app quits or relaunches. For a large window, read with a small max_depth, then pass a ref as root. In the result, more_children counts the children not listed; complete is false when the read stopped early (stopped_by: element_limit, time_limit, or app_not_answering) or an element is marked unanswered, but not for children left out by max_depth. Password values are left out. Does not change which app is in front. Requires Accessibility permission.",
                 "inputSchema": [
                     "type": "object",
                     "properties": [
@@ -768,10 +768,10 @@ private final class MacControlServer: MCPServer {
         // The system-wide query can fail for every app, with kAXErrorCannotComplete, as on macOS 26. Then ask the
         // apps themselves: NSWorkspace's guess first, after letting it catch up, and the others only if that is wrong.
         // Hung apps could each take the timeout, so the search stops after a second, leaving focus unknown.
-        let others = regularApps()
-        let guess = NSWorkspace.shared.frontmostApplication
+        let guess = frontmostFromWorkspace()
+        let others = regularApps().filter { $0.processIdentifier != guess?.processIdentifier }
         let deadline = Date().addingTimeInterval(1)
-        for app in [guess].compactMap({ $0 }) + others.filter({ $0.processIdentifier != guess?.processIdentifier }) {
+        for app in [guess].compactMap({ $0 }) + others {
             guard Date() < deadline else { return nil }
             let element = AXUIElementCreateApplication(app.processIdentifier)
             AXUIElementSetMessagingTimeout(element, 0.25)
@@ -1182,7 +1182,7 @@ private final class MacControlServer: MCPServer {
         guard args["root"] != nil else {
             let app = try appToRead(args)
             let pid = app.processIdentifier
-            let owner = refs.owner(pid, fresh: true)
+            let owner = refs.owner(pid)
             let appElement = AXUIElementCreateApplication(pid)
             // Elements obtained through the app element use its timeout, so a hung app cannot stall the tree.
             AXUIElementSetMessagingTimeout(appElement, axMessagingTimeout)
@@ -1214,7 +1214,7 @@ private final class MacControlServer: MCPServer {
         // one part of it.
         let ref = try resolveRef(args, key: "root", outcome: "nothing was read")
         let app = NSRunningApplication(processIdentifier: ref.pid)
-        let owner = refs.owner(ref.pid, fresh: false)
+        let owner = refs.owner(ref.pid)
         let tree = describeElement(ref.element, depth: Int(depth), budget: &budget, owner: owner)
         return ["app": app?.localizedName ?? "Unknown", "bundle_id": app?.bundleIdentifier ?? "",
                 "snapshot": owner?.snapshot ?? NSNull(),
@@ -1465,7 +1465,7 @@ private final class MacControlServer: MCPServer {
 
     // Every match gets a ref, even one with no action of its own, so it can be read below or waited on.
     private func describeMatches(_ found: [AXUIElement], pid: pid_t) -> [[String: Any]] {
-        let owner = refs.owner(pid, fresh: false)
+        let owner = refs.owner(pid)
         return found.map { element in
             var budget = TreeBudget(remaining: 1, deadline: .distantFuture)
             return describeElement(element, depth: 0, budget: &budget, owner: owner, alwaysRef: true)
@@ -1510,7 +1510,7 @@ private final class MacControlServer: MCPServer {
             "main": boolState(element, kAXMainAttribute) ?? false,
             "focused": focused.map { CFEqual($0, element) } ?? false
         ]
-        if let owner = refs.owner(app.processIdentifier, fresh: false) {
+        if let owner = refs.owner(app.processIdentifier) {
             result["ref"] = refs.ref(for: element, role: kAXWindowRole, owner: owner)
         }
         return result
@@ -1919,7 +1919,7 @@ private final class MacControlServer: MCPServer {
             // An app can hold the reply until a modal dialog the action opened is up, so what opened tells
             // whether the action happened.
             if failure.kind == .outcomeUnknown, let before = surfacesBefore, let after = surfaces(ref.pid, near: ref.element) {
-                let changes = surfaceChanges(before: before, after: after, owner: refs.owner(ref.pid, fresh: false))
+                let changes = surfaceChanges(before: before, after: after, owner: refs.owner(ref.pid))
                 if !changes.opened.isEmpty || !changes.closed.isEmpty {
                     let sheet = changes.opened.contains { ["sheet", "dialog"].contains($0["kind"] as? String ?? "") }
                     failure.description += surfaceSentence(changes.opened, changes.closed)
@@ -1958,7 +1958,7 @@ private final class MacControlServer: MCPServer {
             // Compared as sets, since windows can change order without anything opening or closing.
             let opened = after.contains { item in !before.contains { CFEqual($0.element, item.element) } }
             let closed = before.contains { item in !after.contains { CFEqual($0.element, item.element) } }
-            if opened || closed { return surfaceChanges(before: before, after: after, owner: refs.owner(ref.pid, fresh: false)) }
+            if opened || closed { return surfaceChanges(before: before, after: after, owner: refs.owner(ref.pid)) }
         }
         return ([], [])
     }
