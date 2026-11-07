@@ -17,7 +17,7 @@ func toolResult(_ data: [String: Any], images: [[String: Any]] = []) -> [String:
 func jsonString(_ value: Any) -> String {
     let safe = JSONSerialization.isValidJSONObject(value) ? value : jsonSafe(value)
     guard JSONSerialization.isValidJSONObject(safe),
-          let data = try? JSONSerialization.data(withJSONObject: safe, options: [.sortedKeys]),
+          let data = try? JSONSerialization.data(withJSONObject: safe, options: [.sortedKeys, .withoutEscapingSlashes]),
           let string = String(data: data, encoding: .utf8) else { return "{}" }
     return string
 }

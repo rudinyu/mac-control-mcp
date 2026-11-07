@@ -37,7 +37,7 @@ Add a line like this to your request:
 
 ## Results
 
-A successful call returns one JSON object, as the result's `structuredContent` and again as its text, so clients that read either get the same thing. Each tool's `outputSchema` lists its fields. When there is something to say in a sentence, such as which app received a click, it is in `message`. `mac_screenshot` adds the image after the JSON. A failed call is different; see [Error results](#error-results).
+A successful call returns one JSON object, as the result's `structuredContent` and again as its text, so clients that read either get the same thing. Each tool's `outputSchema` lists its fields. When there is something to say in a sentence, such as which app received a click, it is in `message`. `mac_screenshot` adds the image after the JSON. A failed call has the same JSON text, without `structuredContent`; see [Error results](#error-results).
 
 ## Tool reference
 
@@ -259,7 +259,7 @@ The result also lists what the action opened and closed, so after pressing a pop
 
 Each entry in `opened` has a `ref` and its direct children, up to 30 elements; read below the ref with `mac_ui_tree` `root` for more. Each entry in `closed` has `kind` and `title`. After `press`, `show_menu`, `confirm`, and `cancel`, changes are watched for about 0.3 seconds, and for about a second after an action on a menu item, since the item flashes before its menu closes.
 
-Some apps answer an action that opens a modal dialog only once the dialog is up, so `mac_ax_action` reports `OUTCOME_UNKNOWN`. Its JSON part then lists the dialog under `opened`, which usually means the action happened; check that it is the dialog you expected, since another app could open one at the same moment.
+Some apps answer an action that opens a modal dialog only once the dialog is up, so `mac_ax_action` reports `OUTCOME_UNKNOWN`. Its error JSON then lists the dialog under `opened`, which usually means the action happened; check that it is the dialog you expected, since another app could open one at the same moment.
 
 A menu bar item from `mac_find` with `scope` `menubar` can be pressed without opening its menu first. Opening a menu bar menu is not reported under `opened`, and neither is a submenu, since a menu item lists its submenu whether or not it is open.
 
@@ -280,13 +280,13 @@ Only one recording runs at a time. Files are QuickTime MOV, saved in `~/Movies/M
 
 ## Error results
 
-When a tool fails, the result has two text parts: a message for people, and a JSON object for the agent:
+When a tool fails, the result is marked `isError` and has one text part, a JSON object laid out like a successful one, with the sentence in `message`:
 
 ```json
-{"error": {"code": "STALE_REF", "delivered": false, "retry": "refresh"}}
+{"error": {"code": "STALE_REF", "delivered": false, "retry": "refresh", "message": "Ref k3x9.4 was replaced by snapshot q7m2 of Finder after giving out its limit of refs; read mac_ui_tree again."}}
 ```
 
-`delivered` is `false` when nothing reached the app, `true` when the app accepted the action but did not show the expected result afterwards, and `"unknown"` when an action was sent but the app did not confirm receiving it. `retry` says what to do next:
+It has no `structuredContent`, since clients check that against the tool's `outputSchema`, which describes a successful result. Some failures add fields, such as `opened` when an action opened a dialog. `delivered` is `false` when nothing reached the app, `true` when the app accepted the action but did not show the expected result afterwards, and `"unknown"` when an action was sent but the app did not confirm receiving it. `retry` says what to do next:
 
 | `retry` | Meaning | Codes |
 | --- | --- | --- |

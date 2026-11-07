@@ -37,7 +37,7 @@
 
 ## 結果
 
-成功的呼叫會回傳一個 JSON 物件，放在結果的 `structuredContent`，也原樣放在結果的文字裡，所以不論客戶端讀哪一個，拿到的都一樣。每個工具的 `outputSchema` 列出它的欄位。需要用一句話說明的事，例如點擊送到了哪個 App，會放在 `message`。`mac_screenshot` 會在 JSON 之後附上圖片。失敗的呼叫格式不同，請見[錯誤結果](#錯誤結果)。
+成功的呼叫會回傳一個 JSON 物件，放在結果的 `structuredContent`，也原樣放在結果的文字裡，所以不論客戶端讀哪一個，拿到的都一樣。每個工具的 `outputSchema` 列出它的欄位。需要用一句話說明的事，例如點擊送到了哪個 App，會放在 `message`。`mac_screenshot` 會在 JSON 之後附上圖片。失敗的呼叫也是同樣的 JSON 文字，但沒有 `structuredContent`，請見[錯誤結果](#錯誤結果)。
 
 ## 工具參考
 
@@ -280,13 +280,13 @@ App 停止回應時（例如忙碌或當掉），讀取會在那裡停止，不�
 
 ## 錯誤結果
 
-工具失敗時，結果有兩段文字：一段是給人看的訊息，另一段是給代理讀的 JSON：
+工具失敗時，結果會標示 `isError`，並且只有一段文字：格式和成功時一樣的 JSON 物件，說明句子放在 `message`：
 
 ```json
-{"error": {"code": "STALE_REF", "delivered": false, "retry": "refresh"}}
+{"error": {"code": "STALE_REF", "delivered": false, "retry": "refresh", "message": "Ref k3x9.4 was replaced by snapshot q7m2 of Finder after giving out its limit of refs; read mac_ui_tree again."}}
 ```
 
-`delivered` 為 `false` 表示沒有任何東西送到 App；為 `true` 表示 App 接受了動作，但之後沒有顯示預期的結果；為 `"unknown"` 表示動作已送出，但 App 沒有確認收到。`retry` 說明下一步：
+它沒有 `structuredContent`，因為客戶端會拿它對照工具的 `outputSchema`，而那描述的是成功的結果。有些失敗會多加欄位，例如動作開啟了對話框時的 `opened`。`delivered` 為 `false` 表示沒有任何東西送到 App；為 `true` 表示 App 接受了動作，但之後沒有顯示預期的結果；為 `"unknown"` 表示動作已送出，但 App 沒有確認收到。`retry` 說明下一步：
 
 | `retry` | 意思 | 錯誤碼 |
 | --- | --- | --- |

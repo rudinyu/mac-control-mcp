@@ -14,14 +14,14 @@ private func check(_ name: String, _ passed: Bool, _ detail: @autoclosure () -> 
     }
 }
 
-// The message and the error JSON of a failure's result.
-private func parts(_ error: Error) -> (isError: Bool, message: String, error: [String: Any]) {
+// The message and the error JSON of a failure's result, which has one text part, like a success.
+private func parts(_ error: Error) -> (isError: Bool, message: String, error: [String: Any], partCount: Int) {
     let result = failureResult(error)
     let content = result["content"] as? [[String: Any]] ?? []
-    let message = content.first?["text"] as? String ?? ""
-    let json = (content.dropFirst().first?["text"] as? String).flatMap { $0.data(using: .utf8) }
+    let json = (content.first?["text"] as? String).flatMap { $0.data(using: .utf8) }
         .flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] } ?? [:]
-    return (result["isError"] as? Bool == true, message, json["error"] as? [String: Any] ?? [:])
+    let failure = json["error"] as? [String: Any] ?? [:]
+    return (result["isError"] as? Bool == true, failure["message"] as? String ?? "", failure, content.count)
 }
 
 private func describe(_ value: Any?) -> String {
@@ -58,7 +58,8 @@ private enum FailureTests {
         let accepted = parts(ToolFailure("The app accepted it but shows no change.", .outcomeUnknown, delivered: true))
         check("an accepted action says delivered true", accepted.error["delivered"] as? Bool == true, "got \(describe(accepted.error["delivered"]))")
         check("an accepted action still asks to check", accepted.error["code"] as? String == "OUTCOME_UNKNOWN" && accepted.error["retry"] as? String == "check")
-        check("the message is the first part", accepted.isError && accepted.message == "The app accepted it but shows no change.")
+        check("the message is in the error JSON", accepted.isError && accepted.message == "The app accepted it but shows no change.")
+        check("the result is one JSON part, as for a success", accepted.partCount == 1)
 
         let refused = parts(ToolFailure("Nothing was sent.", .outcomeUnknown, delivered: false))
         check("a known undelivered failure says delivered false", refused.error["delivered"] as? Bool == false, "got \(describe(refused.error["delivered"]))")
@@ -70,12 +71,13 @@ private enum FailureTests {
         check("another error keeps its message", other.message == "screencapture went away")
 
         var detailed = ToolFailure("A dialog opened.", .outcomeUnknown, delivered: true)
-        detailed.details = ["opened": [["kind": "dialog"]], "code": "INVALID_ARGS", "delivered": false, "retry": "safe"]
+        detailed.details = ["opened": [["kind": "dialog"]], "code": "INVALID_ARGS", "delivered": false, "retry": "safe", "message": "replaced"]
         let withDetails = parts(detailed).error
         check("details are added", (withDetails["opened"] as? [[String: Any]])?.first?["kind"] as? String == "dialog")
-        check("details cannot replace code, delivered, or retry",
+        check("details cannot replace code, delivered, retry, or message",
               withDetails["code"] as? String == "OUTCOME_UNKNOWN" && withDetails["delivered"] as? Bool == true
-                && withDetails["retry"] as? String == "check", "got \(withDetails)")
+                && withDetails["retry"] as? String == "check" && withDetails["message"] as? String == "A dialog opened.", "got \(withDetails)")
+        check("slashes are not escaped", jsonString(["path": "a/b"]) == #"{"path":"a/b"}"#)
 
         var unusual = ToolFailure("The window moved.", .outcomeUnknown, delivered: true)
         unusual.details = ["when": Date(timeIntervalSince1970: 0), "scale": Double.nan, "nested": [["at": Date(timeIntervalSince1970: 0)]]]

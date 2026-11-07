@@ -54,14 +54,16 @@ enum FailureKind: String {
     }
 }
 
-// The tools/call result for a failed call: the message, then JSON with the code, whether anything was
-// delivered, how to retry, and the failure's details, which cannot replace those three.
+// The tools/call result for a failed call: one JSON text, like a successful call's, with the code, whether
+// anything was delivered, how to retry, the message, and the failure's details, which cannot replace those.
+// There is no structuredContent, since clients check it against the tool's outputSchema, which describes success.
 func failureResult(_ error: Error) -> [String: Any] {
     // Every known failure is a ToolFailure, so another error comes from a call whose effect is not known.
     let failure = error as? ToolFailure
     let kind = failure?.kind ?? .outcomeUnknown
     let delivered: Any = failure?.delivered ?? kind.delivered
-    let base: [String: Any] = ["code": kind.rawValue, "delivered": delivered, "retry": kind.retry]
+    let base: [String: Any] = ["code": kind.rawValue, "delivered": delivered, "retry": kind.retry,
+                               "message": String(describing: error)]
     let details = ["error": base.merging(failure?.details ?? [:]) { current, _ in current }]
-    return ["content": [textContent(String(describing: error)), textContent(jsonString(details))], "isError": true]
+    return ["content": [textContent(jsonString(details))], "isError": true]
 }

@@ -173,8 +173,10 @@ class MCPProtocolTests(unittest.TestCase):
         response = self.request("tools/call", {"name": name, "arguments": arguments})
         self.assertTrue(response["result"]["isError"])
         content = response["result"]["content"]
-        self.assertEqual(len(content), 2)
-        return json.loads(content[1]["text"])["error"]
+        self.assertEqual(len(content), 1)
+        error = json.loads(content[0]["text"])["error"]
+        self.assertTrue(error.pop("message"))
+        return error
 
     def test_10_errors_carry_code_delivery_and_retry(self):
         # None of these reach Accessibility, so they behave the same with or without permission.
