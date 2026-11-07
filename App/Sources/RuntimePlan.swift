@@ -70,6 +70,25 @@ enum RuntimeChoice: Equatable {
         case .managedColima: return String(localized: "Linux VM by MacControl")
         }
     }
+
+    // How the choice is remembered once it has been set up, so it does not change by itself later.
+    var stored: String {
+        switch self {
+        case .appleContainer: return "appleContainer"
+        case .existingDocker(let docker): return "existingDocker:" + docker
+        case .managedColima: return "managedColima"
+        }
+    }
+
+    init?(stored: String) {
+        switch stored {
+        case "appleContainer": self = .appleContainer
+        case "managedColima": self = .managedColima
+        default:
+            guard stored.hasPrefix("existingDocker:"), stored.count > "existingDocker:".count else { return nil }
+            self = .existingDocker(String(stored.dropFirst("existingDocker:".count)))
+        }
+    }
 }
 
 enum RuntimeSelection {

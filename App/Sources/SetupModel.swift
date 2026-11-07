@@ -589,7 +589,14 @@ final class SetupModel: ObservableObject {
         guard !busy else { return }
         busy = true
         defer { busy = false }
+        // The VM keeps sharing the old workspace until it is restarted, so restart it before clients use it.
+        if enableExec, runtimeChoice == .managedColima, Installer.managedColimaInstalled,
+           !Installer.colimaShares(workspace: workspace, readOnly: []) {
+            await setUpRuntime()
+            guard runtime.isDone else { return }
+        }
         for client in staleClients.sorted(by: { $0.rawValue < $1.rawValue }) { await connect(client) }
+        await checkRuntime()
     }
 
     // Settings a client was last connected with. Codex hides environment values when it lists servers,
@@ -632,15 +639,21 @@ final class SetupModel: ObservableObject {
         // For testing and support: `defaults write tw.com.eaman.MacControl runtimeOverride managedColima`
         // (or appleContainer) forces a runtime regardless of this Mac.
         let override = defaults.string(forKey: "runtimeOverride")
+        let forced = override == "managedColima" || override == "appleContainer"
         if override == "managedColima" {
             choice = .managedColima
         } else if override == "appleContainer" {
             choice = .appleContainer
+        } else if let remembered = defaults.string(forKey: "runtime").flatMap(RuntimeChoice.init(stored:)) {
+            // Once a runtime is set up, keep it: after an update or a macOS upgrade, switching by itself would
+            // leave the old VM and its image behind and give agents a different sandbox.
+            choice = remembered
+        } else if FileManager.default.fileExists(atPath: paths.colima.path) {
+            // Set up by a version that did not remember the runtime. Its Colima may be older than this version
+            // wants, which Set Up then updates, so keep using it rather than switch.
+            choice = .managedColima
         } else if cpu == .appleSilicon, macOSMajor >= 26 {
             choice = .appleContainer
-        } else if Installer.managedColimaInstalled {
-            // Once MacControl installed Colima, keep using it, even if another Docker appears later.
-            choice = .managedColima
         } else {
             var workingDocker: String?
             if let docker = await Installer.locate("docker"),
@@ -658,11 +671,18 @@ final class SetupModel: ObservableObject {
                 ? .done(String(localized: "Ready. Each command runs in its own small VM (Apple container)."))
                 : .needsAction(String(localized: "Apple's container tool needs to be installed. MacControl downloads Apple's signed installer."))
         case .existingDocker(let docker):
-            reachable = true
-            runtime = .done(String(localized: "Ready. Uses the Docker already running on this Mac (\(docker))."))
+            let info = try? await Installer.run(docker, ["info", "--format", "{{.ServerVersion}}"], timeout: 20)
+            reachable = info?.exitCode == 0
+            runtime = reachable
+                ? .done(String(localized: "Ready. Uses the Docker already running on this Mac (\(docker))."))
+                : .needsAction(String(localized: "The Docker at \(docker) is not running. Start Docker Desktop, OrbStack, or Colima, then reopen this window."))
         case .managedColima:
             if !Installer.managedColimaInstalled {
-                runtime = .needsAction(String(localized: "No running Docker was found, so MacControl will download a small Linux VM (about 80 MB). If you use Docker Desktop or OrbStack, start it and reopen this window instead."))
+                runtime = .needsAction(FileManager.default.fileExists(atPath: paths.colima.path)
+                    ? String(localized: "This version of MacControl comes with newer versions of Colima, Lima, and the Docker CLI. Click Set Up to install them (about 80 MB).")
+                    : String(localized: "No running Docker was found, so MacControl will download a small Linux VM (about 80 MB). If you use Docker Desktop or OrbStack, start it and reopen this window instead."))
+            } else if !Installer.colimaShares(workspace: workspace, readOnly: []) {
+                runtime = .needsAction(String(localized: "The Linux VM still shares the previous workspace. Click Set Up or Apply to restart it with \(workspace.path)."))
             } else {
                 // A stopped VM is fine: mac-exec starts it when an agent needs it.
                 reachable = await Installer.colimaRunning()
@@ -671,6 +691,8 @@ final class SetupModel: ObservableObject {
                     : String(localized: "Ready. The Linux VM is stopped and starts by itself when needed."))
             }
         }
+        // Remembered only once it works, so a Mac that first had no Docker can still pick one started later.
+        if runtime.isDone, !forced { defaults.set(choice.stored, forKey: "runtime") }
         await refreshVM()
         let imageReady = String(localized: "Ready. Linux tools such as Python, Node.js, and git are installed.")
         if reachable {

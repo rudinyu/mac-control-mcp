@@ -152,10 +152,21 @@ enum Installer {
 
     // Starts the MacControl Colima profile, sharing only the workspace (read-write) and the read-only folders.
     // A running profile is restarted when the shared folders changed.
+    private static let mountKey = "colimaMounts"
+
+    static func colimaMounts(workspace: URL, readOnly: [URL]) -> [String] {
+        ["\(resolvedPath(workspace)):w"] + readOnly.map { resolvedPath($0) }
+    }
+
+    // Whether the VM was last started with these folders. mac-exec starts it again with the same ones, so a
+    // changed workspace reaches the VM only when this app restarts it.
+    static func colimaShares(workspace: URL, readOnly: [URL]) -> Bool {
+        UserDefaults.standard.stringArray(forKey: mountKey) == colimaMounts(workspace: workspace, readOnly: readOnly)
+    }
+
     static func startColima(workspace: URL, readOnly: [URL], cpu: CPU, progress: @escaping @Sendable (String) -> Void) async throws {
-        let mounts = ["\(resolvedPath(workspace)):w"] + readOnly.map { resolvedPath($0) }
-        let mountKey = "colimaMounts"
-        if await colimaRunning(), UserDefaults.standard.stringArray(forKey: mountKey) == mounts { return }
+        let mounts = colimaMounts(workspace: workspace, readOnly: readOnly)
+        if await colimaRunning(), colimaShares(workspace: workspace, readOnly: readOnly) { return }
         if await colimaRunning() {
             progress(String(localized: "Restarting the sandbox VM with the new shared folders…"))
             _ = try? await run(paths.colima.path, ["stop", "--profile", colimaProfile], environment: managedEnvironment, timeout: 180)

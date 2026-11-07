@@ -17,7 +17,7 @@ Requires macOS 14 or later, on Apple silicon or Intel. The app is signed with a 
 | Step | What happens |
 | --- | --- |
 | Location | Checks that the app is in `/Applications`, so client settings keep pointing at it. |
-| Sandbox runtime | Only when "Run commands in a sandbox" is on. On **Apple silicon with macOS 26 or later**, it downloads Apple's signed `container` installer and opens it, and you confirm with your password. On other Macs it uses a Docker that already runs (Docker Desktop, OrbStack, Colima). If there is none, it downloads Colima, Lima, and the Docker CLI (about 80 MB) and starts a small VM named `maccontrol`. |
+| Sandbox runtime | Only when "Run commands in a sandbox" is on. On **Apple silicon with macOS 26 or later**, it downloads Apple's signed `container` installer and opens it, and you confirm with your password. On other Macs it uses a Docker that already runs (Docker Desktop, OrbStack, Colima). If there is none, it downloads Colima, Lima, and the Docker CLI (about 80 MB) and starts a small VM named `maccontrol`. Once the runtime works, MacControl keeps using it, even after an update, a macOS upgrade, or when another Docker appears; if it stops working, the row says so instead of switching. |
 | Sandbox image | Builds the Linux image that sandbox commands run in, then runs one test container. |
 | Clients | Adds `mac-control` and `mac-exec` to every client it finds: Claude Desktop's configuration (keeping your other servers; the file as it was before MacControl first changed it is kept as `claude_desktop_config.json.before-maccontrol`), and Claude Code and Codex through their own `claude mcp add` and `codex mcp add` commands, for all projects. |
 
@@ -75,7 +75,7 @@ macOS does not let any app turn these switches on for you. After turning them on
 ## Settings
 
 - **Run commands in a sandbox (mac-exec)**: turn off if you only want screen control.
-- **Workspace**: the only Mac folder the sandbox can write to. The default is `~/AgentWorkspace`. Folders with credentials or settings, such as `~/.ssh` or `~/Library`, are refused. Keep it a folder only for the agent's work, not a project you develop on the Mac: files the sandbox writes there, such as Git hooks, can run on the Mac later. See [What the workspace can do](EXEC.md#what-the-workspace-can-do).
+- **Workspace**: the only Mac folder the sandbox can write to. The default is `~/AgentWorkspace`. Folders with credentials or settings, such as `~/.ssh` or `~/Library`, are refused. Keep it a folder only for the agent's work, not a project you develop on the Mac: files the sandbox writes there, such as Git hooks, can run on the Mac later. See [What the workspace can do](EXEC.md#what-the-workspace-can-do). When MacControl runs its own Linux VM, **Apply** or **Set Up** restarts the VM so it shares the new workspace.
 - **Allow host_exec**: lets the agent run commands directly on the Mac, outside the sandbox. Off by default; see [mac-exec](EXEC.md#when-to-use-host_exec).
 
 After changing a setting, click **Apply** in the banner to update the clients. Turning on host_exec asks you to confirm first.
@@ -186,4 +186,4 @@ sh scripts/notarize.sh           # notarize and staple the app, then make, notar
 
 `sh scripts/build-app.sh` without `--sign` builds an ad-hoc signed app for local testing. To release, run `sh scripts/ci.sh`, push a tag such as `v0.3.0` that matches `App/Info.plist`, then build with `sh scripts/build-app.sh --sign`, notarize with `sh scripts/notarize.sh`, and publish the DMG and its `.sha256` with `gh release create`. On GitHub Actions the tag is only checked against `App/Info.plist`; if the repository has the signing secrets listed in the workflow, Actions builds, notarizes, and publishes instead. Tests never run on Actions. The pinned download versions and checksums live in `App/Sources/RuntimePlan.swift`; update them together, after checking each file against its project's published checksum. `swift scripts/make-icon.swift` redraws the icon.
 
-To test a runtime that this Mac would not choose by itself: `defaults write tw.com.eaman.MacControl runtimeOverride managedColima` (or `appleContainer`), and `defaults delete tw.com.eaman.MacControl runtimeOverride` to undo it.
+To test a runtime that this Mac would not choose by itself: `defaults write tw.com.eaman.MacControl runtimeOverride managedColima` (or `appleContainer`), and `defaults delete tw.com.eaman.MacControl runtimeOverride` to undo it. To let MacControl choose the runtime again, as after installing Docker Desktop, run `defaults delete tw.com.eaman.MacControl runtime` and reopen the window.

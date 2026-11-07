@@ -96,6 +96,12 @@ private enum AppLogicTests {
         check("Apple silicon on macOS 15 reuses Docker",
               RuntimeSelection.choose(cpu: .appleSilicon, macOSMajor: 15, workingDocker: "/d") == .existingDocker("/d"))
         check("Intel reuses a working Docker", RuntimeSelection.choose(cpu: .intel, macOSMajor: 26, workingDocker: "/d") == .existingDocker("/d"))
+        for choice in [RuntimeChoice.appleContainer, .managedColima, .existingDocker("/usr/local/bin/docker")] {
+            check("a remembered \(choice.stored) reads back", RuntimeChoice(stored: choice.stored) == choice)
+        }
+        for stored in ["", "existingDocker:", "docker", "AppleContainer"] {
+            check("\"\(stored)\" is not a remembered runtime", RuntimeChoice(stored: stored) == nil)
+        }
         check("Intel without Docker installs Colima", RuntimeSelection.choose(cpu: .intel, macOSMajor: 26, workingDocker: nil) == .managedColima)
 
         // Version comparison for the update check

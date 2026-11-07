@@ -17,7 +17,7 @@ MacControl.app 是使用 mac-control 和 mac-exec 最簡單的方式。它內含
 | 步驟 | 內容 |
 | --- | --- |
 | 位置 | 確認 App 在 `/Applications`，讓客戶端的設定一直指得到它。 |
-| Sandbox 執行環境 | 只在開啟「Run commands in a sandbox」時才做。**Apple Silicon 搭配 macOS 26 或以上**：下載 Apple 簽章的 `container` 安裝程式並打開，由你輸入密碼確認。其他 Mac：使用已經在跑的 Docker（Docker Desktop、OrbStack、Colima）；如果沒有，就下載 Colima、Lima 和 Docker CLI（約 80 MB），並啟動一台叫 `maccontrol` 的小型 VM。 |
+| Sandbox 執行環境 | 只在開啟「Run commands in a sandbox」時才做。**Apple Silicon 搭配 macOS 26 或以上**：下載 Apple 簽章的 `container` 安裝程式並打開，由你輸入密碼確認。其他 Mac：使用已經在跑的 Docker（Docker Desktop、OrbStack、Colima）；如果沒有，就下載 Colima、Lima 和 Docker CLI（約 80 MB），並啟動一台叫 `maccontrol` 的小型 VM。執行環境設定好之後，MacControl 會一直沿用它，即使更新了 App、升級了 macOS，或出現其他 Docker；它無法使用時，這一列會說明，而不會自行切換。 |
 | Sandbox 映像檔 | 建置 sandbox 指令使用的 Linux 映像檔，然後跑一個測試容器。 |
 | 客戶端 | 把 `mac-control` 和 `mac-exec` 加進找到的每個客戶端：Claude Desktop 的設定檔（保留你其他的伺服器；MacControl 第一次修改前的原檔會保存為 `claude_desktop_config.json.before-maccontrol`）；Claude Code 和 Codex 則用它們自己的 `claude mcp add`、`codex mcp add` 指令，套用到所有專案。 |
 
@@ -75,7 +75,7 @@ macOS 不允許任何 App 代替你打開這些開關。打開後，完全結束
 ## 設定
 
 - **Run commands in a sandbox (mac-exec)**：如果只需要畫面控制，可以關掉。
-- **Workspace**：sandbox 唯一能寫入的 Mac 資料夾，預設 `~/AgentWorkspace`。含有憑證或設定的資料夾，例如 `~/.ssh`、`~/Library`，一律拒絕。請只拿它來放代理的工作，不要設成你在 Mac 上開發的專案：sandbox 寫進去的檔案（例如 Git hook）之後可能在 Mac 上執行。請見[工作資料夾能做什麼](EXEC.zh-TW.md#工作資料夾能做什麼)。
+- **Workspace**：sandbox 唯一能寫入的 Mac 資料夾，預設 `~/AgentWorkspace`。含有憑證或設定的資料夾，例如 `~/.ssh`、`~/Library`，一律拒絕。請只拿它來放代理的工作，不要設成你在 Mac 上開發的專案：sandbox 寫進去的檔案（例如 Git hook）之後可能在 Mac 上執行。請見[工作資料夾能做什麼](EXEC.zh-TW.md#工作資料夾能做什麼)。MacControl 使用自己的 Linux VM 時，按**套用**或**開始設定**會重新啟動 VM，讓它共用新的工作資料夾。
 - **Allow host_exec**：讓代理直接在 Mac 上、sandbox 之外執行指令。預設關閉；見 [mac-exec](EXEC.zh-TW.md#什麼時候用-host_exec)。
 
 修改設定後，按橫幅上的 **Apply** 更新客戶端。開啟 host_exec 前會先要求確認。
@@ -186,4 +186,4 @@ sh scripts/notarize.sh           # 公證 App 並 staple，再製作 DMG、公�
 
 不加 `--sign` 的 `sh scripts/build-app.sh` 會建置 ad-hoc 簽章的 App，供本機測試。發布時，先執行 `sh scripts/ci.sh`，推送跟 `App/Info.plist` 版本一致的 tag（例如 `v0.3.0`），再用 `sh scripts/build-app.sh --sign` 建置、`sh scripts/notarize.sh` 公證，最後用 `gh release create` 發布 DMG 和它的 `.sha256`。GitHub Actions 只會核對 tag 和 `App/Info.plist`；如果 repository 設了 workflow 裡列出的簽章 secrets，則改由 Actions 建置、公證並發布。測試一律不在 Actions 上執行。固定的下載版本和校驗碼在 `App/Sources/RuntimePlan.swift`；更新時要一起改，並先用各專案公布的校驗碼核對每個檔案。`swift scripts/make-icon.swift` 會重新繪製圖示。
 
-要測試這台 Mac 不會自動選的執行環境：`defaults write tw.com.eaman.MacControl runtimeOverride managedColima`（或 `appleContainer`）；用 `defaults delete tw.com.eaman.MacControl runtimeOverride` 還原。
+要測試這台 Mac 不會自動選的執行環境：`defaults write tw.com.eaman.MacControl runtimeOverride managedColima`（或 `appleContainer`）；用 `defaults delete tw.com.eaman.MacControl runtimeOverride` 還原。要讓 MacControl 重新選擇執行環境（例如裝了 Docker Desktop 之後），請執行 `defaults delete tw.com.eaman.MacControl runtime`，再重新打開視窗。
