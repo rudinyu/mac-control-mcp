@@ -51,6 +51,43 @@ private enum AppLogicTests {
         check("servers not detected after removal", !ClientConfig.claudeDesktopHasServers(try! ClientConfig.removeFromClaudeDesktop(merged)))
         check("servers not detected in a missing file", !ClientConfig.claudeDesktopHasServers(nil))
 
+        // Claude Desktop's file keeps its layout
+        let laidOut = """
+        {
+            "zeta": 1,
+            "mcpServers": {
+                "other": {"command": "/bin/other"},
+                "mac-control": {"command": "/Applications/MacControl.app/Contents/Helpers/MacControlHelper.app/Contents/MacOS/mac-control-mcp"}
+            },
+            "alpha": [1, 2]
+        }
+
+        """
+        let edited = String(data: try! ClientConfig.mergeClaudeDesktop(Data(laidOut.utf8), servers: [control, exec]), encoding: .utf8)!
+        check("merge keeps the other lines as they were", edited.hasPrefix("{\n    \"zeta\": 1,\n    \"mcpServers\": {\n        \"other\": {\"command\": \"/bin/other\"},")
+              && edited.hasSuffix("    },\n    \"alpha\": [1, 2]\n}\n"), edited)
+        check("merge adds the new server at the members' indent, indenting by the file's step",
+              edited.contains("\n        \"mac-exec\": {\n            \"args\": [],\n            \"command\": "), edited)
+        check("the edited file has the expected content", ClientConfig.claudeDesktopMatches(Data(edited.utf8), servers: [control, exec]))
+        let unedited = String(data: try! ClientConfig.removeFromClaudeDesktop(Data(edited.utf8)), encoding: .utf8)!
+        check("removal leaves the rest of the file as it was",
+              unedited == "{\n    \"zeta\": 1,\n    \"mcpServers\": {\n        \"other\": {\"command\": \"/bin/other\"}\n    },\n    \"alpha\": [1, 2]\n}\n", unedited)
+        for (name, start) in [("no mcpServers", #"{"a": 1}"#), ("an empty mcpServers", #"{"mcpServers": {}}"#), ("an empty file object", "{}")] {
+            let result = try! ClientConfig.mergeClaudeDesktop(Data(start.utf8), servers: [control])
+            check("merge into \(name) works", ClientConfig.claudeDesktopMatches(result, servers: [control]), String(data: result, encoding: .utf8)!)
+            let back = try! ClientConfig.removeFromClaudeDesktop(result)
+            check("removal after merging into \(name) leaves no server", !ClientConfig.claudeDesktopHasServers(back), String(data: back, encoding: .utf8)!)
+        }
+        let first = #"{"mcpServers": {"mac-control": {"command": "\#(control.command)"}, "other": {"command": "x"}}}"#
+        check("removing the first server keeps the second", String(data: try! ClientConfig.removeFromClaudeDesktop(Data(first.utf8)), encoding: .utf8)! == #"{"mcpServers": {"other": {"command": "x"}}}"#)
+
+        // A development entry with the same name is not this app's
+        let development = Data(#"{"mcpServers": {"mac-control": {"command": "/bin/sh", "args": ["/src/mac-control-mcp/scripts/run-server.sh"]}}}"#.utf8)
+        check("a development entry is not counted as connected", !ClientConfig.claudeDesktopHasServers(development))
+        check("a development entry is not removed", (try? ClientConfig.removeFromClaudeDesktop(development)) == development)
+        check("an app helper is this app's", ClientConfig.isAppCommand(exec.command))
+        check("a source build is not", !ClientConfig.isAppCommand("/src/mac-control-mcp/.build/mac-control-mcp"))
+
         // CLI commands
         let claude = ClientConfig.claudeCodeCommands(exec)
         check("claude: remove first", claude[0] == ["mcp", "remove", "--scope", "user", "mac-exec"])

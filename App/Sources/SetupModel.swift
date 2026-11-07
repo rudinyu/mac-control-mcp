@@ -838,7 +838,7 @@ final class SetupModel: ObservableObject {
                     let removed = try ClientConfig.removeFromClaudeDesktop(existing)
                     if removed != existing {
                         try keepOriginal(existing, of: claudeDesktopConfig)
-                        try removed.write(to: claudeDesktopConfig, options: .atomic)
+                        try removed.write(to: claudeDesktopConfig.resolvingSymlinksInPath(), options: .atomic)
                     }
                 }
             case .claudeCode, .codex:
@@ -856,7 +856,13 @@ final class SetupModel: ObservableObject {
                         func registered() async throws -> Bool {
                             try await Installer.runInLoginShell(program, ["mcp", "get", serverName], timeout: 30).exitCode == 0
                         }
-                        guard try await registered() else { continue }
+                        let entry = try await Installer.runInLoginShell(program, ["mcp", "get", serverName], timeout: 30)
+                        guard entry.exitCode == 0 else { continue }
+                        // An entry with the same name that runs something else, such as a source build, is kept.
+                        guard ClientConfig.describesAppCommand(entry.stdout) else {
+                            note(String(localized: "Kept \(serverName) in \(client.rawValue), since it does not run MacControl."))
+                            continue
+                        }
                         let arguments = client == .codex ? ["mcp", "remove", serverName] : ["mcp", "remove", "--scope", "user", serverName]
                         let result = try await Installer.runInLoginShell(program, arguments)
                         if try await registered() {
@@ -883,7 +889,8 @@ final class SetupModel: ObservableObject {
         let merged = try ClientConfig.mergeClaudeDesktop(existing, servers: servers)
         guard existing != merged else { return }
         if let existing { try keepOriginal(existing, of: claudeDesktopConfig) }
-        try merged.write(to: claudeDesktopConfig, options: .atomic)
+        // Written through a symbolic link, such as one into a dotfiles folder, instead of replacing the link.
+        try merged.write(to: claudeDesktopConfig.resolvingSymlinksInPath(), options: .atomic)
     }
 
     private func connectCLI(_ client: Client) async throws {
@@ -894,12 +901,25 @@ final class SetupModel: ObservableObject {
             }
             throw ConfigFailure(description: String(localized: "\(client.rawValue) was not found. Run the commands shown below in Terminal."))
         }
+        let home = FileManager.default.homeDirectoryForCurrentUser
+        let codexFile = home.appendingPathComponent(".codex/config.toml").resolvingSymlinksInPath()
         for server in servers {
             let commands = client == .codex ? ClientConfig.codexCommands(server) : ClientConfig.claudeCodeCommands(server)
+            // The CLIs cannot replace an entry, so the old one is removed first, and put back if the new one is refused.
+            let oldClaudeEntry = client == .claudeCode
+                ? ClientConfig.claudeCodeEntry(try? Data(contentsOf: home.appendingPathComponent(".claude.json")), name: server.name) : nil
+            let codexBefore = client == .codex ? try? Data(contentsOf: codexFile) : nil
             _ = try? await Installer.runInLoginShell(program, commands[0]) // removing an entry that does not exist is fine
+            let codexAfterRemoval = client == .codex ? try? Data(contentsOf: codexFile) : nil
             let result = try await Installer.runInLoginShell(program, commands[1])
             guard result.exitCode == 0 else {
-                throw ConfigFailure(description: String(localized: "\(client.rawValue) refused the server \(server.name): \(result.stderr.suffix(400))"))
+                if let oldClaudeEntry {
+                    _ = try? await Installer.runInLoginShell(program, ["mcp", "add-json", "--scope", "user", server.name, oldClaudeEntry])
+                } else if let codexBefore, codexBefore != codexAfterRemoval, (try? Data(contentsOf: codexFile)) == codexAfterRemoval {
+                    // Only when nothing else changed the file meanwhile.
+                    try? codexBefore.write(to: codexFile, options: .atomic)
+                }
+                throw ConfigFailure(description: String(localized: "\(client.rawValue) refused the server \(server.name), so its previous entry was kept: \(result.stderr.suffix(400))"))
             }
         }
         if client == .codex, servers.contains(where: { $0.name == "mac-exec" }) { try setCodexExecTimeout() }
@@ -908,7 +928,7 @@ final class SetupModel: ObservableObject {
 
     // Sandbox commands may run for up to 600 seconds, longer than Codex allows tools by default.
     private func setCodexExecTimeout() throws {
-        let file = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".codex/config.toml")
+        let file = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".codex/config.toml").resolvingSymlinksInPath()
         guard let toml = try? String(contentsOf: file, encoding: .utf8) else { return }
         let updated = ClientConfig.setCodexServerOption(toml, server: "mac_exec", key: "tool_timeout_sec", value: "620")
         guard updated != toml else { return }

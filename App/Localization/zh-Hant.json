@@ -5,7 +5,6 @@
   "%@ in a terminal": "在終端機裡的 %@",
   "%@ is not running, so the sandbox image was left in it.": "%@ 沒有在執行，所以 sandbox image 留在裡面。",
   "%@ is ready": "%@ 已就緒",
-  "%@ refused the server %@: %@": "%1$@ 拒絕了伺服器 %2$@：%3$@",
   "%@ still has %@ after removing it: %@": "移除後，%1$@ 仍然有 %2$@：%3$@",
   "%@ was not found. Run the commands shown below in Terminal.": "找不到 %@。請在「終端機」執行下方的指令。",
   "%lld steps left. Click Set Up.": "還有 %lld 個步驟。請按「開始設定」。",
@@ -198,5 +197,7 @@
   "the sandbox image": "sandbox image",
   "unpack Lima": "解壓縮 Lima",
   "unpack the Docker CLI": "解壓縮 Docker CLI",
-  "your terminal app (Terminal, iTerm2, …)": "你的終端機 App（終端機、iTerm2 等）"
+  "your terminal app (Terminal, iTerm2, …)": "你的終端機 App（終端機、iTerm2 等）",
+  "%@ refused the server %@, so its previous entry was kept: %@": "%1$@ 拒絕了伺服器 %2$@，所以保留了原本的設定：%3$@",
+  "Kept %@ in %@, since it does not run MacControl.": "保留了 %2$@ 裡的 %1$@，因為它執行的不是 MacControl。"
 }
