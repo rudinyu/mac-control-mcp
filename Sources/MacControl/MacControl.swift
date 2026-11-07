@@ -116,25 +116,39 @@ private let usKeyCodes: [String: CGKeyCode] = [
 // marked Z on AZERTY or Dvorak too. macOS matches cmd shortcuts on non-Latin layouts, such as Russian, against
 // the Latin layout it uses with them, so that layout is the one read.
 private func layoutKeyCodes() -> [String: CGKeyCode]? {
-    guard let source = TISCopyCurrentASCIICapableKeyboardLayoutInputSource()?.takeRetainedValue(),
-          let property = TISGetInputSourceProperty(source, kTISPropertyUnicodeKeyLayoutData) else { return nil }
-    let data = Unmanaged<CFData>.fromOpaque(property).takeUnretainedValue()
-    guard let bytes = CFDataGetBytePtr(data) else { return nil }
-    return bytes.withMemoryRebound(to: UCKeyboardLayout.self, capacity: 1) { layout in
-        var codes: [String: CGKeyCode] = [:]
-        // Lower codes first, so a character on both the main keys and the keypad maps to the main key.
-        for code in 0..<128 where namedKeyCodes.values.contains(CGKeyCode(code)) == false {
-            var deadKeys: UInt32 = 0
-            var length = 0
-            var characters = [UniChar](repeating: 0, count: 4)
-            let status = UCKeyTranslate(layout, UInt16(code), UInt16(kUCKeyActionDown), 0, UInt32(LMGetKbdType()),
-                                        OptionBits(kUCKeyTranslateNoDeadKeysBit), &deadKeys, characters.count, &length, &characters)
-            guard status == noErr, length > 0 else { continue }
-            let character = String(utf16CodeUnits: characters, count: length).lowercased()
-            guard character.count == 1, character.unicodeScalars.allSatisfy({ !CharacterSet.whitespacesAndNewlines.contains($0) && !CharacterSet.controlCharacters.contains($0) }) else { continue }
-            if codes[character] == nil { codes[character] = CGKeyCode(code) }
+    guard let source = TISCopyCurrentASCIICapableKeyboardLayoutInputSource()?.takeRetainedValue() else { return nil }
+    // The layout data belongs to the input source, so the source must stay alive while it is read.
+    return withExtendedLifetime(source) { () -> [String: CGKeyCode]? in
+        guard let property = TISGetInputSourceProperty(source, kTISPropertyUnicodeKeyLayoutData) else { return nil }
+        let data = Unmanaged<CFData>.fromOpaque(property).takeUnretainedValue()
+        guard let bytes = CFDataGetBytePtr(data) else { return nil }
+        return bytes.withMemoryRebound(to: UCKeyboardLayout.self, capacity: 1) { layout in
+            func character(_ code: Int, shift: Bool) -> String? {
+                var deadKeys: UInt32 = 0
+                var length = 0
+                var characters = [UniChar](repeating: 0, count: 4)
+                let modifiers = shift ? UInt32(shiftKey >> 8) & 0xFF : 0
+                let status = UCKeyTranslate(layout, UInt16(code), UInt16(kUCKeyActionDown), modifiers, UInt32(LMGetKbdType()),
+                                            OptionBits(kUCKeyTranslateNoDeadKeysMask), &deadKeys, characters.count, &length, &characters)
+                guard status == noErr, length > 0 else { return nil }
+                let text = String(utf16CodeUnits: characters, count: length).lowercased()
+                guard text.count == 1, text.unicodeScalars.allSatisfy({ !CharacterSet.whitespacesAndNewlines.contains($0) && !CharacterSet.controlCharacters.contains($0) }) else { return nil }
+                return text
+            }
+            let keypad: Set<Int> = [65, 67, 69, 75, 78, 81, 82, 83, 84, 85, 86, 87, 88, 89, 91, 92]
+            let mainKeys = (0..<128).filter { !keypad.contains($0) && !namedKeyCodes.values.contains(CGKeyCode($0)) }
+            var codes: [String: CGKeyCode] = [:]
+            for code in mainKeys { if let text = character(code, shift: false), codes[text] == nil { codes[text] = CGKeyCode(code) } }
+            // On AZERTY the top row types digits only with shift, and macOS matches cmd+1 to that key, so it is
+            // preferred over the keypad.
+            for code in mainKeys {
+                if let text = character(code, shift: true), text.count == 1, text.first!.isASCII, text.first!.isNumber, codes[text] == nil {
+                    codes[text] = CGKeyCode(code)
+                }
+            }
+            for code in keypad.sorted() { if let text = character(code, shift: false), codes[text] == nil { codes[text] = CGKeyCode(code) } }
+            return codes.isEmpty ? nil : codes
         }
-        return codes.isEmpty ? nil : codes
     }
 }
 
@@ -1173,7 +1187,7 @@ private final class MacControlServer: MCPServer {
         } else if keyName.count == 1, let typed = (layoutKeyCodes() ?? usKeyCodes)[keyName] {
             code = typed
         } else if keyName.count == 1 {
-            throw ToolFailure("No key on the current keyboard layout types \(keyName) without shift or option. Give the key that does, with modifiers, such as key 1 with modifiers [shift] for !, or use mac_type_text to type text.")
+            throw ToolFailure("No key on the current keyboard layout types \(keyName) without shift or option. Give the key that does, with modifiers, such as key 1 with modifiers [shift] for ! on a US keyboard, or use mac_type_text to type text.")
         } else {
             throw ToolFailure("Unsupported key. Use a character, such as a, 7, or /, or one of \(namedKeys.joined(separator: ", ")).")
         }

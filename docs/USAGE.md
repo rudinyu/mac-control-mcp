@@ -118,7 +118,7 @@ The result names the app that received the text, for example `Inserted 8 charact
 {"key": "enter"}
 ```
 
-A character is found on the keyboard layout in use, so `cmd`+`z` presses the key marked Z on AZERTY or Dvorak too. With a non-Latin layout, such as Russian, the Latin layout macOS uses for shortcuts is used. For a character that needs `shift` or `alt`, give the key and the modifier, such as `1` with `shift` for `!` on a US keyboard, or type it with `mac_type_text`. Media keys, such as volume, are not supported.
+A character is found on the keyboard layout in use, so `cmd`+`z` presses the key marked Z on AZERTY or Dvorak too. With a non-Latin layout, such as Russian, the Latin layout macOS uses for shortcuts is used. A digit is the top-row key even on AZERTY, where that key types the digit only with `shift`, since macOS matches shortcuts such as `cmd`+`1` to it; to type digits there, use `mac_type_text`. For a character that needs `shift` or `alt`, give the key and the modifier, such as `1` with `shift` for `!` on a US keyboard, or type it with `mac_type_text`. Media keys, such as volume, are not supported.
 
 ### `mac_ui_tree`
 
