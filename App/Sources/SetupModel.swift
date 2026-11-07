@@ -644,9 +644,11 @@ final class SetupModel: ObservableObject {
             choice = .managedColima
         } else if override == "appleContainer" {
             choice = .appleContainer
-        } else if let remembered = defaults.string(forKey: "runtime").flatMap(RuntimeChoice.init(stored:)) {
+        } else if let remembered = defaults.string(forKey: "runtime").flatMap(RuntimeChoice.init(stored:)),
+                  remembered.programExists {
             // Once a runtime is set up, keep it: after an update or a macOS upgrade, switching by itself would
-            // leave the old VM and its image behind and give agents a different sandbox.
+            // leave the old VM and its image behind and give agents a different sandbox. A Docker that has been
+            // uninstalled is forgotten, so the app can find another.
             choice = remembered
         } else if FileManager.default.fileExists(atPath: paths.colima.path) {
             // Set up by a version that did not remember the runtime. Its Colima may be older than this version

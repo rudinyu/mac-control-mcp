@@ -102,6 +102,8 @@ private enum AppLogicTests {
         for stored in ["", "existingDocker:", "docker", "AppleContainer"] {
             check("\"\(stored)\" is not a remembered runtime", RuntimeChoice(stored: stored) == nil)
         }
+        check("a remembered Docker that is gone is not kept", !RuntimeChoice.existingDocker("/nonexistent/docker").programExists)
+        check("a remembered Docker that exists is kept", RuntimeChoice.existingDocker("/bin/sh").programExists)
         check("Intel without Docker installs Colima", RuntimeSelection.choose(cpu: .intel, macOSMajor: 26, workingDocker: nil) == .managedColima)
 
         // Version comparison for the update check

@@ -17,7 +17,7 @@ MacControl.app 是使用 mac-control 和 mac-exec 最簡單的方式。它內含
 | 步驟 | 內容 |
 | --- | --- |
 | 位置 | 確認 App 在 `/Applications`，讓客戶端的設定一直指得到它。 |
-| Sandbox 執行環境 | 只在開啟「Run commands in a sandbox」時才做。**Apple Silicon 搭配 macOS 26 或以上**：下載 Apple 簽章的 `container` 安裝程式並打開，由你輸入密碼確認。其他 Mac：使用已經在跑的 Docker（Docker Desktop、OrbStack、Colima）；如果沒有，就下載 Colima、Lima 和 Docker CLI（約 80 MB），並啟動一台叫 `maccontrol` 的小型 VM。執行環境設定好之後，MacControl 會一直沿用它，即使更新了 App、升級了 macOS，或出現其他 Docker；它無法使用時，這一列會說明，而不會自行切換。 |
+| Sandbox 執行環境 | 只在開啟「Run commands in a sandbox」時才做。**Apple Silicon 搭配 macOS 26 或以上**：下載 Apple 簽章的 `container` 安裝程式並打開，由你輸入密碼確認。其他 Mac：使用已經在跑的 Docker（Docker Desktop、OrbStack、Colima）；如果沒有，就下載 Colima、Lima 和 Docker CLI（約 80 MB），並啟動一台叫 `maccontrol` 的小型 VM。執行環境設定好之後，MacControl 會一直沿用它，即使更新了 App、升級了 macOS，或出現其他 Docker；它無法使用時，這一列會說明，而不會自行切換。如果它用的 Docker 被移除了，就會重新選擇；其他情況下要它重新選擇，請執行 `defaults delete tw.com.eaman.MacControl runtime`，再重新打開視窗。 |
 | Sandbox 映像檔 | 建置 sandbox 指令使用的 Linux 映像檔，然後跑一個測試容器。 |
 | 客戶端 | 把 `mac-control` 和 `mac-exec` 加進找到的每個客戶端：Claude Desktop 的設定檔（保留你其他的伺服器；MacControl 第一次修改前的原檔會保存為 `claude_desktop_config.json.before-maccontrol`）；Claude Code 和 Codex 則用它們自己的 `claude mcp add`、`codex mcp add` 指令，套用到所有專案。 |
 

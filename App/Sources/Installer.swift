@@ -150,8 +150,6 @@ enum Installer {
         return status?.exitCode == 0
     }
 
-    // Starts the MacControl Colima profile, sharing only the workspace (read-write) and the read-only folders.
-    // A running profile is restarted when the shared folders changed.
     private static let mountKey = "colimaMounts"
 
     static func colimaMounts(workspace: URL, readOnly: [URL]) -> [String] {
@@ -164,6 +162,8 @@ enum Installer {
         UserDefaults.standard.stringArray(forKey: mountKey) == colimaMounts(workspace: workspace, readOnly: readOnly)
     }
 
+    // Starts the MacControl Colima profile, sharing only the workspace (read-write) and the read-only folders.
+    // A running profile is restarted when the shared folders changed.
     static func startColima(workspace: URL, readOnly: [URL], cpu: CPU, progress: @escaping @Sendable (String) -> Void) async throws {
         let mounts = colimaMounts(workspace: workspace, readOnly: readOnly)
         if await colimaRunning(), colimaShares(workspace: workspace, readOnly: readOnly) { return }

@@ -80,6 +80,13 @@ enum RuntimeChoice: Equatable {
         }
     }
 
+    // False for a remembered Docker whose program is gone. The other runtimes are installed by this app,
+    // which offers to install them again.
+    var programExists: Bool {
+        guard case .existingDocker(let docker) = self else { return true }
+        return FileManager.default.isExecutableFile(atPath: docker)
+    }
+
     init?(stored: String) {
         switch stored {
         case "appleContainer": self = .appleContainer
