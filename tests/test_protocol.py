@@ -182,6 +182,7 @@ class MCPProtocolTests(unittest.TestCase):
             ("mac_scroll", {"dy": -5}, "INVALID_ARGS", "fix"),
             ("no_such_tool", {}, "INVALID_ARGS", "fix"),
             ("mac_key", {"key": "launchpad"}, "INVALID_ARGS", "fix"),
+            ("mac_key", {"key": "☃"}, "INVALID_ARGS", "fix"),
             ("mac_key", {"key": "a", "app": "No Such App 7f3c"}, "APP_NOT_FOUND", "fix"),
             ("mac_ax_action", {"ref": "zzzzzz.1", "action": "press"}, "STALE_REF", "refresh"),
             ("mac_ax_action", {"ref": "3.12", "action": "press"}, "INVALID_ARGS", "fix"),

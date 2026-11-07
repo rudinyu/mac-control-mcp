@@ -1,5 +1,6 @@
 import AppKit
 import ApplicationServices
+import Carbon.HIToolbox
 import CoreGraphics
 import Foundation
 
@@ -84,20 +85,58 @@ private let mouseActions = ["move", "click", "double_click", "right_click", "dra
 private let windowActions = ["list", "focus", "move", "resize", "minimize", "restore"]
 private let keyModifiers = ["cmd", "shift", "alt", "ctrl"]
 
-// mac_key names and their virtual key codes.
-private let keyCodes: [String: CGKeyCode] = [
+// mac_key names of keys that do not type a character, and their virtual key codes, which are the same on
+// every layout.
+private let namedKeyCodes: [String: CGKeyCode] = [
+    "enter": 36, "return": 36, "tab": 48, "space": 49, "backspace": 51,
+    "escape": 53, "esc": 53, "delete": 117, "forwarddelete": 117, "help": 114, "home": 115, "end": 119,
+    "pageup": 116, "pagedown": 121,
+    "left": 123, "right": 124, "down": 125, "up": 126,
+    "f1": 122, "f2": 120, "f3": 99, "f4": 118, "f5": 96, "f6": 97, "f7": 98, "f8": 100,
+    "f9": 101, "f10": 109, "f11": 103, "f12": 111, "f13": 105, "f14": 107, "f15": 113,
+    "f16": 106, "f17": 64, "f18": 79, "f19": 80, "f20": 90
+]
+// Key names for the schema, in a readable order.
+private let namedKeys = namedKeyCodes.keys.sorted { a, b in
+    let (fa, fb) = (Int(a.dropFirst()) , Int(b.dropFirst()))
+    if a.hasPrefix("f"), b.hasPrefix("f"), let fa, let fb { return fa < fb }
+    return a < b
+}
+
+// Where characters are on a US keyboard, used only when the current layout cannot be read.
+private let usKeyCodes: [String: CGKeyCode] = [
     "a": 0, "s": 1, "d": 2, "f": 3, "h": 4, "g": 5, "z": 6, "x": 7, "c": 8,
     "v": 9, "b": 11, "q": 12, "w": 13, "e": 14, "r": 15, "y": 16, "t": 17,
-    "1": 18, "2": 19, "3": 20, "4": 21, "6": 22, "5": 23, "9": 25, "7": 26,
-    "8": 28, "0": 29, "o": 31, "u": 32, "i": 34, "p": 35, "l": 37, "j": 38,
-    "k": 40, "n": 45, "m": 46,
-    "enter": 36, "return": 36, "tab": 48, "space": 49, "backspace": 51,
-    "escape": 53, "delete": 117, "home": 115, "end": 119,
-    "pageup": 116, "pagedown": 121,
-    "left": 123, "right": 124, "down": 125, "up": 126
+    "1": 18, "2": 19, "3": 20, "4": 21, "6": 22, "5": 23, "=": 24, "9": 25, "7": 26, "-": 27,
+    "8": 28, "0": 29, "]": 30, "o": 31, "u": 32, "[": 33, "i": 34, "p": 35, "l": 37, "j": 38,
+    "'": 39, "k": 40, ";": 41, "\\": 42, ",": 43, "/": 44, "n": 45, "m": 46, ".": 47, "`": 50
 ]
-// Key names other than single letters and digits, for the schema.
-private let namedKeys = keyCodes.keys.filter { $0.count > 1 }.sorted()
+
+// The key that types each character without modifiers on the keyboard layout in use, so cmd+z presses the key
+// marked Z on AZERTY or Dvorak too. macOS matches cmd shortcuts on non-Latin layouts, such as Russian, against
+// the Latin layout it uses with them, so that layout is the one read.
+private func layoutKeyCodes() -> [String: CGKeyCode]? {
+    guard let source = TISCopyCurrentASCIICapableKeyboardLayoutInputSource()?.takeRetainedValue(),
+          let property = TISGetInputSourceProperty(source, kTISPropertyUnicodeKeyLayoutData) else { return nil }
+    let data = Unmanaged<CFData>.fromOpaque(property).takeUnretainedValue()
+    guard let bytes = CFDataGetBytePtr(data) else { return nil }
+    return bytes.withMemoryRebound(to: UCKeyboardLayout.self, capacity: 1) { layout in
+        var codes: [String: CGKeyCode] = [:]
+        // Lower codes first, so a character on both the main keys and the keypad maps to the main key.
+        for code in 0..<128 where namedKeyCodes.values.contains(CGKeyCode(code)) == false {
+            var deadKeys: UInt32 = 0
+            var length = 0
+            var characters = [UniChar](repeating: 0, count: 4)
+            let status = UCKeyTranslate(layout, UInt16(code), UInt16(kUCKeyActionDown), 0, UInt32(LMGetKbdType()),
+                                        OptionBits(kUCKeyTranslateNoDeadKeysBit), &deadKeys, characters.count, &length, &characters)
+            guard status == noErr, length > 0 else { continue }
+            let character = String(utf16CodeUnits: characters, count: length).lowercased()
+            guard character.count == 1, character.unicodeScalars.allSatisfy({ !CharacterSet.whitespacesAndNewlines.contains($0) && !CharacterSet.controlCharacters.contains($0) }) else { continue }
+            if codes[character] == nil { codes[character] = CGKeyCode(code) }
+        }
+        return codes.isEmpty ? nil : codes
+    }
+}
 
 // mac_ax_action names and the Accessibility actions they perform. set_value and focus set attributes instead.
 private let axActionNames: [String: String] = [
@@ -447,7 +486,7 @@ private final class MacControlServer: MCPServer {
                 "inputSchema": [
                     "type": "object",
                     "properties": [
-                        "key": ["type": "string", "description": "A letter a-z, a digit 0-9, or one of \(namedKeys.joined(separator: ", ")). delete is forward delete."],
+                        "key": ["type": "string", "description": "A character typed by one key without modifiers on the current keyboard layout, such as a, 7, or /, found by what it types, so cmd+z works on AZERTY and Dvorak too; or one of \(namedKeys.joined(separator: ", ")). delete is forward delete."],
                         "modifiers": ["type": "array", "items": ["type": "string", "enum": keyModifiers], "uniqueItems": true, "description": "Keys to hold down while pressing key."],
                         "app": appProperty("It is brought to the front first, and no key is sent unless it is still in front. Without app or window, no key is sent while the app running this agent is in front."),
                         "window": keyboardWindow
@@ -1125,8 +1164,18 @@ private final class MacControlServer: MCPServer {
 
 
     private func key(_ args: [String: Any]) throws -> [String: Any] {
-        guard let keyName = (args["key"] as? String)?.lowercased(), let code = keyCodes[keyName] else {
-            throw ToolFailure("Unsupported key. Use a-z, 0-9, or one of \(namedKeys.joined(separator: ", ")).")
+        guard let keyName = (args["key"] as? String)?.lowercased(), !keyName.isEmpty else {
+            throw ToolFailure("key must be a character or a key name.")
+        }
+        let code: CGKeyCode
+        if let named = namedKeyCodes[keyName] {
+            code = named
+        } else if keyName.count == 1, let typed = (layoutKeyCodes() ?? usKeyCodes)[keyName] {
+            code = typed
+        } else if keyName.count == 1 {
+            throw ToolFailure("No key on the current keyboard layout types \(keyName) without shift or option. Give the key that does, with modifiers, such as key 1 with modifiers [shift] for !, or use mac_type_text to type text.")
+        } else {
+            throw ToolFailure("Unsupported key. Use a character, such as a, 7, or /, or one of \(namedKeys.joined(separator: ", ")).")
         }
         let names = args["modifiers"] as? [String] ?? []
         guard names.count <= keyModifiers.count, Set(names).count == names.count,

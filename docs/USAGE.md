@@ -108,7 +108,7 @@ The result names the app that received the text, for example `Inserted 8 charact
 
 | Parameter | Type | Notes |
 | --- | --- | --- |
-| `key` | string, required | `a`–`z`, `0`–`9`, `enter`/`return`, `tab`, `space`, `backspace`, `delete`, `escape`, `home`, `end`, `pageup`, `pagedown`, `left`, `right`, `up`, `down` |
+| `key` | string, required | A character that one key types without modifiers, such as `a`, `7`, `,`, or `/`; or `enter`/`return`, `tab`, `space`, `backspace`, `delete` (forward delete, also `forwarddelete`), `escape`/`esc`, `help`, `home`, `end`, `pageup`, `pagedown`, `left`, `right`, `up`, `down`, `f1`–`f20` |
 | `modifiers` | array | Any of `cmd`, `shift`, `alt`, `ctrl` |
 | `app` | string | Same as for `mac_type_text` |
 | `window` | string | Same as for `mac_type_text` |
@@ -118,7 +118,7 @@ The result names the app that received the text, for example `Inserted 8 charact
 {"key": "enter"}
 ```
 
-Function keys, punctuation keys, and media keys are not supported. To type punctuation, use `mac_type_text`.
+A character is found on the keyboard layout in use, so `cmd`+`z` presses the key marked Z on AZERTY or Dvorak too. With a non-Latin layout, such as Russian, the Latin layout macOS uses for shortcuts is used. For a character that needs `shift` or `alt`, give the key and the modifier, such as `1` with `shift` for `!` on a US keyboard, or type it with `mac_type_text`. Media keys, such as volume, are not supported.
 
 ### `mac_ui_tree`
 

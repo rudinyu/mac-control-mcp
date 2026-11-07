@@ -108,7 +108,7 @@
 
 | 參數 | 型別 | 說明 |
 | --- | --- | --- |
-| `key` | 字串，必填 | `a`–`z`、`0`–`9`、`enter`/`return`、`tab`、`space`、`backspace`、`delete`、`escape`、`home`、`end`、`pageup`、`pagedown`、`left`、`right`、`up`、`down` |
+| `key` | 字串，必填 | 單一按鍵不加修飾鍵就能打出的字元，例如 `a`、`7`、`,` 或 `/`；或 `enter`/`return`、`tab`、`space`、`backspace`、`delete`（向後刪除，也可寫 `forwarddelete`）、`escape`/`esc`、`help`、`home`、`end`、`pageup`、`pagedown`、`left`、`right`、`up`、`down`、`f1`–`f20` |
 | `modifiers` | 陣列 | `cmd`、`shift`、`alt`、`ctrl` 任意組合 |
 | `app` | 字串 | 同 `mac_type_text` |
 | `window` | 字串 | 同 `mac_type_text` |
@@ -118,7 +118,7 @@
 {"key": "enter"}
 ```
 
-不支援功能鍵、標點符號鍵和多媒體鍵。要輸入標點符號，請用 `mac_type_text`。
+字元會依目前使用的鍵盤配置找到對應的按鍵，所以在 AZERTY 或 Dvorak 上，`cmd`+`z` 也會按下標著 Z 的鍵。使用俄文等非拉丁字母配置時，會改用 macOS 處理快速鍵時搭配的拉丁字母配置。需要 `shift` 或 `alt` 才能打出的字元，請給按鍵加上修飾鍵，例如在美式鍵盤上用 `1` 加 `shift` 打出 `!`，或改用 `mac_type_text` 輸入。不支援音量等多媒體鍵。
 
 ### `mac_ui_tree`
 
