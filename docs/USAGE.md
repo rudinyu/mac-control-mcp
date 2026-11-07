@@ -276,7 +276,7 @@ A menu bar item from `mac_find` with `scope` `menubar` can be pressed without op
 | `mac_record_status` | `recording_id`, required | Reports `recording`, `ready`, or `failed`, with the file path once ready |
 | `mac_record_stop` | `recording_id`, required | Stops early |
 
-Only one recording runs at a time, across all clients; another client's `mac_record_start` fails with `BUSY` until it ends. Files are QuickTime MOV, saved in `~/Movies/MacControl/` with MacControl.app, or in `.build/recordings/` inside the clone for a source build. Only your account can open the folder. Recordings have no audio. After `mac_record_stop`, the file may need a moment before `mac_record_status` reports `ready`.
+Only one recording runs at a time, across all clients; another client's `mac_record_start` fails with `BUSY` until it ends. When the client quits, its recording is stopped, and what was recorded may be lost. Files are QuickTime MOV, saved in `~/Movies/MacControl/` with MacControl.app, or in `.build/recordings/` inside the clone for a source build. Only your account can open the folder. Recordings have no audio. After `mac_record_stop`, the file may need a moment before `mac_record_status` reports `ready`.
 
 ## Error results
 

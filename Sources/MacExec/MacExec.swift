@@ -4,6 +4,8 @@ private let defaultImage = "mac-exec-sandbox:latest"
 private let outputLimit = 100_000
 private let maxCommandLength = 20_000
 private let maxFileBytes = 1_000_000
+// The audit log is moved aside to audit.log.1 once it reaches this size.
+private let auditLogLimit: off_t = 10_000_000
 private let defaultReadBytes = 200_000
 private let maxListEntries = 500
 
@@ -311,13 +313,28 @@ private final class MacExecServer: MCPServer {
                                                     attributes: [.posixPermissions: 0o700])
             // O_NOFOLLOW: never append to another file through a link put in the log's place.
             // O_NONBLOCK: a FIFO there fails at once instead of waiting for a reader; it is refused below.
-            let fd = open(settings.auditLog.path, O_WRONLY | O_APPEND | O_CREAT | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC, 0o600)
-            guard fd >= 0 else { throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
+            func openLog() throws -> (fd: Int32, info: stat) {
+                let fd = open(settings.auditLog.path, O_WRONLY | O_APPEND | O_CREAT | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC, 0o600)
+                guard fd >= 0 else { throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
+                var info = stat()
+                guard fstat(fd, &info) == 0, info.st_mode & S_IFMT == S_IFREG else { close(fd); throw POSIXError(.EFTYPE) }
+                guard info.st_uid == getuid() else { close(fd); throw POSIXError(.EPERM) }
+                return (fd, info)
+            }
+            var (fd, info) = try openLog()
+            // A full log becomes audit.log.1, replacing the one before, so the log keeps at most twice the limit.
+            // The lock keeps two servers from both moving it; the inode check sees that another one already did.
+            if info.st_size >= auditLogLimit {
+                flock(fd, LOCK_EX)
+                var current = stat()
+                if lstat(settings.auditLog.path, &current) == 0, current.st_ino == info.st_ino {
+                    _ = rename(settings.auditLog.path, settings.auditLog.path + ".1")
+                }
+                close(fd)
+                (fd, info) = try openLog()
+            }
             let handle = FileHandle(fileDescriptor: fd, closeOnDealloc: true)
             defer { try? handle.close() }
-            var info = stat()
-            guard fstat(fd, &info) == 0, info.st_mode & S_IFMT == S_IFREG else { throw POSIXError(.EFTYPE) }
-            guard info.st_uid == getuid() else { throw POSIXError(.EPERM) }
             if info.st_mode & 0o077 != 0, fchmod(fd, 0o600) != 0 { throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EPERM) }
             try handle.write(contentsOf: data + Data([0x0a]))
         } catch {

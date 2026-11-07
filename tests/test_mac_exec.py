@@ -348,6 +348,20 @@ class HostExecTests(unittest.TestCase):
         self.assertEqual(events, [("host_exec", "start"), ("host_exec", "end")])
         self.assertEqual(self.server.audit_entries()[0]["reason"], "testing host execution")
 
+    def test_a_full_audit_log_is_moved_aside(self):
+        self.server.ok("host_exec", command="echo first", reason="testing log rotation")
+        with open(self.server.audit, "a") as log:
+            log.write("x" * 10_000_000 + "\n")
+        with open(self.server.audit + ".1", "w") as older:
+            older.write("replaced\n")
+        self.server.ok("host_exec", command="echo second", reason="testing log rotation")
+        events = [(e["tool"], e["event"]) for e in self.server.audit_entries()]
+        self.assertEqual(events, [("host_exec", "start"), ("host_exec", "end")])
+        self.assertEqual(self.server.audit_entries()[0]["command"], "echo second")
+        with open(self.server.audit + ".1") as older:
+            self.assertIn("echo first", older.readline())
+        self.assertEqual(oct(os.stat(self.server.audit).st_mode & 0o777), "0o600")
+
     def test_audit_names_the_client(self):
         self.server.request("initialize", {"protocolVersion": "2025-11-25", "clientInfo": {"name": "test-client\n", "version": "1"}})
         self.server.ok("host_exec", command="echo hi", reason="testing the client name")

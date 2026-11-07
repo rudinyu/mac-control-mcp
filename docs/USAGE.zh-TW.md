@@ -276,7 +276,7 @@ App 停止回應時（例如忙碌或當掉），讀取會在那裡停止，不�
 | `mac_record_status` | `recording_id`，必填 | 回報 `recording`、`ready` 或 `failed`；`ready` 時附上檔案路徑 |
 | `mac_record_stop` | `recording_id`，必填 | 提前停止 |
 
-所有客戶端加起來一次只能有一個錄影；錄影結束前，其他客戶端的 `mac_record_start` 會以 `BUSY` 失敗。檔案是 QuickTime MOV，使用 MacControl.app 時存在 `~/Movies/MacControl/`，從原始碼建置時存在 clone 裡的 `.build/recordings/`。只有你的帳號能開啟這個資料夾。錄影不含聲音。呼叫 `mac_record_stop` 之後，檔案可能要稍等一下，`mac_record_status` 才會回報 `ready`。
+所有客戶端加起來一次只能有一個錄影；錄影結束前，其他客戶端的 `mac_record_start` 會以 `BUSY` 失敗。客戶端結束時，它的錄影會被停止，已錄下的內容可能會遺失。檔案是 QuickTime MOV，使用 MacControl.app 時存在 `~/Movies/MacControl/`，從原始碼建置時存在 clone 裡的 `.build/recordings/`。只有你的帳號能開啟這個資料夾。錄影不含聲音。呼叫 `mac_record_stop` 之後，檔案可能要稍等一下，`mac_record_status` 才會回報 `ready`。
 
 ## 錯誤結果
 

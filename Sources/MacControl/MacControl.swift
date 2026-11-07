@@ -24,6 +24,16 @@ private let focusPollInterval: TimeInterval = 0.05
 // Gives the target app time to read the clipboard before the previous contents are restored.
 private let pasteSettleMicroseconds: useconds_t = 500_000
 
+// The screencapture process of the running recording, or 0. It is stopped when the server ends, so a recording
+// does not go on after the client has quit. A signal handler reads it, so it is a plain global.
+private var runningRecordingPID: pid_t = 0
+
+// Asks the running recording to stop. Safe to call from a signal handler.
+private func stopRunningRecording() {
+    let pid = runningRecordingPID
+    if pid > 0 { kill(pid, SIGINT) }
+}
+
 private struct Recording {
     let process: Process
     let path: URL
@@ -700,11 +710,15 @@ private final class MacControlServer: MCPServer {
         process.arguments = ["-x", "-m", "-v", "-V", String(Int(seconds)), path.path]
         process.standardOutput = FileHandle.nullDevice
         process.standardError = FileHandle.nullDevice
-        process.terminationHandler = { _ in lock.unlock() }
+        process.terminationHandler = { ended in
+            if runningRecordingPID == ended.processIdentifier { runningRecordingPID = 0 }
+            lock.unlock()
+        }
         do { try process.run() } catch {
             throw ToolFailure("Could not start screencapture; recording was not started: \(error.localizedDescription)", .setup)
         }
         started = true
+        runningRecordingPID = process.processIdentifier
         recordings[id] = Recording(process: process, path: path, duration: Int(seconds), startedAt: Date())
         return ["recording_id": id, "state": "recording", "duration_seconds": Int(seconds)]
     }
@@ -2217,7 +2231,20 @@ private enum Main {
             guard let data = try? JSONSerialization.data(withJSONObject: result),
                   (try? data.write(to: URL(fileURLWithPath: arguments[1]), options: .atomic)) != nil else { exit(1) }
         default:
+            // A client that quits closes standard input or sends one of these signals. Either way the running
+            // recording is stopped rather than left to run on. The handler is reset when screencapture starts.
+            for number in [SIGTERM, SIGINT, SIGHUP] {
+                signal(number) { number in
+                    stopRunningRecording()
+                    signal(number, SIG_DFL)
+                    raise(number)
+                }
+            }
             MacControlServer().serve()
+            let pid = runningRecordingPID
+            stopRunningRecording()
+            // Gives screencapture a moment to finish the file.
+            for _ in 0..<20 where pid > 0 && kill(pid, 0) == 0 { usleep(50_000) }
         }
     }
 }
