@@ -84,6 +84,9 @@ private let scrollLimit = 20
 private let mouseActions = ["move", "click", "double_click", "right_click", "drag"]
 private let windowActions = ["list", "focus", "move", "resize", "minimize", "restore"]
 private let keyModifiers = ["cmd", "shift", "alt", "ctrl"]
+// Tools that send input, and how long one waits while another client's server is sending input.
+private let inputTools: Set<String> = ["mac_mouse", "mac_scroll", "mac_type_text", "mac_key", "mac_ax_action"]
+private let inputLockSeconds: TimeInterval = 10
 
 // mac_key names of keys that do not type a character, and their virtual key codes, which are the same on
 // every layout.
@@ -183,7 +186,6 @@ private final class MacControlServer: MCPServer {
     private let refs = RefRegistry()
     // Shared with the other mac-control servers of this user, which other clients start.
     private let inputLock = SharedLock("input")
-    private let recordingLock = SharedLock("recording")
     // The running call's cancellation; calls run one at a time.
     private var cancellation = Cancellation()
     // The app this server runs under, such as the terminal, Claude, or Codex: the nearest parent process with a
@@ -538,11 +540,11 @@ private final class MacControlServer: MCPServer {
             }
         }
         // Input from two servers must not interleave, and one must not restore the clipboard over another's paste.
-        let sendsInput = ["mac_mouse", "mac_scroll", "mac_type_text", "mac_key", "mac_ax_action"].contains(name)
-            || (name == "mac_window" && args["action"] as? String != "list")
+        // Every mac_window action but list changes a window; a call without a valid action is locked to be safe.
+        let sendsInput = inputTools.contains(name) || (name == "mac_window" && args["action"] as? String != "list")
         if sendsInput {
-            guard try inputLock.lock(timeout: 10, cancellation: cancellation) else {
-                throw ToolFailure("Another mac-control server, started by another client, has been sending input for 10 seconds; nothing was sent. Try again.", .busy)
+            guard try inputLock.lock(timeout: inputLockSeconds, cancellation: cancellation) else {
+                throw ToolFailure("Another mac-control server, started by another client, has been sending input for \(Int(inputLockSeconds)) seconds; nothing was sent. Try again.", .busy)
             }
         }
         defer { if sendsInput { inputLock.unlock() } }
@@ -682,10 +684,14 @@ private final class MacControlServer: MCPServer {
         guard !recordings.values.contains(where: { $0.process.isRunning }) else {
             throw ToolFailure("A screen recording is already running.", .busy)
         }
-        // Held while screencapture runs, so another client's server sees this recording too.
-        guard try recordingLock.tryLock() else {
+        // Held while screencapture runs, so another client's server sees this recording too. Each recording has
+        // its own holder, so the end of one recording cannot release the lock of the next.
+        let lock = SharedLock("recording")
+        guard try lock.tryLock() else {
             throw ToolFailure("Another mac-control server, started by another client, is recording the screen. Wait for it to finish.", .busy)
         }
+        var started = false
+        defer { if !started { lock.unlock() } }
         let directory = try Self.privateRecordingsFolder()
         let id = UUID().uuidString
         let path = directory.appendingPathComponent("\(id).mov")
@@ -694,12 +700,11 @@ private final class MacControlServer: MCPServer {
         process.arguments = ["-x", "-m", "-v", "-V", String(Int(seconds)), path.path]
         process.standardOutput = FileHandle.nullDevice
         process.standardError = FileHandle.nullDevice
-        let lock = recordingLock
         process.terminationHandler = { _ in lock.unlock() }
         do { try process.run() } catch {
-            recordingLock.unlock()
             throw ToolFailure("Could not start screencapture; recording was not started: \(error.localizedDescription)", .setup)
         }
+        started = true
         recordings[id] = Recording(process: process, path: path, duration: Int(seconds), startedAt: Date())
         return ["recording_id": id, "state": "recording", "duration_seconds": Int(seconds)]
     }

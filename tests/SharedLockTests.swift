@@ -14,7 +14,9 @@ private func check(_ name: String, _ passed: Bool) {
 private enum SharedLockTests {
     static func main() {
         let name = "test-\(UUID().uuidString)"
-        let path = (NSTemporaryDirectory() as NSString).appendingPathComponent("mac-control-\(name).lock")
+        var folder = [CChar](repeating: 0, count: Int(PATH_MAX))
+        _ = confstr(_CS_DARWIN_USER_TEMP_DIR, &folder, folder.count)
+        let path = (String(cString: folder) as NSString).appendingPathComponent("mac-control-\(name).lock")
         defer { try? FileManager.default.removeItem(atPath: path) }
         let first = SharedLock(name)
         let second = SharedLock(name)
