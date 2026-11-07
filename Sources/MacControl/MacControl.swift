@@ -153,6 +153,8 @@ private final class MacControlServer: MCPServer {
         let text: [String: Any] = ["type": "string", "description": "Text to look for in the title, description, or value, ignoring case."]
         let exact: [String: Any] = ["type": "boolean", "description": "Match the whole text instead of part of it. Default false."]
         let searchRoot: [String: Any] = ["type": "string", "description": "A ref to search below instead of all of the app's windows."]
+        let searchArea: [String: Any] = ["type": "string", "enum": ["windows", "menubar"],
+                                         "description": "windows (default) searches the app's windows; menubar searches its menu bar menus, whose items can be pressed with mac_ax_action without opening the menu. Not used with root."]
         let readApp = appProperty("Default is the frontmost app.")
         let recordingID: [String: Any] = ["type": "string", "description": "The ID from mac_record_start."]
         // Input tools can do anything the user could, in any app.
@@ -270,13 +272,13 @@ private final class MacControlServer: MCPServer {
             ],
             [
                 "name": "mac_find",
-                "description": "Search an app for elements by role and/or text, up to \(searchNodeLimit) elements deep, far deeper than mac_ui_tree. Returns the matches with refs for mac_ax_action, keeping the app's existing refs. complete is false when the search was cut short; stopped_by says why, and app_not_answering means the app is busy or hung. Does not change which app is in front. Requires Accessibility permission.",
+                "description": "Search an app for elements by role and/or text, up to \(searchNodeLimit) elements deep, far deeper than mac_ui_tree. With scope menubar it searches the app's menu bar menus instead, such as for File > Export. Returns the matches with refs for mac_ax_action, keeping the app's existing refs. complete is false when the search was cut short; stopped_by says why, and app_not_answering means the app is busy or hung. Does not change which app is in front. Requires Accessibility permission.",
                 "inputSchema": [
                     "type": "object",
                     "properties": [
                         "role": role, "text": text, "exact": exact,
                         "limit": ["type": "integer", "minimum": 1, "maximum": findMatchLimit, "description": "Most matches to return. Default \(findDefaultLimit)."],
-                        "root": searchRoot, "app": readApp
+                        "root": searchRoot, "scope": searchArea, "app": readApp
                     ],
                     "additionalProperties": false
                 ],
@@ -296,7 +298,7 @@ private final class MacControlServer: MCPServer {
                         "role": role, "text": text, "exact": exact,
                         "state": ["type": "string", "enum": ["present", "absent"], "description": "present (default) waits for a match; absent waits until there is none."],
                         "timeout_seconds": ["type": "number", "minimum": waitMinSeconds, "maximum": waitMaxSeconds, "description": "How long to wait. Default \(Int(waitDefaultSeconds))."],
-                        "root": searchRoot, "app": readApp
+                        "root": searchRoot, "scope": searchArea, "app": readApp
                     ],
                     "additionalProperties": false
                 ],
@@ -1403,12 +1405,18 @@ private final class MacControlServer: MCPServer {
         }
     }
 
-    // The roots to search: the ref's element, or every window of the app with the focused one first. nil when
-    // the app did not answer, so the search does not wait on it again for each window.
-    private func searchRoots(_ pid: pid_t, root: AXRef?) -> [AXUIElement]? {
+    // The roots to search: the ref's element, the app's menu bar, or every window of the app with the focused
+    // one first. nil when the app did not answer, so the search does not wait on it again for each window.
+    private func searchRoots(_ pid: pid_t, root: AXRef?, menuBar: Bool) -> [AXUIElement]? {
         if let root { return [root.element] }
         let appElement = AXUIElementCreateApplication(pid)
         AXUIElementSetMessagingTimeout(appElement, axMessagingTimeout)
+        if menuBar {
+            var bar: CFTypeRef?
+            let read = timedOut { AXUIElementCopyAttributeValue(appElement, kAXMenuBarAttribute as CFString, &bar) }
+            if read.timedOut { return nil }
+            return bar.flatMap { CFGetTypeID($0) == AXUIElementGetTypeID() ? [$0 as! AXUIElement] : nil } ?? []
+        }
         var focused: CFTypeRef?
         if timedOut({ AXUIElementCopyAttributeValue(appElement, kAXFocusedWindowAttribute as CFString, &focused) }).timedOut { return nil }
         var roots: [AXUIElement] = focused.flatMap { CFGetTypeID($0) == AXUIElementGetTypeID() ? [$0 as! AXUIElement] : nil } ?? []
@@ -1443,14 +1451,14 @@ private final class MacControlServer: MCPServer {
     // Depth-first search in document order. complete is false when a limit, the deadline, or an element that
     // could not be read cut it short, so a missing match is only certain when complete is true. It stops at the
     // first question the app does not answer in time, since every further one would wait out the timeout too.
-    private func search(_ pid: pid_t, root: AXRef?, _ query: SearchQuery, limit: Int, deadline: Date) -> SearchResult {
+    private func search(_ scope: SearchScope, _ query: SearchQuery, limit: Int, deadline: Date) -> SearchResult {
         var result = SearchResult()
         func stop(_ reason: String) -> SearchResult {
             result.complete = false
             result.stoppedBy = reason
             return result
         }
-        guard let roots = searchRoots(pid, root: root) else { return stop("app_not_answering") }
+        guard let roots = searchRoots(scope.pid, root: scope.root, menuBar: scope.menuBar) else { return stop("app_not_answering") }
         var stack = roots.reversed().map { ($0, 0) }
         var visited = 0
         // Some apps list an element among its own descendants, such as Calculator giving its application element
@@ -1487,14 +1495,27 @@ private final class MacControlServer: MCPServer {
         return result
     }
 
-    // The app and roots for mac_find and mac_wait: below the root ref if given, otherwise the app's windows.
-    private func searchScope(_ args: [String: Any]) throws -> (app: NSRunningApplication?, pid: pid_t, root: AXRef?) {
+    private struct SearchScope {
+        let app: NSRunningApplication?
+        let pid: pid_t
+        let root: AXRef?
+        let menuBar: Bool
+    }
+
+    // What mac_find and mac_wait search: below the root ref if given, the app's menu bar with scope menubar,
+    // otherwise the app's windows.
+    private func searchScope(_ args: [String: Any]) throws -> SearchScope {
+        guard args["scope"] == nil || ["windows", "menubar"].contains(args["scope"] as? String) else {
+            throw ToolFailure("scope must be windows or menubar.")
+        }
+        let menuBar = args["scope"] as? String == "menubar"
         if args["root"] != nil {
+            guard !menuBar else { throw ToolFailure("Give root or scope menubar, not both; a root ref already says where to search.") }
             let ref = try resolveRef(args, key: "root", outcome: "nothing was searched")
-            return (NSRunningApplication(processIdentifier: ref.pid), ref.pid, ref)
+            return SearchScope(app: NSRunningApplication(processIdentifier: ref.pid), pid: ref.pid, root: ref, menuBar: false)
         }
         let app = try appToRead(args)
-        return (app, app.processIdentifier, nil)
+        return SearchScope(app: app, pid: app.processIdentifier, root: nil, menuBar: menuBar)
     }
 
     // Every match gets a ref, even one with no action of its own, so it can be read below or waited on.
@@ -1511,7 +1532,7 @@ private final class MacControlServer: MCPServer {
         let limit = try args["limit"].map { _ in try number(args, "limit") } ?? Double(findDefaultLimit)
         guard limit.rounded() == limit, limit >= 1, limit <= Double(findMatchLimit) else { throw ToolFailure("limit must be 1 to \(findMatchLimit).") }
         let scope = try searchScope(args)
-        let result = search(scope.pid, root: scope.root, query, limit: Int(limit), deadline: Date().addingTimeInterval(5))
+        let result = search(scope, query, limit: Int(limit), deadline: Date().addingTimeInterval(5))
         let matches = describeMatches(result.found, pid: scope.pid)
         var output: [String: Any] = ["app": scope.app?.localizedName ?? "Unknown", "snapshot": refs.snapshot(of: scope.pid) ?? NSNull(),
                                      "matches": matches, "complete": result.complete, "stopped_by": result.stoppedBy ?? NSNull()]
@@ -1692,7 +1713,7 @@ private final class MacControlServer: MCPServer {
                 throw ToolFailure("The root element went away while waiting. Call mac_ui_tree again.", .staleRef)
             }
             // Windows are looked up on every try, so a dialog that opens in a new window is found.
-            let result = search(scope.pid, root: scope.root, query, limit: 20, deadline: deadline)
+            let result = search(scope, query, limit: 20, deadline: deadline)
             if state == "present", !result.found.isEmpty {
                 let matches = describeMatches(result.found, pid: scope.pid)
                 return ["app": scope.app?.localizedName ?? "Unknown", "state": state,

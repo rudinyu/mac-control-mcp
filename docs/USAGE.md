@@ -159,9 +159,10 @@ When an app stops answering, as a busy or hung app does, the read stops there in
 | `exact` | boolean | Match the whole text instead of part of it |
 | `limit` | integer, 1 to 50 | Most matches to return; default 20 |
 | `root` | string | A ref to search below, instead of all of the app's windows |
+| `scope` | `windows` or `menubar` | `menubar` searches the app's menu bar menus instead of its windows; not used with `root` |
 | `app` | string | App to search; default is the frontmost app |
 
-Give `role`, `text`, or both. Searches every window of the app, the focused one first, in screen-reader order, up to 5000 elements and 40 levels deep, for at most 5 seconds. That is much further than `mac_ui_tree` reads. Matches come back with their `ref` and `actions`, ready for `mac_ax_action`, and the app's existing refs keep working. The result's `snapshot` names the snapshot the refs belong to. Menus in the menu bar are not searched. Password field values are never matched or returned. `"complete": false` means the search was cut short, so a missing match is not certain. `stopped_by` says why:
+Give `role`, `text`, or both. Searches every window of the app, the focused one first, in screen-reader order, up to 5000 elements and 40 levels deep, for at most 5 seconds. That is much further than `mac_ui_tree` reads. Matches come back with their `ref` and `actions`, ready for `mac_ax_action`, and the app's existing refs keep working. The result's `snapshot` names the snapshot the refs belong to. With `scope` `menubar`, it searches the menu bar menus instead, which is often the most dependable way to reach a command, such as File > Export. Password field values are never matched or returned. `"complete": false` means the search was cut short, so a missing match is not certain. `stopped_by` says why:
 
 - `element_limit` or `time_limit`: narrow the search with `root`.
 - `app_not_answering`: the app is busy or hung, and the search stopped at its first unanswered question instead of waiting on every element.
@@ -169,13 +170,14 @@ Give `role`, `text`, or both. Searches every window of the app, the focused one 
 
 ```json
 {"app": "TextEdit", "role": "button", "text": "Save"}
+{"app": "TextEdit", "scope": "menubar", "role": "menuitem", "text": "Export as PDF"}
 ```
 
 ### `mac_wait`
 
 | Parameter | Type | Notes |
 | --- | --- | --- |
-| `role`, `text`, `exact`, `root`, `app` | | Same as for `mac_find` |
+| `role`, `text`, `exact`, `root`, `scope`, `app` | | Same as for `mac_find` |
 | `state` | `present` or `absent` | Wait for a match to appear (default) or for none to be left |
 | `timeout_seconds` | number, 0.5 to 30 | How long to wait; default 10 |
 
@@ -259,7 +261,7 @@ Each entry in `opened` has a `ref` and its direct children, up to 30 elements; r
 
 Some apps answer an action that opens a modal dialog only once the dialog is up, so `mac_ax_action` reports `OUTCOME_UNKNOWN`. Its JSON part then lists the dialog under `opened`, which usually means the action happened; check that it is the dialog you expected, since another app could open one at the same moment.
 
-Menus in the menu bar are not covered, since `mac_find` and `mac_ui_tree` give no refs for them. A submenu, which a menu item lists whether or not it is open, is not reported as opened.
+A menu bar item from `mac_find` with `scope` `menubar` can be pressed without opening its menu first. Opening a menu bar menu is not reported under `opened`, and neither is a submenu, since a menu item lists its submenu whether or not it is open.
 
 ```json
 {"ref": "k3f9q2.12", "action": "press", "app": "Calculator"}

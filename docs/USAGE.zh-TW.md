@@ -159,9 +159,10 @@ App 停止回應時（例如忙碌或當掉），讀取會在那裡停止，不�
 | `exact` | 布林值 | 比對完整文字，而不是部分文字 |
 | `limit` | 整數，1 到 50 | 最多回傳幾個結果；預設 20 |
 | `root` | 字串 | 改在這個 ref 底下搜尋，而不是 App 的所有視窗 |
+| `scope` | `windows` 或 `menubar` | `menubar` 改為搜尋 App 選單列裡的選單，而不是視窗；不能和 `root` 一起用 |
 | `app` | 字串 | 要搜尋的 App；預設是前景 App |
 
-至少要給 `role` 或 `text`。依螢幕閱讀器的順序搜尋 App 的每個視窗（焦點視窗優先），最多 5000 個元素、40 層、5 秒，比 `mac_ui_tree` 讀得深很多。結果附有 `ref` 和 `actions`，可以直接用於 `mac_ax_action`，而且 App 原有的 ref 仍然有效。結果的 `snapshot` 是這些 ref 所屬的快照。不會搜尋選單列裡的選單。密碼欄位的內容一律不會比對或回傳。`"complete": false` 表示搜尋被截斷，所以找不到不代表一定沒有。`stopped_by` 說明原因：
+至少要給 `role` 或 `text`。依螢幕閱讀器的順序搜尋 App 的每個視窗（焦點視窗優先），最多 5000 個元素、40 層、5 秒，比 `mac_ui_tree` 讀得深很多。結果附有 `ref` 和 `actions`，可以直接用於 `mac_ax_action`，而且 App 原有的 ref 仍然有效。結果的 `snapshot` 是這些 ref 所屬的快照。`scope` 設為 `menubar` 時，改為搜尋選單列裡的選單，這通常是執行指令最可靠的方式，例如「檔案 > 輸出」。密碼欄位的內容一律不會比對或回傳。`"complete": false` 表示搜尋被截斷，所以找不到不代表一定沒有。`stopped_by` 說明原因：
 
 - `element_limit` 或 `time_limit`：請用 `root` 縮小範圍。
 - `app_not_answering`：App 忙碌或沒有回應，搜尋在第一個沒得到回答的問題就停止，不會逐一等待每個元素。
@@ -169,13 +170,14 @@ App 停止回應時（例如忙碌或當掉），讀取會在那裡停止，不�
 
 ```json
 {"app": "TextEdit", "role": "button", "text": "Save"}
+{"app": "TextEdit", "scope": "menubar", "role": "menuitem", "text": "Export as PDF"}
 ```
 
 ### `mac_wait`
 
 | 參數 | 型別 | 說明 |
 | --- | --- | --- |
-| `role`、`text`、`exact`、`root`、`app` | | 與 `mac_find` 相同 |
+| `role`、`text`、`exact`、`root`、`scope`、`app` | | 與 `mac_find` 相同 |
 | `state` | `present` 或 `absent` | 等到符合的元素出現（預設），或等到全部消失 |
 | `timeout_seconds` | 數字，0.5 到 30 | 最多等多久；預設 10 |
 
@@ -259,7 +261,7 @@ App 停止回應時（例如忙碌或當掉），讀取會在那裡停止，不�
 
 有些 App 要等動作開啟的強制回應對話框出現後才回覆，所以 `mac_ax_action` 會回報 `OUTCOME_UNKNOWN`。這時它的 JSON 會在 `opened` 列出那個對話框，通常表示動作已經發生；請確認那是預期的對話框，因為同一時間其他程式也可能開啟對話框。
 
-選單列的選單不在範圍內，因為 `mac_find` 和 `mac_ui_tree` 不會給它們 ref。子選單不論是否開啟都會列在選單項目下，所以不會被當作已開啟回報。
+用 `mac_find` 加上 `scope` `menubar` 找到的選單項目，不必先打開選單就能按下。打開選單列的選單不會列在 `opened`，子選單也不會，因為選單項目不論子選單是否開啟都會列出它。
 
 ```json
 {"ref": "k3f9q2.12", "action": "press", "app": "Calculator"}
