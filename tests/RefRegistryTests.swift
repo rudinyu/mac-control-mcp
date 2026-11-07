@@ -93,7 +93,7 @@ private enum RefRegistryTests {
         check("a full snapshot is replaced at the next read", second.snapshot != first.snapshot)
         check("the old snapshot's refs are replaced", retiredReason(refs.lookup(button)) == .replaced(by: second.snapshot, app: "App 100"), "\(refs.lookup(button))")
         check("the reason reads as a sentence", retiredReason(refs.lookup(button))?.description
-              == "was replaced by snapshot \(second.snapshot) of App 100 after giving out as many refs as a snapshot may")
+              == "was replaced by snapshot \(second.snapshot) of App 100 after giving out its limit of refs; read mac_ui_tree again")
         check("the new snapshot numbers from 1 again", refs.ref(for: element(1), role: "AXButton", owner: second) == "\(second.snapshot).1")
 
         // A relaunch is noticed when the next read asks for the current snapshot.

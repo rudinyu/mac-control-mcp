@@ -45,18 +45,18 @@ private func sameStart(_ a: timeval, _ b: timeval) -> Bool {
 private let retiredSnapshotLimit = 200
 // How many refs a snapshot gives out before the app's next read starts a new one, so a long session does not
 // keep every element it ever saw.
-private let snapshotRefLimit = 5000
+let snapshotRefLimit = 5000
 
 // Why a snapshot's refs stopped working. The description finishes a sentence that starts "snapshot <id>".
 enum RetireReason: Equatable, CustomStringConvertible {
-    // The snapshot named took over after this one gave out as many refs as a snapshot may.
+    // This snapshot gave out its limit of refs, so the app's next read started the snapshot named.
     case replaced(by: String, app: String)
     case earlierRun(app: String)
     case quit
 
     var description: String {
         switch self {
-        case .replaced(let snapshot, let app): return "was replaced by snapshot \(snapshot) of \(app) after giving out as many refs as a snapshot may"
+        case .replaced(let snapshot, let app): return "was replaced by snapshot \(snapshot) of \(app) after giving out its limit of refs; read mac_ui_tree again"
         case .earlierRun(let app): return "belongs to an earlier run of \(app), which has since quit or relaunched"
         case .quit: return "belongs to an app that has quit"
         }
@@ -108,7 +108,11 @@ final class RefRegistry {
         guard let start = processStart(pid) else { return nil }
         // Release the refs of apps that have quit, so a long session does not keep their elements.
         let quit = apps.keys.filter { $0 != pid && !isRunning($0) }
-        for other in quit { retire(apps.removeValue(forKey: other)!.snapshot, .quit) }
+        for other in quit {
+            let snapshot = apps.removeValue(forKey: other)!.snapshot
+            counts[snapshot] = nil
+            retire(snapshot, .quit)
+        }
         let current = apps[pid]
         if let current, sameStart(current.start, start), counts[current.snapshot, default: 0] < refLimit {
             if !quit.isEmpty { drop { quit.contains($0.pid) } }
@@ -135,7 +139,9 @@ final class RefRegistry {
     func ref(for element: AXUIElement, role: String, owner: AXOwner) -> String {
         let prefix = "\(owner.snapshot)."
         let hash = CFHash(element)
-        if let existing = byHash[hash]?.first(where: { $0.hasPrefix(prefix) && refs[$0].map { CFEqual($0.element, element) } == true }) {
+        if let existing = byHash[hash]?.first(where: { name in
+            name.hasPrefix(prefix) && refs[name].map { CFEqual($0.element, element) } == true
+        }) {
             return existing
         }
         counts[owner.snapshot, default: 0] += 1
