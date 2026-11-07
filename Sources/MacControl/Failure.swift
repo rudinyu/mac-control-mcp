@@ -65,5 +65,8 @@ func failureResult(_ error: Error) -> [String: Any] {
     let base: [String: Any] = ["code": kind.rawValue, "delivered": delivered, "retry": kind.retry,
                                "message": String(describing: error)]
     let details = ["error": base.merging(failure?.details ?? [:]) { current, _ in current }]
-    return ["content": [textContent(jsonString(details))], "isError": true]
+    var text = jsonString(details)
+    // The base fields are plain text and booleans, so they are written even if a detail somehow cannot be.
+    if text == "{}" { text = jsonString(["error": base]) }
+    return ["content": [textContent(text)], "isError": true]
 }
