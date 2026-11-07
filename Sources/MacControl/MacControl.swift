@@ -503,7 +503,7 @@ private final class MacControlServer: MCPServer {
     private func status() -> [String: Any] {
         let display = CGMainDisplayID()
         let bounds = CGDisplayBounds(display)
-        let app = NSWorkspace.shared.frontmostApplication
+        let app = frontmostFromWorkspace()
         var info: [String: Any] = [
             "screen_recording": CGPreflightScreenCaptureAccess(),
             "accessibility": AXIsProcessTrusted(),
@@ -725,7 +725,7 @@ private final class MacControlServer: MCPServer {
             throw ToolFailure("app must be a non-empty app name or bundle ID.")
         }
         // Only regular apps (those with a Dock icon) can be brought to the front and take keyboard input.
-        let apps = NSWorkspace.shared.runningApplications.filter { $0.activationPolicy == .regular && !$0.isTerminated }
+        let apps = regularApps()
         let byBundle = apps.filter { $0.bundleIdentifier?.caseInsensitiveCompare(query) == .orderedSame }
         let matches = byBundle.isEmpty
             ? apps.filter { $0.localizedName?.caseInsensitiveCompare(query) == .orderedSame }
@@ -741,6 +741,22 @@ private final class MacControlServer: MCPServer {
         throw ToolFailure("\"\(query)\" matches \(matches.count) running apps: \(listed.joined(separator: ", ")). Use a bundle ID, or quit the extra copies.", .appAmbiguous)
     }
 
+    // NSWorkspace updates its running apps and front app only while the main run loop runs, and between requests
+    // the server waits without running it, so let it take the updates it has missed before reading them.
+    private func catchUpWithWorkspace() {
+        _ = CFRunLoopRunInMode(.defaultMode, 0, false)
+    }
+
+    private func frontmostFromWorkspace() -> NSRunningApplication? {
+        catchUpWithWorkspace()
+        return NSWorkspace.shared.frontmostApplication
+    }
+
+    private func regularApps() -> [NSRunningApplication] {
+        catchUpWithWorkspace()
+        return NSWorkspace.shared.runningApplications.filter { $0.activationPolicy == .regular && !$0.isTerminated }
+    }
+
     // Asks Accessibility rather than NSWorkspace, whose frontmostApplication can be stale without a run loop.
     // Returns nil when focus is unknown, so focus checks before input fail closed.
     private func focusedApp() -> NSRunningApplication? {
@@ -752,13 +768,10 @@ private final class MacControlServer: MCPServer {
         // The system-wide query can fail for every app, with kAXErrorCannotComplete, as on macOS 26. Then ask the
         // apps themselves: NSWorkspace's guess first, after letting it catch up, and the others only if that is wrong.
         // Hung apps could each take the timeout, so the search stops after a second, leaving focus unknown.
-        RunLoop.current.run(until: Date())
+        let others = regularApps()
         let guess = NSWorkspace.shared.frontmostApplication
-        let others = NSWorkspace.shared.runningApplications.filter {
-            $0.activationPolicy == .regular && !$0.isTerminated && $0.processIdentifier != guess?.processIdentifier
-        }
         let deadline = Date().addingTimeInterval(1)
-        for app in [guess].compactMap({ $0 }) + others {
+        for app in [guess].compactMap({ $0 }) + others.filter({ $0.processIdentifier != guess?.processIdentifier }) {
             guard Date() < deadline else { return nil }
             let element = AXUIElementCreateApplication(app.processIdentifier)
             AXUIElementSetMessagingTimeout(element, 0.25)
@@ -1220,7 +1233,7 @@ private final class MacControlServer: MCPServer {
     private func appToRead(_ args: [String: Any]) throws -> NSRunningApplication {
         let target = try targetApp(args)
         try requireAccessibility()
-        guard let app = target ?? focusedApp() ?? NSWorkspace.shared.frontmostApplication else {
+        guard let app = target ?? focusedApp() ?? frontmostFromWorkspace() else {
             throw ToolFailure("No frontmost app found.", .internalError)
         }
         return app
@@ -1527,7 +1540,7 @@ private final class MacControlServer: MCPServer {
             if args["app"] != nil {
                 apps = [try targetApp(args)!]
             } else {
-                apps = NSWorkspace.shared.runningApplications.filter { $0.activationPolicy == .regular && !$0.isTerminated }
+                apps = regularApps()
             }
             try requireAccessibility()
             var windows: [[String: Any]] = []
