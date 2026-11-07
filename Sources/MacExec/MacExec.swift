@@ -325,10 +325,11 @@ private final class MacExecServer: MCPServer {
             // A full log becomes audit.log.1, replacing the one before, so the log keeps at most twice the limit.
             // The lock keeps two servers from both moving it; the inode check sees that another one already did.
             if info.st_size >= auditLogLimit {
-                flock(fd, LOCK_EX)
                 var current = stat()
-                if lstat(settings.auditLog.path, &current) == 0, current.st_ino == info.st_ino {
-                    _ = rename(settings.auditLog.path, settings.auditLog.path + ".1")
+                if flock(fd, LOCK_EX) == 0, lstat(settings.auditLog.path, &current) == 0, current.st_ino == info.st_ino,
+                   rename(settings.auditLog.path, settings.auditLog.path + ".1") != 0 {
+                    // The entry is still written; a log that cannot be moved only keeps growing.
+                    FileHandle.standardError.write(Data("mac-exec: could not move the full audit log aside: \(String(cString: strerror(errno)))\n".utf8))
                 }
                 close(fd)
                 (fd, info) = try openLog()

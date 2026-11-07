@@ -719,6 +719,8 @@ private final class MacControlServer: MCPServer {
         }
         started = true
         runningRecordingPID = process.processIdentifier
+        // A screencapture that ended at once may have run its termination handler before the line above.
+        if !process.isRunning { runningRecordingPID = 0 }
         recordings[id] = Recording(process: process, path: path, duration: Int(seconds), startedAt: Date())
         return ["recording_id": id, "state": "recording", "duration_seconds": Int(seconds)]
     }
@@ -2232,7 +2234,9 @@ private enum Main {
                   (try? data.write(to: URL(fileURLWithPath: arguments[1]), options: .atomic)) != nil else { exit(1) }
         default:
             // A client that quits closes standard input or sends one of these signals. Either way the running
-            // recording is stopped rather than left to run on. The handler is reset when screencapture starts.
+            // recording is stopped rather than left to run on. Child processes get default handlers on exec.
+            // A write to a client that has gone fails instead of ending the server before it can stop it.
+            signal(SIGPIPE, SIG_IGN)
             for number in [SIGTERM, SIGINT, SIGHUP] {
                 signal(number) { number in
                     stopRunningRecording()
@@ -2244,7 +2248,8 @@ private enum Main {
             let pid = runningRecordingPID
             stopRunningRecording()
             // Gives screencapture a moment to finish the file.
-            for _ in 0..<20 where pid > 0 && kill(pid, 0) == 0 { usleep(50_000) }
+            let deadline = Date().addingTimeInterval(3)
+            while pid > 0, kill(pid, 0) == 0, Date() < deadline { usleep(50_000) }
         }
     }
 }
