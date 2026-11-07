@@ -237,6 +237,9 @@ class MCPProtocolTests(unittest.TestCase):
         tree = listed["mac_ui_tree"]["description"]
         for word in ("complete", "stopped_by", "element_limit", "time_limit", "app_not_answering", "unanswered", "more_children"):
             self.assertIn(word, tree)
+        self.assertIn("stopped_by", listed["mac_find"]["outputSchema"]["required"])
+        self.assertIn("app_not_answering", listed["mac_find"]["description"])
+        self.assertIn("APP_UNRESPONSIVE", listed["mac_wait"]["description"])
         description = listed["mac_ax_action"]["description"] + listed["mac_ax_action"]["inputSchema"]["properties"]["action"]["description"]
         for word in ("delivered", "verified", "checked", "OUTCOME_UNKNOWN", "opened", "closed"):
             self.assertIn(word, description)

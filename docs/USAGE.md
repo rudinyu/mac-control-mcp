@@ -161,7 +161,7 @@ When an app stops answering, as a busy or hung app does, the read stops there in
 | `root` | string | A ref to search below, instead of all of the app's windows |
 | `app` | string | App to search; default is the frontmost app |
 
-Give `role`, `text`, or both. Searches every window of the app, the focused one first, in screen-reader order, up to 5000 elements and 40 levels deep, for at most 5 seconds. That is much further than `mac_ui_tree` reads. Matches come back with their `ref` and `actions`, ready for `mac_ax_action`, and the app's existing refs keep working. The result's `snapshot` names the snapshot the refs belong to. `"complete": false` means the search was cut short; narrow it with `root`. Menus in the menu bar are not searched. Password field values are never matched or returned.
+Give `role`, `text`, or both. Searches every window of the app, the focused one first, in screen-reader order, up to 5000 elements and 40 levels deep, for at most 5 seconds. That is much further than `mac_ui_tree` reads. Matches come back with their `ref` and `actions`, ready for `mac_ax_action`, and the app's existing refs keep working. The result's `snapshot` names the snapshot the refs belong to. `"complete": false` means the search was cut short, and `stopped_by` says why when a limit stopped it: `element_limit` or `time_limit`, so narrow it with `root`, or `app_not_answering`, when the app is busy or hung and the search stopped at its first unanswered question instead of waiting on every element. Menus in the menu bar are not searched. Password field values are never matched or returned.
 
 ```json
 {"app": "TextEdit", "role": "button", "text": "Save"}
@@ -175,7 +175,7 @@ Give `role`, `text`, or both. Searches every window of the app, the focused one 
 | `state` | `present` or `absent` | Wait for a match to appear (default) or for none to be left |
 | `timeout_seconds` | number, 0.5 to 30 | How long to wait; default 10 |
 
-Checks about four times a second, looking up the app's windows each time, so a dialog that opens in a new window is found. With `present`, returns the matches with refs as soon as one appears. With `absent`, it returns only once a full search finds nothing. If time runs out, it fails with `TIMEOUT`. Use it after an action, for example to wait for a sheet to open or for a progress indicator to go away, instead of reading `mac_ui_tree` repeatedly.
+Checks about four times a second, looking up the app's windows each time, so a dialog that opens in a new window is found. With `present`, returns the matches with refs as soon as one appears. With `absent`, it returns only once a full search finds nothing. If time runs out, it fails with `TIMEOUT`, or with `APP_UNRESPONSIVE` when the app did not answer during the last check, since then nothing is known about the element. Use it after an action, for example to wait for a sheet to open or for a progress indicator to go away, instead of reading `mac_ui_tree` repeatedly.
 
 ```json
 {"app": "TextEdit", "role": "sheet", "timeout_seconds": 5}

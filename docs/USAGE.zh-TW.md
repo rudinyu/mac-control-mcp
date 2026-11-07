@@ -161,7 +161,7 @@ App 停止回應時（例如忙碌或當掉），讀取會在那裡停止，不�
 | `root` | 字串 | 改在這個 ref 底下搜尋，而不是 App 的所有視窗 |
 | `app` | 字串 | 要搜尋的 App；預設是前景 App |
 
-至少要給 `role` 或 `text`。依螢幕閱讀器的順序搜尋 App 的每個視窗（焦點視窗優先），最多 5000 個元素、40 層、5 秒，比 `mac_ui_tree` 讀得深很多。結果附有 `ref` 和 `actions`，可以直接用於 `mac_ax_action`，而且 App 原有的 ref 仍然有效。結果的 `snapshot` 是這些 ref 所屬的快照。`"complete": false` 表示搜尋被截斷，請用 `root` 縮小範圍。不會搜尋選單列裡的選單。密碼欄位的內容一律不會比對或回傳。
+至少要給 `role` 或 `text`。依螢幕閱讀器的順序搜尋 App 的每個視窗（焦點視窗優先），最多 5000 個元素、40 層、5 秒，比 `mac_ui_tree` 讀得深很多。結果附有 `ref` 和 `actions`，可以直接用於 `mac_ax_action`，而且 App 原有的 ref 仍然有效。結果的 `snapshot` 是這些 ref 所屬的快照。`"complete": false` 表示搜尋被截斷；若是因為上限而停止，`stopped_by` 會說明原因：`element_limit` 或 `time_limit` 時請用 `root` 縮小範圍；`app_not_answering` 表示 App 忙碌或沒有回應，搜尋在第一個沒得到回答的問題就停止，不會逐一等待每個元素。不會搜尋選單列裡的選單。密碼欄位的內容一律不會比對或回傳。
 
 ```json
 {"app": "TextEdit", "role": "button", "text": "Save"}
@@ -175,7 +175,7 @@ App 停止回應時（例如忙碌或當掉），讀取會在那裡停止，不�
 | `state` | `present` 或 `absent` | 等到符合的元素出現（預設），或等到全部消失 |
 | `timeout_seconds` | 數字，0.5 到 30 | 最多等多久；預設 10 |
 
-大約每秒檢查四次，每次都重新查詢 App 的視窗，所以在新視窗開啟的對話框也找得到。`present` 會在元素一出現時就回傳結果和 ref。`absent` 要等到完整搜尋都找不到才回傳。時間到了就以 `TIMEOUT` 失敗。動作之後用它來等，例如等表單出現或進度指示消失，不必一直重讀 `mac_ui_tree`。
+大約每秒檢查四次，每次都重新查詢 App 的視窗，所以在新視窗開啟的對話框也找得到。`present` 會在元素一出現時就回傳結果和 ref。`absent` 要等到完整搜尋都找不到才回傳。時間到了就以 `TIMEOUT` 失敗；如果最後一次檢查時 App 沒有回應，就以 `APP_UNRESPONSIVE` 失敗，因為這時無法得知元素的狀態。動作之後用它來等，例如等表單出現或進度指示消失，不必一直重讀 `mac_ui_tree`。
 
 ```json
 {"app": "TextEdit", "role": "sheet", "timeout_seconds": 5}

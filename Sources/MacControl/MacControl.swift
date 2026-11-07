@@ -270,7 +270,7 @@ private final class MacControlServer: MCPServer {
             ],
             [
                 "name": "mac_find",
-                "description": "Search an app for elements by role and/or text, up to \(searchNodeLimit) elements deep, far deeper than mac_ui_tree. Returns the matches with refs for mac_ax_action, keeping the app's existing refs. complete is false when the search was cut short. Does not change which app is in front. Requires Accessibility permission.",
+                "description": "Search an app for elements by role and/or text, up to \(searchNodeLimit) elements deep, far deeper than mac_ui_tree. Returns the matches with refs for mac_ax_action, keeping the app's existing refs. complete is false when the search was cut short; stopped_by says why, and app_not_answering means the app is busy or hung. Does not change which app is in front. Requires Accessibility permission.",
                 "inputSchema": [
                     "type": "object",
                     "properties": [
@@ -282,13 +282,14 @@ private final class MacControlServer: MCPServer {
                 ],
                 "outputSchema": output([
                     "app": string, "snapshot": snapshot, "matches": elements,
-                    "complete": ["type": "boolean", "description": "false when the search was cut short, so a missing match is not certain."]
-                ], required: ["app", "snapshot", "matches", "complete"]),
+                    "complete": ["type": "boolean", "description": "false when the search was cut short, so a missing match is not certain."],
+                    "stopped_by": ["type": ["string", "null"], "description": "element_limit, time_limit, or app_not_answering when the search stopped early."]
+                ], required: ["app", "snapshot", "matches", "complete", "stopped_by"]),
                 "annotations": readsOnly
             ],
             [
                 "name": "mac_wait",
-                "description": "Wait until an element matching role and/or text is present, or until none is left, checking about four times a second. Use it after an action instead of polling with mac_ui_tree, such as to wait for a dialog or for a spinner to go away. Returns the matches with refs, or fails with TIMEOUT. Does not change which app is in front. Requires Accessibility permission.",
+                "description": "Wait until an element matching role and/or text is present, or until none is left, checking about four times a second. Use it after an action instead of polling with mac_ui_tree, such as to wait for a dialog or for a spinner to go away. Returns the matches with refs, or fails with TIMEOUT, or with APP_UNRESPONSIVE when the app stopped answering. Does not change which app is in front. Requires Accessibility permission.",
                 "inputSchema": [
                     "type": "object",
                     "properties": [
@@ -1402,12 +1403,15 @@ private final class MacControlServer: MCPServer {
         }
     }
 
-    // The roots to search: the ref's element, or every window of the app with the focused one first.
-    private func searchRoots(_ pid: pid_t, root: AXRef?) -> [AXUIElement] {
+    // The roots to search: the ref's element, or every window of the app with the focused one first. nil when
+    // the app did not answer, so the search does not wait on it again for each window.
+    private func searchRoots(_ pid: pid_t, root: AXRef?) -> [AXUIElement]? {
         if let root { return [root.element] }
         let appElement = AXUIElementCreateApplication(pid)
         AXUIElementSetMessagingTimeout(appElement, axMessagingTimeout)
-        var roots: [AXUIElement] = elementAttribute(appElement, kAXFocusedWindowAttribute as CFString).map { [$0] } ?? []
+        var focused: CFTypeRef?
+        if timedOut({ AXUIElementCopyAttributeValue(appElement, kAXFocusedWindowAttribute as CFString, &focused) }).timedOut { return nil }
+        var roots: [AXUIElement] = focused.flatMap { CFGetTypeID($0) == AXUIElementGetTypeID() ? [$0 as! AXUIElement] : nil } ?? []
         for window in attribute(appElement, kAXWindowsAttribute as CFString) as? [AXUIElement] ?? []
         where !roots.contains(where: { CFEqual($0, window) }) {
             roots.append(window)
@@ -1416,41 +1420,69 @@ private final class MacControlServer: MCPServer {
     }
 
     // Reads an attribute the search depends on. nil with readable true means the element simply has none;
-    // readable false means the app did not answer, so the search cannot claim to have seen everything.
-    private func searchAttribute(_ element: AXUIElement, _ name: String) -> (value: CFTypeRef?, readable: Bool) {
+    // readable false means it could not be read, and answered false that the app did not answer in time.
+    private func searchAttribute(_ element: AXUIElement, _ name: String) -> (value: CFTypeRef?, readable: Bool, answered: Bool) {
         var value: CFTypeRef?
-        switch AXUIElementCopyAttributeValue(element, name as CFString, &value) {
-        case .success: return (value, true)
-        case .noValue, .attributeUnsupported: return (nil, true)
-        default: return (nil, false)
+        let call = timedOut { AXUIElementCopyAttributeValue(element, name as CFString, &value) }
+        switch call.error {
+        case .success: return (value, true, true)
+        case .noValue, .attributeUnsupported: return (nil, true, true)
+        default: return (nil, false, !call.timedOut)
         }
     }
 
-    // Depth-first search in document order. complete is false when a limit, the deadline, or an element that
-    // could not be read cut it short, so a missing match is only certain when complete is true.
-    private func search(_ roots: [AXUIElement], _ query: SearchQuery, limit: Int, deadline: Date) -> (found: [AXUIElement], complete: Bool) {
-        var stack = roots.reversed().map { ($0, 0) }
+    private struct SearchResult {
         var found: [AXUIElement] = []
-        var visited = 0
         var complete = true
+        // "element_limit", "time_limit", or "app_not_answering" when the search stopped early.
+        var stoppedBy: String?
+    }
+
+    // Depth-first search in document order. complete is false when a limit, the deadline, or an element that
+    // could not be read cut it short, so a missing match is only certain when complete is true. It stops at the
+    // first question the app does not answer in time, since every further one would wait out the timeout too.
+    private func search(_ pid: pid_t, root: AXRef?, _ query: SearchQuery, limit: Int, deadline: Date) -> SearchResult {
+        var result = SearchResult()
+        func stop(_ reason: String) -> SearchResult {
+            result.complete = false
+            result.stoppedBy = reason
+            return result
+        }
+        guard let roots = searchRoots(pid, root: root) else { return stop("app_not_answering") }
+        var stack = roots.reversed().map { ($0, 0) }
+        var visited = 0
+        // Some apps list an element among its own descendants, such as Calculator giving its application element
+        // as a window, so elements already searched are skipped instead of searched again until the limit.
+        var seen: [CFHashCode: [AXUIElement]] = [:]
         while let (element, depth) = stack.popLast() {
-            if visited >= searchNodeLimit || Date() >= deadline || cancellation.isCancelled { return (found, false) }
+            let hash = CFHash(element)
+            if seen[hash, default: []].contains(where: { CFEqual($0, element) }) { continue }
+            seen[hash, default: []].append(element)
+            if visited >= searchNodeLimit { return stop("element_limit") }
+            if Date() >= deadline || cancellation.isCancelled { return stop("time_limit") }
             visited += 1
+            // Elements do not reliably take the timeout of the app element they came from.
+            AXUIElementSetMessagingTimeout(element, axMessagingTimeout)
             let role = searchAttribute(element, kAXRoleAttribute)
+            guard role.answered else { return stop("app_not_answering") }
             let childList = searchAttribute(element, kAXChildrenAttribute)
-            if !role.readable || !childList.readable { complete = false }
+            guard childList.answered else { return stop("app_not_answering") }
+            if !role.readable || !childList.readable { result.complete = false }
             if let role = role.value as? String, matches(element, role: role, query) {
-                found.append(element)
-                if found.count >= limit { return (found, complete && stack.isEmpty) }
+                result.found.append(element)
+                if result.found.count >= limit {
+                    result.complete = result.complete && stack.isEmpty
+                    return result
+                }
             }
             guard let children = childList.value as? [AXUIElement], !children.isEmpty else { continue }
             if depth >= searchDepthLimit {
-                complete = false
+                result.complete = false
                 continue
             }
             stack.append(contentsOf: children.reversed().map { ($0, depth + 1) })
         }
-        return (found, complete)
+        return result
     }
 
     // The app and roots for mac_find and mac_wait: below the root ref if given, otherwise the app's windows.
@@ -1477,10 +1509,14 @@ private final class MacControlServer: MCPServer {
         let limit = try args["limit"].map { _ in try number(args, "limit") } ?? Double(findDefaultLimit)
         guard limit.rounded() == limit, limit >= 1, limit <= Double(findMatchLimit) else { throw ToolFailure("limit must be 1 to \(findMatchLimit).") }
         let scope = try searchScope(args)
-        let result = search(searchRoots(scope.pid, root: scope.root), query, limit: Int(limit), deadline: Date().addingTimeInterval(5))
+        let result = search(scope.pid, root: scope.root, query, limit: Int(limit), deadline: Date().addingTimeInterval(5))
         let matches = describeMatches(result.found, pid: scope.pid)
-        return ["app": scope.app?.localizedName ?? "Unknown", "snapshot": refs.snapshot(of: scope.pid) ?? NSNull(),
-                "matches": matches, "complete": result.complete]
+        var output: [String: Any] = ["app": scope.app?.localizedName ?? "Unknown", "snapshot": refs.snapshot(of: scope.pid) ?? NSNull(),
+                                     "matches": matches, "complete": result.complete, "stopped_by": result.stoppedBy ?? NSNull()]
+        if result.stoppedBy == "app_not_answering" {
+            output["message"] = "\(scope.app?.localizedName ?? "The app") stopped answering Accessibility requests, so the search ended early. It may be busy; try again shortly."
+        }
+        return output
     }
 
     private func cgValue<T>(_ element: AXUIElement, _ name: String, _ type: AXValueType, _ empty: T) -> T? {
@@ -1646,6 +1682,7 @@ private final class MacControlServer: MCPServer {
         let started = Date()
         let deadline = started.addingTimeInterval(seconds)
         var sawIncomplete = false
+        var unanswered = false
         repeat {
             try cancellation.check()
             var rootRole: CFTypeRef?
@@ -1653,7 +1690,7 @@ private final class MacControlServer: MCPServer {
                 throw ToolFailure("The root element went away while waiting. Call mac_ui_tree again.", .staleRef)
             }
             // Windows are looked up on every try, so a dialog that opens in a new window is found.
-            let result = search(searchRoots(scope.pid, root: scope.root), query, limit: 20, deadline: deadline)
+            let result = search(scope.pid, root: scope.root, query, limit: 20, deadline: deadline)
             if state == "present", !result.found.isEmpty {
                 let matches = describeMatches(result.found, pid: scope.pid)
                 return ["app": scope.app?.localizedName ?? "Unknown", "state": state,
@@ -1667,11 +1704,15 @@ private final class MacControlServer: MCPServer {
             }
             try cancellation.check()
             sawIncomplete = sawIncomplete || !result.complete
+            unanswered = result.stoppedBy == "app_not_answering"
             if NSRunningApplication(processIdentifier: scope.pid) == nil {
                 throw ToolFailure("The app quit while waiting.", .staleRef)
             }
             RunLoop.current.run(until: min(deadline, Date().addingTimeInterval(0.25)))
         } while Date() < deadline
+        if unanswered {
+            throw ToolFailure("\(scope.app?.localizedName ?? "The app") did not answer Accessibility requests during the last check, so after \(seconds) seconds it is not known whether \(state == "present" ? "a matching element appeared" : "the matching elements went away"). It may be busy; check it with mac_screenshot.", .appUnresponsive)
+        }
         let note = sawIncomplete ? " The app's tree was too large or slow to search fully; narrow it with root." : ""
         let outcome = state == "present" ? "No matching element appeared" : "A matching element was still there"
         throw ToolFailure("\(outcome) after \(seconds) seconds.\(note)", .timeout)
