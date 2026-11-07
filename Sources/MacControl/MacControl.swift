@@ -1406,16 +1406,20 @@ private final class MacControlServer: MCPServer {
     }
 
     // The roots to search: the ref's element, the app's menu bar, or every window of the app with the focused
-    // one first. nil when the app did not answer, so the search does not wait on it again for each window.
+    // one first. nil when the app did not answer or its menu bar could not be read, so the search stops there.
     private func searchRoots(_ pid: pid_t, root: AXRef?, menuBar: Bool) -> [AXUIElement]? {
         if let root { return [root.element] }
         let appElement = AXUIElementCreateApplication(pid)
         AXUIElementSetMessagingTimeout(appElement, axMessagingTimeout)
         if menuBar {
             var bar: CFTypeRef?
-            let read = timedOut { AXUIElementCopyAttributeValue(appElement, kAXMenuBarAttribute as CFString, &bar) }
-            if read.timedOut { return nil }
-            return bar.flatMap { CFGetTypeID($0) == AXUIElementGetTypeID() ? [$0 as! AXUIElement] : nil } ?? []
+            // Only an app that has no menu bar gives an empty search; any other failure leaves the search
+            // incomplete, so mac_wait cannot report a menu item as gone when the menu bar could not be read.
+            switch AXUIElementCopyAttributeValue(appElement, kAXMenuBarAttribute as CFString, &bar) {
+            case .success: return bar.flatMap { CFGetTypeID($0) == AXUIElementGetTypeID() ? [$0 as! AXUIElement] : nil } ?? []
+            case .noValue, .attributeUnsupported: return []
+            default: return nil
+            }
         }
         var focused: CFTypeRef?
         if timedOut({ AXUIElementCopyAttributeValue(appElement, kAXFocusedWindowAttribute as CFString, &focused) }).timedOut { return nil }
@@ -1712,7 +1716,7 @@ private final class MacControlServer: MCPServer {
             if let root = scope.root, case .invalidUIElement = AXUIElementCopyAttributeValue(root.element, kAXRoleAttribute as CFString, &rootRole) {
                 throw ToolFailure("The root element went away while waiting. Call mac_ui_tree again.", .staleRef)
             }
-            // Windows are looked up on every try, so a dialog that opens in a new window is found.
+            // Windows and the menu bar are looked up on every try, so a dialog that opens in a new window is found.
             let result = search(scope, query, limit: 20, deadline: deadline)
             if state == "present", !result.found.isEmpty {
                 let matches = describeMatches(result.found, pid: scope.pid)
