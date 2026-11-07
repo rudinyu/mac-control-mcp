@@ -161,7 +161,11 @@ When an app stops answering, as a busy or hung app does, the read stops there in
 | `root` | string | A ref to search below, instead of all of the app's windows |
 | `app` | string | App to search; default is the frontmost app |
 
-Give `role`, `text`, or both. Searches every window of the app, the focused one first, in screen-reader order, up to 5000 elements and 40 levels deep, for at most 5 seconds. That is much further than `mac_ui_tree` reads. Matches come back with their `ref` and `actions`, ready for `mac_ax_action`, and the app's existing refs keep working. The result's `snapshot` names the snapshot the refs belong to. `"complete": false` means the search was cut short, and `stopped_by` says why when a limit stopped it: `element_limit` or `time_limit`, so narrow it with `root`, or `app_not_answering`, when the app is busy or hung and the search stopped at its first unanswered question instead of waiting on every element. Menus in the menu bar are not searched. Password field values are never matched or returned.
+Give `role`, `text`, or both. Searches every window of the app, the focused one first, in screen-reader order, up to 5000 elements and 40 levels deep, for at most 5 seconds. That is much further than `mac_ui_tree` reads. Matches come back with their `ref` and `actions`, ready for `mac_ax_action`, and the app's existing refs keep working. The result's `snapshot` names the snapshot the refs belong to. Menus in the menu bar are not searched. Password field values are never matched or returned. `"complete": false` means the search was cut short, so a missing match is not certain. `stopped_by` says why:
+
+- `element_limit` or `time_limit`: narrow the search with `root`.
+- `app_not_answering`: the app is busy or hung, and the search stopped at its first unanswered question instead of waiting on every element.
+- `null`: the search finished, but went no deeper than 40 levels somewhere, or could not read an element.
 
 ```json
 {"app": "TextEdit", "role": "button", "text": "Save"}

@@ -283,7 +283,7 @@ private final class MacControlServer: MCPServer {
                 "outputSchema": output([
                     "app": string, "snapshot": snapshot, "matches": elements,
                     "complete": ["type": "boolean", "description": "false when the search was cut short, so a missing match is not certain."],
-                    "stopped_by": ["type": ["string", "null"], "description": "element_limit, time_limit, or app_not_answering when the search stopped early."]
+                    "stopped_by": ["type": ["string", "null"], "description": "element_limit, time_limit, or app_not_answering when the search stopped early. null with complete false means it went no deeper than 40 levels or an element could not be read."]
                 ], required: ["app", "snapshot", "matches", "complete", "stopped_by"]),
                 "annotations": readsOnly
             ],
@@ -1412,7 +1412,9 @@ private final class MacControlServer: MCPServer {
         var focused: CFTypeRef?
         if timedOut({ AXUIElementCopyAttributeValue(appElement, kAXFocusedWindowAttribute as CFString, &focused) }).timedOut { return nil }
         var roots: [AXUIElement] = focused.flatMap { CFGetTypeID($0) == AXUIElementGetTypeID() ? [$0 as! AXUIElement] : nil } ?? []
-        for window in attribute(appElement, kAXWindowsAttribute as CFString) as? [AXUIElement] ?? []
+        var windows: CFTypeRef?
+        if timedOut({ AXUIElementCopyAttributeValue(appElement, kAXWindowsAttribute as CFString, &windows) }).timedOut { return nil }
+        for window in windows as? [AXUIElement] ?? []
         where !roots.contains(where: { CFEqual($0, window) }) {
             roots.append(window)
         }

@@ -161,7 +161,11 @@ App 停止回應時（例如忙碌或當掉），讀取會在那裡停止，不�
 | `root` | 字串 | 改在這個 ref 底下搜尋，而不是 App 的所有視窗 |
 | `app` | 字串 | 要搜尋的 App；預設是前景 App |
 
-至少要給 `role` 或 `text`。依螢幕閱讀器的順序搜尋 App 的每個視窗（焦點視窗優先），最多 5000 個元素、40 層、5 秒，比 `mac_ui_tree` 讀得深很多。結果附有 `ref` 和 `actions`，可以直接用於 `mac_ax_action`，而且 App 原有的 ref 仍然有效。結果的 `snapshot` 是這些 ref 所屬的快照。`"complete": false` 表示搜尋被截斷；若是因為上限而停止，`stopped_by` 會說明原因：`element_limit` 或 `time_limit` 時請用 `root` 縮小範圍；`app_not_answering` 表示 App 忙碌或沒有回應，搜尋在第一個沒得到回答的問題就停止，不會逐一等待每個元素。不會搜尋選單列裡的選單。密碼欄位的內容一律不會比對或回傳。
+至少要給 `role` 或 `text`。依螢幕閱讀器的順序搜尋 App 的每個視窗（焦點視窗優先），最多 5000 個元素、40 層、5 秒，比 `mac_ui_tree` 讀得深很多。結果附有 `ref` 和 `actions`，可以直接用於 `mac_ax_action`，而且 App 原有的 ref 仍然有效。結果的 `snapshot` 是這些 ref 所屬的快照。不會搜尋選單列裡的選單。密碼欄位的內容一律不會比對或回傳。`"complete": false` 表示搜尋被截斷，所以找不到不代表一定沒有。`stopped_by` 說明原因：
+
+- `element_limit` 或 `time_limit`：請用 `root` 縮小範圍。
+- `app_not_answering`：App 忙碌或沒有回應，搜尋在第一個沒得到回答的問題就停止，不會逐一等待每個元素。
+- `null`：搜尋跑完了，但有些地方只搜到 40 層，或有元素讀不到。
 
 ```json
 {"app": "TextEdit", "role": "button", "text": "Save"}
