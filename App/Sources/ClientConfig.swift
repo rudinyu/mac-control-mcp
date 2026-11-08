@@ -44,20 +44,21 @@ enum ClientConfig {
 
     // A server's entry in Claude Code's user configuration, ~/.claude.json, saved to put back if replacing it fails.
     enum SavedEntry: Equatable {
-        case none
+        case absent
         case restorable(String)     // as JSON for `claude mcp add-json`
         case notRestorable
     }
 
-    // `add-json` takes the entry on its command line, where other processes can read it, so an entry with headers
-    // or with environment variables other than this app's own settings, which hold only paths and flags, is not
-    // put back automatically: they may hold tokens.
+    // `add-json` takes the entry on its command line, where other processes can read it, so only an entry with
+    // the fields this app writes is put back automatically: a command with no arguments, and environment
+    // variables that are this app's own settings, which hold only paths and flags. Anything else may hold tokens.
     static func claudeCodeEntry(_ configuration: Data?, name: String) -> SavedEntry {
         guard let configuration, let root = try? JSONSerialization.jsonObject(with: configuration) as? [String: Any],
-              let entry = (root["mcpServers"] as? [String: Any])?[name] else { return .none }
-        guard let entry = entry as? [String: Any],
-              (entry["env"] as? [String: Any] ?? [:]).keys.allSatisfy({ $0.hasPrefix("MAC_EXEC_") }),
-              (entry["headers"] as? [String: Any])?.isEmpty ?? true,
+              let entry = (root["mcpServers"] as? [String: Any])?[name] else { return .absent }
+        guard let entry = entry as? [String: Any], entry["command"] is String,
+              Set(entry.keys).isSubset(of: ["type", "command", "args", "env"]),
+              (entry["args"] as? [Any] ?? []).isEmpty, entry["args"] == nil || entry["args"] is [Any],
+              entry["env"] == nil || (entry["env"] as? [String: String])?.keys.allSatisfy({ $0.hasPrefix("MAC_EXEC_") }) == true,
               let data = try? JSONSerialization.data(withJSONObject: entry, options: [.sortedKeys, .withoutEscapingSlashes]),
               let text = String(data: data, encoding: .utf8) else { return .notRestorable }
         return .restorable(text)

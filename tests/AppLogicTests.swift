@@ -139,12 +139,17 @@ private enum AppLogicTests {
 
         // Claude Code's saved entry
         func saved(_ text: String) -> ClientConfig.SavedEntry { ClientConfig.claudeCodeEntry(Data(text.utf8), name: "mac-exec") }
-        check("no entry, nothing to restore", saved(#"{"mcpServers": {}}"#) == .none && ClientConfig.claudeCodeEntry(nil, name: "mac-exec") == .none)
+        check("no entry, nothing to restore", saved(#"{"mcpServers": {}}"#) == .absent && ClientConfig.claudeCodeEntry(nil, name: "mac-exec") == .absent)
         check("an entry with this app's settings can be restored",
               saved(#"{"mcpServers": {"mac-exec": {"type": "stdio", "command": "/x/mac-exec-mcp", "env": {"MAC_EXEC_WORKSPACE": "/w"}}}}"#)
                 == .restorable(#"{"command":"/x/mac-exec-mcp","env":{"MAC_EXEC_WORKSPACE":"/w"},"type":"stdio"}"#))
         check("an entry with other variables is not restored on a command line",
               saved(#"{"mcpServers": {"mac-exec": {"command": "/x", "env": {"API_TOKEN": "secret"}}}}"#) == .notRestorable)
+        check("an entry with arguments is not restored on a command line",
+              saved(#"{"mcpServers": {"mac-exec": {"command": "/x", "args": ["--token", "secret"]}}}"#) == .notRestorable)
+        check("an entry with a URL is not restored on a command line",
+              saved(#"{"mcpServers": {"mac-exec": {"type": "http", "url": "https://x/?key=secret"}}}"#) == .notRestorable)
+        check("an entry whose env is not an object is not restored", saved(#"{"mcpServers": {"mac-exec": {"command": "/x", "env": "A=1"}}}"#) == .notRestorable)
         check("an entry with headers is not restored on a command line",
               saved(#"{"mcpServers": {"mac-exec": {"type": "http", "url": "https://x", "headers": {"Authorization": "Bearer x"}}}}"#) == .notRestorable)
 

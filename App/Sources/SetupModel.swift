@@ -908,7 +908,7 @@ final class SetupModel: ObservableObject {
             let commands = client == .codex ? ClientConfig.codexCommands(server) : ClientConfig.claudeCodeCommands(server)
             // The CLIs cannot replace an entry, so the old one is removed first, and put back if the new one is refused.
             let oldClaudeEntry = client == .claudeCode
-                ? ClientConfig.claudeCodeEntry(read(home.appendingPathComponent(".claude.json")), name: server.name) : .none
+                ? ClientConfig.claudeCodeEntry(read(home.appendingPathComponent(".claude.json")), name: server.name) : .absent
             let codexBefore = client == .codex ? read(codexFile) : nil
             _ = try? await Installer.runInLoginShell(program, commands[0]) // removing an entry that does not exist is fine
             let codexAfterRemoval = client == .codex ? read(codexFile) : nil
@@ -917,11 +917,16 @@ final class SetupModel: ObservableObject {
                 let restored: Bool?     // nil when there was nothing to put back
                 switch oldClaudeEntry {
                 case .restorable(let entry):
+                    // The removal may itself have failed, leaving the old entry in place.
+                    if try await Installer.runInLoginShell(program, ["mcp", "get", server.name], timeout: 30).exitCode == 0 {
+                        restored = true
+                        break
+                    }
                     let added = try? await Installer.runInLoginShell(program, ["mcp", "add-json", "--scope", "user", server.name, entry])
                     restored = added?.exitCode == 0
                 case .notRestorable:
                     restored = false
-                case .none:
+                case .absent:
                     if let codexBefore, codexBefore != codexAfterRemoval {
                         // Only when nothing else, such as the refused command, changed the file meanwhile.
                         restored = read(codexFile) == codexAfterRemoval && (try? codexBefore.write(to: codexFile, options: .atomic)) != nil
