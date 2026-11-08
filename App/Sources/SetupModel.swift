@@ -904,11 +904,12 @@ final class SetupModel: ObservableObject {
         let home = FileManager.default.homeDirectoryForCurrentUser
         let codexFile = home.appendingPathComponent(".codex/config.toml").resolvingSymlinksInPath()
         func read(_ url: URL) -> Data? { try? Data(contentsOf: url) }
+        let claudeFile = home.appendingPathComponent(".claude.json")
         for server in servers {
             let commands = client == .codex ? ClientConfig.codexCommands(server) : ClientConfig.claudeCodeCommands(server)
             // The CLIs cannot replace an entry, so the old one is removed first, and put back if the new one is refused.
             let oldClaudeEntry = client == .claudeCode
-                ? ClientConfig.claudeCodeEntry(read(home.appendingPathComponent(".claude.json")), name: server.name) : .absent
+                ? ClientConfig.claudeCodeEntry(read(claudeFile), name: server.name) : .absent
             let codexBefore = client == .codex ? read(codexFile) : nil
             _ = try? await Installer.runInLoginShell(program, commands[0]) // removing an entry that does not exist is fine
             let codexAfterRemoval = client == .codex ? read(codexFile) : nil
@@ -917,8 +918,9 @@ final class SetupModel: ObservableObject {
                 let restored: Bool?     // nil when there was nothing to put back
                 switch oldClaudeEntry {
                 case .restorable(let entry):
-                    // The removal may itself have failed, leaving the old entry in place.
-                    if try await Installer.runInLoginShell(program, ["mcp", "get", server.name], timeout: 30).exitCode == 0 {
+                    // The removal may itself have failed, leaving the old entry in place. Read from the user
+                    // configuration itself, since `mcp get` would also find an entry of the same name in a project.
+                    if ClientConfig.claudeCodeEntry(read(claudeFile), name: server.name) == oldClaudeEntry {
                         restored = true
                         break
                     }
