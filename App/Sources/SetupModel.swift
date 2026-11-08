@@ -920,7 +920,8 @@ final class SetupModel: ObservableObject {
                 case .restorable(let entry):
                     // The removal may itself have failed, leaving the old entry in place. Read from the user
                     // configuration itself, since `mcp get` would also find an entry of the same name in a project.
-                    if ClientConfig.claudeCodeEntry(read(claudeFile), name: server.name) == oldClaudeEntry {
+                    // Any entry there counts, since Claude Code may have rewritten it in its own form.
+                    if ClientConfig.claudeCodeEntry(read(claudeFile), name: server.name) != .absent {
                         restored = true
                         break
                     }
