@@ -903,23 +903,41 @@ final class SetupModel: ObservableObject {
         }
         let home = FileManager.default.homeDirectoryForCurrentUser
         let codexFile = home.appendingPathComponent(".codex/config.toml").resolvingSymlinksInPath()
+        func read(_ url: URL) -> Data? { try? Data(contentsOf: url) }
         for server in servers {
             let commands = client == .codex ? ClientConfig.codexCommands(server) : ClientConfig.claudeCodeCommands(server)
             // The CLIs cannot replace an entry, so the old one is removed first, and put back if the new one is refused.
             let oldClaudeEntry = client == .claudeCode
-                ? ClientConfig.claudeCodeEntry(try? Data(contentsOf: home.appendingPathComponent(".claude.json")), name: server.name) : nil
-            let codexBefore = client == .codex ? try? Data(contentsOf: codexFile) : nil
+                ? ClientConfig.claudeCodeEntry(read(home.appendingPathComponent(".claude.json")), name: server.name) : .none
+            let codexBefore = client == .codex ? read(codexFile) : nil
             _ = try? await Installer.runInLoginShell(program, commands[0]) // removing an entry that does not exist is fine
-            let codexAfterRemoval = client == .codex ? try? Data(contentsOf: codexFile) : nil
+            let codexAfterRemoval = client == .codex ? read(codexFile) : nil
             let result = try await Installer.runInLoginShell(program, commands[1])
             guard result.exitCode == 0 else {
-                if let oldClaudeEntry {
-                    _ = try? await Installer.runInLoginShell(program, ["mcp", "add-json", "--scope", "user", server.name, oldClaudeEntry])
-                } else if let codexBefore, codexBefore != codexAfterRemoval, (try? Data(contentsOf: codexFile)) == codexAfterRemoval {
-                    // Only when nothing else changed the file meanwhile.
-                    try? codexBefore.write(to: codexFile, options: .atomic)
+                let restored: Bool?     // nil when there was nothing to put back
+                switch oldClaudeEntry {
+                case .restorable(let entry):
+                    let added = try? await Installer.runInLoginShell(program, ["mcp", "add-json", "--scope", "user", server.name, entry])
+                    restored = added?.exitCode == 0
+                case .notRestorable:
+                    restored = false
+                case .none:
+                    if let codexBefore, codexBefore != codexAfterRemoval {
+                        // Only when nothing else, such as the refused command, changed the file meanwhile.
+                        restored = read(codexFile) == codexAfterRemoval && (try? codexBefore.write(to: codexFile, options: .atomic)) != nil
+                    } else {
+                        restored = nil
+                    }
                 }
-                throw ConfigFailure(description: String(localized: "\(client.rawValue) refused the server \(server.name), so its previous entry was kept: \(result.stderr.suffix(400))"))
+                let reason = String(result.stderr.suffix(400))
+                switch restored {
+                case true?:
+                    throw ConfigFailure(description: String(localized: "\(client.rawValue) refused the server \(server.name), so its previous entry was put back: \(reason)"))
+                case false?:
+                    throw ConfigFailure(description: String(localized: "\(client.rawValue) refused the server \(server.name), and its previous entry could not be put back, so add it again yourself: \(reason)"))
+                case nil:
+                    throw ConfigFailure(description: String(localized: "\(client.rawValue) refused the server \(server.name): \(reason)"))
+                }
             }
         }
         if client == .codex, servers.contains(where: { $0.name == "mac-exec" }) { try setCodexExecTimeout() }

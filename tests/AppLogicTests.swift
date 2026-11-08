@@ -88,6 +88,66 @@ private enum AppLogicTests {
         check("an app helper is this app's", ClientConfig.isAppCommand(exec.command))
         check("a source build is not", !ClientConfig.isAppCommand("/src/mac-control-mcp/.build/mac-control-mcp"))
 
+        // More layouts: these keep their text, or fall back to a full rewrite with the same content
+        let middle = #"{"mcpServers": {"a": 1, "mac-control": {"command": "\#(control.command)"}, "b": 2}}"#
+        check("removing the middle of three keeps the others", String(data: try! ClientConfig.removeFromClaudeDesktop(Data(middle.utf8)), encoding: .utf8)! == #"{"mcpServers": {"a": 1, "b": 2}}"#)
+        let tabbed = "{\n\t\"mcpServers\": {\n\t\t\"other\": 1\n\t}\n}\n"
+        let tabbedMerged = String(data: try! ClientConfig.mergeClaudeDesktop(Data(tabbed.utf8), servers: [control]), encoding: .utf8)!
+        check("a tab-indented file gets tab-indented members", tabbedMerged.hasPrefix("{\n\t\"mcpServers\": {\n\t\t\"other\": 1,\n\t\t\"mac-control\": {\n\t\t\t\"args\": []"), tabbedMerged)
+        let replacedEntry = String(data: try! ClientConfig.mergeClaudeDesktop(Data(#"{"mcpServers": {"mac-control": {"command": "/old"}, "z": 1}}"#.utf8), servers: [control]), encoding: .utf8)!
+        check("an old entry is replaced where it was", replacedEntry.hasPrefix(#"{"mcpServers": {"mac-control": {"#) && replacedEntry.hasSuffix(#"}, "z": 1}}"#), replacedEntry)
+        for (name, text) in [("CRLF line endings", "{\r\n  \"mcpServers\": {\r\n    \"other\": 1\r\n  }\r\n}\r\n"),
+                             ("a byte order mark", "\u{FEFF}{\"mcpServers\": {\"other\": 1}}"),
+                             ("escaped and non-ASCII keys", #"{"caf\u00e9": "\"x\"", "名稱": 1, "mcpServers": {"other": 1}}"#)] {
+            guard let result = try? ClientConfig.mergeClaudeDesktop(Data(text.utf8), servers: [control]) else {
+                check("a file with \(name) can be merged", false); continue
+            }
+            let content = String(data: result, encoding: .utf8)!
+            check("a file with \(name) gets the expected content", ClientConfig.claudeDesktopMatches(result, servers: [control]), content)
+            check("a file with \(name) keeps its other server", (json(result)["mcpServers"] as? [String: Any])?["other"] != nil, content)
+            check("a file with \(name) does not get mixed line endings", !content.contains("\r") || !content.replacingOccurrences(of: "\r\n", with: "").contains("\n"), content)
+        }
+
+        // `mcp get` output
+        let claudeGet = """
+        mac-control:
+          Scope: User config (available in all your projects)
+          Status: ✔ Connected
+          Type: stdio
+          Command: /Users/me/My Apps/MacControl.app/Contents/Helpers/MacControlHelper.app/Contents/MacOS/mac-control-mcp
+          Args:
+
+        To remove this server, run: claude mcp remove "mac-control" -s user
+        """
+        check("claude's output with a path containing a space is this app's", ClientConfig.describesAppCommand(claudeGet))
+        let codexGet = """
+        mac_exec
+          enabled: true
+          transport: stdio
+          command: /Applications/MacControl.app/Contents/Helpers/mac-exec-mcp
+          args: -
+          env: MAC_EXEC_WORKSPACE=*****
+        """
+        check("codex's output is this app's", ClientConfig.describesAppCommand(codexGet))
+        let developmentGet = """
+        mac_control
+          command: /bin/sh
+          args: /Users/me/Apps/MacControl.app/Contents/Helpers/mac-control-mcp
+        """
+        check("a command that only names the helper in its arguments is not this app's", !ClientConfig.describesAppCommand(developmentGet))
+        check("output without a command line falls back to its words", ClientConfig.describesAppCommand("mac-exec \"\(exec.command)\""))
+
+        // Claude Code's saved entry
+        func saved(_ text: String) -> ClientConfig.SavedEntry { ClientConfig.claudeCodeEntry(Data(text.utf8), name: "mac-exec") }
+        check("no entry, nothing to restore", saved(#"{"mcpServers": {}}"#) == .none && ClientConfig.claudeCodeEntry(nil, name: "mac-exec") == .none)
+        check("an entry with this app's settings can be restored",
+              saved(#"{"mcpServers": {"mac-exec": {"type": "stdio", "command": "/x/mac-exec-mcp", "env": {"MAC_EXEC_WORKSPACE": "/w"}}}}"#)
+                == .restorable(#"{"command":"/x/mac-exec-mcp","env":{"MAC_EXEC_WORKSPACE":"/w"},"type":"stdio"}"#))
+        check("an entry with other variables is not restored on a command line",
+              saved(#"{"mcpServers": {"mac-exec": {"command": "/x", "env": {"API_TOKEN": "secret"}}}}"#) == .notRestorable)
+        check("an entry with headers is not restored on a command line",
+              saved(#"{"mcpServers": {"mac-exec": {"type": "http", "url": "https://x", "headers": {"Authorization": "Bearer x"}}}}"#) == .notRestorable)
+
         // CLI commands
         let claude = ClientConfig.claudeCodeCommands(exec)
         check("claude: remove first", claude[0] == ["mcp", "remove", "--scope", "user", "mac-exec"])

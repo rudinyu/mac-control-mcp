@@ -31,7 +31,8 @@ swiftc -module-cache-path "$cache" -parse-as-library \
   "$project_dir/Sources/Shared/Cancellation.swift" "$project_dir/tests/ContainerRuntimeTests.swift" \
   -o "$project_dir/.build/container-runtime-tests"
 swiftc -module-cache-path "$cache" -parse-as-library \
-  "$project_dir/App/Sources/ClientConfig.swift" "$project_dir/App/Sources/RuntimePlan.swift" \
+  "$project_dir/App/Sources/ClientConfig.swift" "$project_dir/App/Sources/JSONEdit.swift" \
+  "$project_dir/App/Sources/RuntimePlan.swift" \
   "$project_dir/tests/AppLogicTests.swift" \
   -o "$project_dir/.build/app-logic-tests"
 
