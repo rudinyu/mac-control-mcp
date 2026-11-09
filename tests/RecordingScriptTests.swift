@@ -71,7 +71,7 @@ private enum RecordingScriptTests {
         // Times allow a slow machine several seconds; a recording that is not stopped would run for 60.
         let timed = record("timed", limit: 1)
         check("the time limit stops the recording with SIGINT", timed.file == "stopped by SIGINT" && timed.status == 0, "\(timed)")
-        check("at the limit", timed.seconds >= 0.9 && timed.seconds < 10, "\(timed)")
+        check("not before the limit", timed.seconds >= 1 && timed.seconds < 10, "\(timed)")
 
         for (name, signal) in [("SIGINT", SIGINT), ("SIGTERM", SIGTERM), ("SIGHUP", SIGHUP)] {
             let stopped = record("stopped-\(name)", limit: 60, signal: signal)
