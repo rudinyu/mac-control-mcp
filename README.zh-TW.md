@@ -56,7 +56,7 @@ git config core.hooksPath .githooks
 
 ## 連接 Claude Code 與 Codex
 
-代理設定含有這份 clone 的絕對路徑，所以不放進 repo（見 `.gitignore`）。clone 之後執行以下命令產生：
+代理設定含有這份 clone 的絕對路徑，所以不放進 repo，請勿 commit。clone 之後執行以下命令產生：
 
 ```sh
 sh scripts/init-agents.sh

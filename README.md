@@ -58,7 +58,7 @@ The hook needs nothing beyond the tools above. If `codex-precommit-check` and th
 
 ## Connect Claude Code and Codex
 
-The agent configuration contains this clone's absolute path, so it is not tracked (see `.gitignore`). Generate it after cloning:
+The agent configuration contains this clone's absolute path, so it is not tracked; do not commit it. Generate it after cloning:
 
 ```sh
 sh scripts/init-agents.sh

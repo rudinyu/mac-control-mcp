@@ -175,7 +175,7 @@ macOS 不允許任何 App 代替你打開這些開關。打開後，完全結束
 在建置用的 Mac 上做一次：
 
 1. 安裝 **Developer ID Application** 憑證和它的私鑰，用 `security find-identity -v -p codesigning` 確認。
-2. 儲存公證用的金鑰：`xcrun notarytool store-credentials maccontrol --key AuthKey_<id>.p8 --key-id <id> --issuer <issuer id>`。不要把 `.p8` 放進 repo；`.gitignore` 會擋下它。
+2. 儲存公證用的金鑰：`xcrun notarytool store-credentials maccontrol --key AuthKey_<id>.p8 --key-id <id> --issuer <issuer id>`。把 `.p8` 放在專案資料夾以外，就不可能被 commit。
 
 之後：
 

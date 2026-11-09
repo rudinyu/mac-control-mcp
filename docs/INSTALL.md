@@ -38,7 +38,7 @@ This writes the following files into the project root, using the absolute path o
 | `.codex/config.toml` | Codex | Starts the server for this project (required) |
 | `AGENTS.md` | Codex | Tells Codex to use mac-control and how (optional) |
 
-These files contain a machine-specific path, so they are listed in `.gitignore` and never committed. The templates they come from are in [`examples/`](../examples/), if you prefer to copy them by hand.
+These files contain a machine-specific path, so do not commit them. The templates they come from are in [`examples/`](../examples/), if you prefer to copy them by hand.
 
 The script also prints a Claude Desktop entry. Claude Desktop's configuration holds your other servers too, so the script never edits it. Section 4 shows how to add the entry.
 

@@ -38,7 +38,7 @@ sh scripts/init-agents.sh
 | `.codex/config.toml` | Codex | 為這個專案啟動伺服器（必要） |
 | `AGENTS.md` | Codex | 告訴 Codex 使用 mac-control 及使用方式（選用） |
 
-這些檔案含有本機專屬的路徑，所以列在 `.gitignore`，不會被 commit。它們的範本在 [`examples/`](../examples/)，也可以手動複製。
+這些檔案含有本機專屬的路徑，所以請勿 commit。它們的範本在 [`examples/`](../examples/)，也可以手動複製。
 
 腳本也會印出 Claude Desktop 的設定。Claude Desktop 的設定檔裡還有你其他的伺服器，所以腳本不會去改它。第 4 節說明怎麼加進去。
 

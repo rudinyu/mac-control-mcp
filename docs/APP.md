@@ -175,7 +175,7 @@ Both ways keep your workspace (`~/AgentWorkspace`, or the folder you chose) and 
 One-time setup on the build Mac:
 
 1. Install the **Developer ID Application** certificate with its private key, then check it with `security find-identity -v -p codesigning`.
-2. Store the notarization key: `xcrun notarytool store-credentials maccontrol --key AuthKey_<id>.p8 --key-id <id> --issuer <issuer id>`. Keep the `.p8` out of the repository; `.gitignore` refuses it.
+2. Store the notarization key: `xcrun notarytool store-credentials maccontrol --key AuthKey_<id>.p8 --key-id <id> --issuer <issuer id>`. Keep the `.p8` outside the project folder, so it can never be committed.
 
 Then:
 
