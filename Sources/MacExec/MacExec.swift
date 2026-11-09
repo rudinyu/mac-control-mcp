@@ -113,13 +113,13 @@ private struct Settings {
         if network == nil {
             problems.append("MAC_EXEC_NETWORK is \"\(env["MAC_EXEC_NETWORK"] ?? "")\"; use bridge or none.")
         } else if let network, let runtime, !runtime.supports(network) {
-            problems.append("MAC_EXEC_NETWORK is \(network.rawValue), but Apple's container runtime cannot run a container without a network; use Docker or remove the setting.")
+            problems.append("MAC_EXEC_NETWORK is \(network.rawValue). \(ContainerRuntime.appleNeedsNetwork)")
         }
         return Settings(
             home: home, workspace: workspace, readOnlyDirs: readOnly, project: project,
             allowHost: env["MAC_EXEC_ALLOW_HOST"] == "1",
             image: env["MAC_EXEC_IMAGE"] ?? defaultImage,
-            network: network ?? .none,
+            network: network ?? .disabled,
             runtime: runtime,
             auditLog: auditLog, auditLogProblem: auditLogProblem,
             problems: problems
@@ -173,7 +173,7 @@ private final class MacExecServer: MCPServer {
             ],
             [
                 "name": "sandbox_exec",
-                "description": "Run a bash command in a fresh, isolated Linux container. The workspace is mounted read-write at /workspace and is the only place where files persist; read-only folders are under /mnt/readonly. The container runs as a non-root user with a read-only system, no added privileges, and \(settings.network == .none ? "no network access" : "internet access"). It cannot run macOS programs or see the rest of the Mac.",
+                "description": "Run a bash command in a fresh, isolated Linux container. The workspace is mounted read-write at /workspace and is the only place where files persist; read-only folders are under /mnt/readonly. The container runs as a non-root user with a read-only system, no added privileges, and \(settings.network == .disabled ? "no network access" : "internet access"). It cannot run macOS programs or see the rest of the Mac.",
                 "inputSchema": [
                     "type": "object",
                     "properties": ["command": command(runBy: "bash -c"), "cwd": path, "timeout_seconds": timeout],
@@ -428,7 +428,14 @@ private final class MacExecServer: MCPServer {
         if runtime.checksImageBeforeRun {
             let inspect = try runProcess(runtime.program, runtime.imageExistsArguments(settings.image), environment: runtime.environment,
                                          timeout: 30, outputLimit: 1000, cancellation: cancellation)
-            if inspect.exitCode != 0 { throw missingImage() }
+            try cancellation.check()
+            if inspect.timedOut {
+                throw ToolFailure("The container runtime did not answer within 30 seconds when checking the sandbox image. Nothing was run; try again.")
+            }
+            if inspect.exitCode != 0 {
+                if inspect.stderr.lowercased().contains("not found") { throw missingImage() }
+                throw ToolFailure("Could not check the sandbox image \(settings.image), so nothing was run: \(inspect.stderr.suffix(400))")
+            }
         }
 
         try audit(["tool": "sandbox_exec", "event": "start", "command": command, "cwd": containerCwd, "container": name,

@@ -11,7 +11,7 @@ enum RuntimeKind: String {
 // or none at all.
 enum SandboxNetwork: String {
     case bridge
-    case none
+    case disabled = "none"
 }
 
 // What a sandbox command needs, independent of the runtime.
@@ -59,9 +59,7 @@ struct ContainerRuntime {
                 "--network", run.network.rawValue,
             ]
         case .apple:
-            guard run.network == .bridge else {
-                throw RuntimeFailure(description: "Apple's container runtime cannot run a container without a network.")
-            }
+            guard run.network == .bridge else { throw RuntimeFailure(description: Self.appleNeedsNetwork) }
             // Apple's runtime has no no-new-privileges or process limit, and its --tmpfs takes only a
             // path, so the home folder lives under /tmp and is created before the command runs. The
             // VM around each container is the main boundary.
@@ -132,8 +130,11 @@ struct ContainerRuntime {
     }
 
     // Whether the image must be checked before each run. Apple's `container run` has no option to keep it from
-    // looking up a missing image in a registry, where an unrelated image could have the same name.
+    // looking up a missing image in a registry, where an unrelated image could have the same name. The check is
+    // best effort: another program could still delete the image between the check and the run.
     var checksImageBeforeRun: Bool { kind == .apple }
+
+    static let appleNeedsNetwork = "Apple's container runtime cannot run a container without a network; use Docker, or remove MAC_EXEC_NETWORK."
 
     // Whether this runtime can run a container with the given network.
     func supports(_ network: SandboxNetwork) -> Bool { network == .bridge || kind == .docker }

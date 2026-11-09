@@ -54,10 +54,10 @@ private enum ContainerRuntimeTests {
         check("docker: a missing image is never pulled", value(after: "--pull", in: dockerArgs) == ["never"])
         check("docker: the usual network by default", value(after: "--network", in: dockerArgs) == ["bridge"])
         var offline = run
-        offline.network = .none
+        offline.network = .disabled
         check("docker: no network when asked", value(after: "--network", in: (try? docker.runArguments(offline)) ?? []) == ["none"])
         check("apple: refuses to run without a network rather than run with one", (try? apple.runArguments(offline)) == nil)
-        check("docker supports no network, apple does not", docker.supports(.none) && !apple.supports(.none) && apple.supports(.bridge))
+        check("docker supports no network, apple does not", docker.supports(.disabled) && !apple.supports(.disabled) && apple.supports(.bridge))
         check("only apple checks the image before running", apple.checksImageBeforeRun && !docker.checksImageBeforeRun)
 
         let appleArgs = (try? apple.runArguments(run)) ?? []
@@ -84,6 +84,8 @@ private enum ContainerRuntimeTests {
 
         let missing = RunResult(exitCode: 125, stdout: "", stderr: "Unable to find image 'mac-exec-sandbox:latest' locally", timedOut: false, cancelled: false, truncated: false, durationMs: 1)
         check("docker: missing image recognized", docker.isMissingImage(missing, image: "mac-exec-sandbox:latest"))
+        let notPulled = RunResult(exitCode: 125, stdout: "", stderr: "docker: Error response from daemon: No such image: mac-exec-sandbox:latest\n\nRun 'docker run --help' for more information\n", timedOut: false, cancelled: false, truncated: false, durationMs: 1)
+        check("docker: missing image under --pull never recognized", docker.isMissingImage(notPulled, image: "mac-exec-sandbox:latest"))
         let failed = RunResult(exitCode: 1, stdout: "", stderr: "boom", timedOut: false, cancelled: false, truncated: false, durationMs: 1)
         check("docker: ordinary failure is not a missing image", !docker.isMissingImage(failed, image: "mac-exec-sandbox:latest"))
 
