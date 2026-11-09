@@ -261,6 +261,27 @@ class SettingsTests(unittest.TestCase):
         finally:
             server.close()
 
+    def test_network_is_reported(self):
+        server = Server()
+        try:
+            self.assertEqual(server.ok("exec_status")["network"], "bridge")
+        finally:
+            server.close()
+        server = Server(MAC_EXEC_NETWORK="none")
+        try:
+            self.assertEqual(server.ok("exec_status")["network"], "none")
+            sandbox = next(tool for tool in server.request("tools/list")["result"]["tools"] if tool["name"] == "sandbox_exec")
+            self.assertIn("no network access", sandbox["description"])
+        finally:
+            server.close()
+
+    def test_unknown_network_is_refused(self):
+        self.check_refused("MAC_EXEC_NETWORK", MAC_EXEC_NETWORK="host")
+
+    def test_no_network_with_apple_runtime_is_refused(self):
+        self.check_refused("cannot run a container without a network", MAC_EXEC_NETWORK="none",
+                           MAC_EXEC_RUNTIME="apple", MAC_EXEC_CONTAINER="/usr/bin/true")
+
     def test_sensitive_read_only_folders_are_refused(self):
         for folder in ("~", "~/.ssh", "~/Library", "~/.claude"):
             with self.subTest(folder=folder):

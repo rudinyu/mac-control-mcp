@@ -22,6 +22,7 @@ private struct Settings {
     let project: URL
     let allowHost: Bool
     let image: String
+    let network: SandboxNetwork
     let runtime: ContainerRuntime?
     let auditLog: URL
     // Set when the audit log may not be used; every command, host_exec included, is then refused.
@@ -106,11 +107,20 @@ private struct Settings {
         if ContainerRuntime.requestedKind(env) == nil {
             problems.append("MAC_EXEC_RUNTIME is \"\(env["MAC_EXEC_RUNTIME"] ?? "")\"; use docker or apple.")
         }
+        let runtime = ContainerRuntime.find(env)
+        // A setting that cannot be honored stops every command, rather than running with the network on.
+        let network = SandboxNetwork(rawValue: env["MAC_EXEC_NETWORK"] ?? SandboxNetwork.bridge.rawValue)
+        if network == nil {
+            problems.append("MAC_EXEC_NETWORK is \"\(env["MAC_EXEC_NETWORK"] ?? "")\"; use bridge or none.")
+        } else if let network, let runtime, !runtime.supports(network) {
+            problems.append("MAC_EXEC_NETWORK is \(network.rawValue), but Apple's container runtime cannot run a container without a network; use Docker or remove the setting.")
+        }
         return Settings(
             home: home, workspace: workspace, readOnlyDirs: readOnly, project: project,
             allowHost: env["MAC_EXEC_ALLOW_HOST"] == "1",
             image: env["MAC_EXEC_IMAGE"] ?? defaultImage,
-            runtime: ContainerRuntime.find(env),
+            network: network ?? .none,
+            runtime: runtime,
             auditLog: auditLog, auditLogProblem: auditLogProblem,
             problems: problems
         )
@@ -152,18 +162,18 @@ private final class MacExecServer: MCPServer {
         var list: [[String: Any]] = [
             [
                 "name": "exec_status",
-                "description": "Report the sandbox runtime (Docker or Apple container) and whether it is ready, whether the sandbox image is built, the workspace folder, read-only folders, and whether host_exec is enabled. Call this first.",
+                "description": "Report the sandbox runtime (Docker or Apple container) and whether it is ready, whether the sandbox image is built, whether containers get a network, the workspace folder, read-only folders, and whether host_exec is enabled. Call this first.",
                 "inputSchema": ["type": "object", "properties": [:], "additionalProperties": false],
                 "outputSchema": output([
                     "runtime": ["type": ["string", "null"]], "runtime_ready": boolean, "image_present": boolean,
-                    "workspace": string, "readonly_dirs": ["type": "array", "items": string], "host_exec_enabled": boolean,
+                    "network": ["type": "string", "enum": ["bridge", "none"]], "workspace": string, "readonly_dirs": ["type": "array", "items": string], "host_exec_enabled": boolean,
                     "problems": ["type": "array", "items": string], "next_step": string
                 ], required: ["runtime", "runtime_ready", "image_present", "workspace", "readonly_dirs", "host_exec_enabled", "problems"]),
                 "annotations": ["readOnlyHint": true]
             ],
             [
                 "name": "sandbox_exec",
-                "description": "Run a bash command in a fresh, isolated Linux container. The workspace is mounted read-write at /workspace and is the only place where files persist; read-only folders are under /mnt/readonly. The container runs as a non-root user with a read-only system, no added privileges, and internet access. It cannot run macOS programs or see the rest of the Mac.",
+                "description": "Run a bash command in a fresh, isolated Linux container. The workspace is mounted read-write at /workspace and is the only place where files persist; read-only folders are under /mnt/readonly. The container runs as a non-root user with a read-only system, no added privileges, and \(settings.network == .none ? "no network access" : "internet access"). It cannot run macOS programs or see the rest of the Mac.",
                 "inputSchema": [
                     "type": "object",
                     "properties": ["command": command(runBy: "bash -c"), "cwd": path, "timeout_seconds": timeout],
@@ -351,6 +361,7 @@ private final class MacExecServer: MCPServer {
             "readonly_dirs": settings.readOnlyDirs.map(\.path),
             "host_exec_enabled": settings.allowHost,
             "image": settings.image,
+            "network": settings.network.rawValue,
             "audit_log": settings.auditLog.path,
             "problems": settings.problems,
             "runtime": settings.runtime?.kind.rawValue ?? NSNull(),
@@ -412,7 +423,13 @@ private final class MacExecServer: MCPServer {
             readOnly.append((source, "/mnt/readonly/\(target)"))
         }
         let arguments = try runtime.runArguments(SandboxRun(name: name, image: settings.image, workspace: root,
-                                                        readOnly: readOnly, workdir: containerCwd, command: command))
+                                                        readOnly: readOnly, workdir: containerCwd, command: command,
+                                                        network: settings.network))
+        if runtime.checksImageBeforeRun {
+            let inspect = try runProcess(runtime.program, runtime.imageExistsArguments(settings.image), environment: runtime.environment,
+                                         timeout: 30, outputLimit: 1000, cancellation: cancellation)
+            if inspect.exitCode != 0 { throw missingImage() }
+        }
 
         try audit(["tool": "sandbox_exec", "event": "start", "command": command, "cwd": containerCwd, "container": name,
                    "runtime": runtime.kind.rawValue])
@@ -424,10 +441,12 @@ private final class MacExecServer: MCPServer {
         if result.timedOut || result.cancelled { sweepContainers = true }
         try? audit(["tool": "sandbox_exec", "event": "end", "container": name, "exit_code": result.exitCode,
                     "timed_out": result.timedOut, "cancelled": result.cancelled, "duration_ms": result.durationMs])
-        if runtime.isMissingImage(result, image: settings.image) {
-            throw ToolFailure("The sandbox image \(settings.image) is missing. Open MacControl.app to build it, or run sh scripts/build-sandbox.sh in the mac-control-mcp folder.")
-        }
+        if runtime.isMissingImage(result, image: settings.image) { throw missingImage() }
         return resultJSON(result)
+    }
+
+    private func missingImage() -> ToolFailure {
+        ToolFailure("The sandbox image \(settings.image) is missing. Open MacControl.app to build it, or run sh scripts/build-sandbox.sh in the mac-control-mcp folder.")
     }
 
     // MacControl.app tells the server how to start the runtime it installed, so the first sandbox command

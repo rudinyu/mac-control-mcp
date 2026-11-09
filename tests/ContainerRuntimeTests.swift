@@ -51,8 +51,17 @@ private enum ContainerRuntimeTests {
         check("docker: home folder tmpfs owned by the agent user", dockerArgs.contains("/home/agent:rw,nosuid,nodev,size=256m,uid=1000,gid=1000"))
         check("docker: bash -c command", Array(dockerArgs.suffix(3)) == ["bash", "-c", run.command])
 
+        check("docker: a missing image is never pulled", value(after: "--pull", in: dockerArgs) == ["never"])
+        check("docker: the usual network by default", value(after: "--network", in: dockerArgs) == ["bridge"])
+        var offline = run
+        offline.network = .none
+        check("docker: no network when asked", value(after: "--network", in: (try? docker.runArguments(offline)) ?? []) == ["none"])
+        check("apple: refuses to run without a network rather than run with one", (try? apple.runArguments(offline)) == nil)
+        check("docker supports no network, apple does not", docker.supports(.none) && !apple.supports(.none) && apple.supports(.bridge))
+        check("only apple checks the image before running", apple.checksImageBeforeRun && !docker.checksImageBeforeRun)
+
         let appleArgs = (try? apple.runArguments(run)) ?? []
-        check("apple: no Docker-only options", !appleArgs.contains("--security-opt") && !appleArgs.contains("--pids-limit") && !appleArgs.contains("--network"))
+        check("apple: no Docker-only options", !appleArgs.contains("--security-opt") && !appleArgs.contains("--pids-limit") && !appleArgs.contains("--network") && !appleArgs.contains("--pull"))
         check("apple: plain tmpfs path", value(after: "--tmpfs", in: appleArgs) == ["/tmp"])
         check("apple: home under /tmp", value(after: "--env", in: appleArgs).contains("HOME=/tmp/home"))
         check("apple: command passed as an argument to a fixed script",

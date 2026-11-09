@@ -7,6 +7,13 @@ enum RuntimeKind: String {
     case apple
 }
 
+// The network a sandbox container gets: the runtime's usual one, with internet access and a route to the Mac,
+// or none at all.
+enum SandboxNetwork: String {
+    case bridge
+    case none
+}
+
 // What a sandbox command needs, independent of the runtime.
 struct SandboxRun {
     let name: String
@@ -15,6 +22,7 @@ struct SandboxRun {
     let readOnly: [(source: String, target: String)]
     let workdir: String                            // path inside the container
     let command: String
+    var network: SandboxNetwork = .bridge
 }
 
 struct RuntimeFailure: Error, CustomStringConvertible {
@@ -40,14 +48,20 @@ struct ContainerRuntime {
                          "--user", "1000:1000", "--read-only"]
         switch kind {
         case .docker:
+            // The image is built on this Mac. Without --pull never, a missing image would be looked up in a
+            // registry, which could hold an unrelated image with the same name.
             arguments += [
+                "--pull", "never",
                 "--tmpfs", "/tmp:rw,nosuid,nodev,size=512m",
                 "--tmpfs", "/home/agent:rw,nosuid,nodev,size=256m,uid=1000,gid=1000",
                 "--cap-drop", "ALL", "--security-opt", "no-new-privileges",
                 "--pids-limit", "256", "--memory", "2g", "--memory-swap", "2g", "--cpus", "2",
-                "--network", "bridge",
+                "--network", run.network.rawValue,
             ]
         case .apple:
+            guard run.network == .bridge else {
+                throw RuntimeFailure(description: "Apple's container runtime cannot run a container without a network.")
+            }
             // Apple's runtime has no no-new-privileges or process limit, and its --tmpfs takes only a
             // path, so the home folder lives under /tmp and is created before the command runs. The
             // VM around each container is the main boundary.
@@ -116,6 +130,13 @@ struct ContainerRuntime {
         case .apple: return ["system", "status"]
         }
     }
+
+    // Whether the image must be checked before each run. Apple's `container run` has no option to keep it from
+    // looking up a missing image in a registry, where an unrelated image could have the same name.
+    var checksImageBeforeRun: Bool { kind == .apple }
+
+    // Whether this runtime can run a container with the given network.
+    func supports(_ network: SandboxNetwork) -> Bool { network == .bridge || kind == .docker }
 
     // Recognizes a run that failed because the image has not been built.
     func isMissingImage(_ result: RunResult, image: String) -> Bool {

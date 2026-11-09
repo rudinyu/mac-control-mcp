@@ -18,7 +18,7 @@ English | [繁體中文](EXEC.zh-TW.md)
 | Approval prompts | Command and write tools are marked as destructive. Whether the client asks you before each call depends on its permission settings: keep Claude Code's prompts on, and keep `default_tools_approval_mode = "prompt"` in Codex. `sandbox_write_file` can overwrite files in the workspace. |
 | Running on the Mac is off by default | `host_exec`, which runs a command directly on the Mac, exists only when you turn it on. Each call must give a reason, and `sudo`, `su`, and `doas` are refused. |
 
-The container has normal internet access, so it can download packages and call web APIs. It can also reach your Mac and your local network through Docker's network, for example `host.docker.internal` or your router. If that matters to you, do not run services on your Mac or network that trust connections without a password.
+The container has normal internet access, so it can download packages and call web APIs. It can also reach your Mac and your local network through Docker's network, for example `host.docker.internal` or your router. If that matters to you, do not run services on your Mac or network that trust connections without a password, or set `MAC_EXEC_NETWORK` to `none` to give the container no network at all (Docker only; packages then have to be in the image or the workspace already).
 
 ### What the workspace can do
 
@@ -50,7 +50,8 @@ Set these in the `env` section of the server's entry in your client configuratio
 | `MAC_EXEC_WORKSPACE` | `~/AgentWorkspace` | The folder shared read-write at `/workspace`. It is created if it does not exist. |
 | `MAC_EXEC_READONLY_DIRS` | none | Extra folders to share read-only, separated by `:`. Each appears at `/mnt/readonly/<folder name>`. A folder may not be inside the workspace or reached through a link in it, and each one is checked again before every command. |
 | `MAC_EXEC_ALLOW_HOST` | off | Set to `1` to make `host_exec` available. |
-| `MAC_EXEC_IMAGE` | `mac-exec-sandbox:latest` | The Docker image to run. |
+| `MAC_EXEC_IMAGE` | `mac-exec-sandbox:latest` | The Docker image to run. It must already be on this Mac: a missing image is reported, never downloaded, since a registry could have an unrelated image with the same name. |
+| `MAC_EXEC_NETWORK` | `bridge` | `bridge` gives the container the runtime's usual network, with internet access. `none` gives it no network at all; Apple's `container` cannot do that, so with it every command is refused and `exec_status` says why. |
 | `MAC_EXEC_RUNTIME` | `docker` | `docker` for Docker or a Docker-compatible runtime such as Colima, or `apple` for Apple's `container` on macOS 26 or later. Other values are reported by `exec_status`. |
 | `MAC_EXEC_DOCKER` | found automatically | Path of the `docker` program, if it is not in a usual place. |
 | `MAC_EXEC_CONTAINER` | found automatically | Path of Apple's `container` program, when `MAC_EXEC_RUNTIME` is `apple`. |

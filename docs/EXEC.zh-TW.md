@@ -18,7 +18,7 @@
 | 核准提示 | 執行指令和寫入檔案的工具都標記為破壞性。客戶端會不會每次都先問你，取決於它的權限設定：請保持 Claude Code 的核准提示開啟，Codex 則保留 `default_tools_approval_mode = "prompt"`。`sandbox_write_file` 會覆蓋工作資料夾裡的檔案。 |
 | 預設不能直接在 Mac 上執行 | 直接在 Mac 上執行指令的 `host_exec`，只有在你開啟後才會出現。每次呼叫都要寫理由，並拒絕 `sudo`、`su` 和 `doas`。 |
 
-容器可以正常上網，所以能下載套件、呼叫網路 API。它也能透過 Docker 的網路連到你的 Mac 和區網，例如 `host.docker.internal` 或你的路由器。如果這對你很重要，就不要在 Mac 或區網上開著不需要密碼就能連的服務。
+容器可以正常上網，所以能下載套件、呼叫網路 API。它也能透過 Docker 的網路連到你的 Mac 和區網，例如 `host.docker.internal` 或你的路由器。如果這對你很重要，就不要在 Mac 或區網上開著不需要密碼就能連的服務，或把 `MAC_EXEC_NETWORK` 設為 `none`，讓容器完全沒有網路（僅限 Docker；這時套件必須已經在映像檔或工作資料夾裡）。
 
 ### 工作資料夾能做什麼
 
@@ -50,7 +50,8 @@ sandbox 可以把任何東西寫進工作資料夾，而有些檔案會在 Mac �
 | `MAC_EXEC_WORKSPACE` | `~/AgentWorkspace` | 以可讀寫方式共用、在容器裡是 `/workspace` 的資料夾。不存在會自動建立。 |
 | `MAC_EXEC_READONLY_DIRS` | 無 | 額外以唯讀方式共用的資料夾，用 `:` 分隔。每個會出現在 `/mnt/readonly/<資料夾名稱>`。資料夾不能在 workspace 裡，也不能經由 workspace 裡的連結到達，每次執行指令前都會重新檢查。 |
 | `MAC_EXEC_ALLOW_HOST` | 關閉 | 設成 `1` 才會出現 `host_exec`。 |
-| `MAC_EXEC_IMAGE` | `mac-exec-sandbox:latest` | 要執行的 Docker 映像檔。 |
+| `MAC_EXEC_IMAGE` | `mac-exec-sandbox:latest` | 要執行的 Docker 映像檔。它必須已經在這台 Mac 上：缺少時只會回報，不會下載，因為 registry 上可能有同名但無關的映像檔。 |
+| `MAC_EXEC_NETWORK` | `bridge` | `bridge` 讓容器使用 runtime 一般的網路，可以上網。`none` 讓容器完全沒有網路；Apple 的 `container` 做不到，所以搭配它時每個指令都會被拒絕，`exec_status` 會說明原因。 |
 | `MAC_EXEC_RUNTIME` | `docker` | `docker` 代表 Docker 或 Colima 這類相容 Docker 的執行環境；`apple` 代表 macOS 26 以後的 Apple `container`。其他值會由 `exec_status` 回報為問題。 |
 | `MAC_EXEC_DOCKER` | 自動尋找 | `docker` 程式的路徑，如果它不在常見的位置。 |
 | `MAC_EXEC_CONTAINER` | 自動尋找 | `MAC_EXEC_RUNTIME` 為 `apple` 時，Apple `container` 程式的路徑。 |
