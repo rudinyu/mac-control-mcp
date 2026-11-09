@@ -94,8 +94,8 @@ private let recordingSecondsLimit = 120
 // screencapture takes about half a second to start recording, so the time limit is that much longer, and a
 // recording is at least as long as asked for.
 private let recordingStartAllowance = 1
-// How long mac_record_stop waits for screencapture to finish the file.
-private let recordingStopSeconds = 10.0
+// How long mac_record_stop waits for screencapture to finish the file: until the recording script has killed it.
+private let recordingStopSeconds = Double(recordingKillSeconds + 5)
 private let scrollLimit = 20
 private let mouseActions = ["move", "click", "double_click", "right_click", "drag"]
 private let windowActions = ["list", "focus", "move", "resize", "minimize", "restore"]
