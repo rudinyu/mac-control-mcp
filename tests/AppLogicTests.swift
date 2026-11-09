@@ -1,5 +1,6 @@
-// Unit tests for MacControl.app's logic that does not need a window: client configuration and
-// runtime selection. Built with App/Sources/ClientConfig.swift and RuntimePlan.swift by scripts/ci.sh.
+// Unit tests for MacControl.app's logic that does not need a window: client configuration, runtime
+// selection, and the setup window's states. Built with the files in app_logic_sources (scripts/sources.sh)
+// by scripts/ci.sh.
 
 import Foundation
 
@@ -20,7 +21,7 @@ private func json(_ data: Data) -> [String: Any] {
 
 @main
 private enum AppLogicTests {
-    static func main() {
+    static func main() async {
         let control = ServerSpec(name: "mac-control", command: "/Applications/MacControl.app/Contents/Helpers/MacControlHelper.app/Contents/MacOS/mac-control-mcp", environment: [:])
         let exec = ServerSpec(name: "mac-exec", command: "/Applications/MacControl.app/Contents/Helpers/mac-exec-mcp",
                               environment: ["MAC_EXEC_WORKSPACE": "/Users/me/Agent Workspace", "MAC_EXEC_ALLOW_HOST": "1"])
@@ -246,6 +247,67 @@ private enum AppLogicTests {
         check("sha256 of a known value", (try? Checksum.sha256(of: file)) == "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad")
         check("a wrong checksum does not match", !Checksum.matches(file, String(repeating: "0", count: 64)))
         try? FileManager.default.removeItem(at: file)
+
+        // Choosing the runtime
+        var dockerChecks = 0
+        func choose(override: String? = nil, remembered: RuntimeChoice? = nil, olderColima: Bool = false,
+                    cpu: CPU = .intel, macOS: Int = 26, docker: String? = nil) async -> RuntimeChoice {
+            await RuntimeSelection.choose(override: override, remembered: remembered, hasOlderColima: olderColima,
+                                          cpu: cpu, macOSMajor: macOS) { dockerChecks += 1; return docker }
+        }
+        check("an override wins over a remembered runtime", await choose(override: "managedColima", remembered: .appleContainer) == .managedColima)
+        check("an override of Apple container", await choose(override: "appleContainer", docker: "/d") == .appleContainer)
+        check("an unknown override is ignored", await choose(override: "podman", docker: "/d") == .existingDocker("/d"))
+        check("a remembered runtime is kept on a Mac that would choose another",
+              await choose(remembered: .existingDocker("/d"), cpu: .appleSilicon, macOS: 26) == .existingDocker("/d"))
+        check("an older version's Colima is kept", await choose(olderColima: true, cpu: .appleSilicon, macOS: 26, docker: "/d") == .managedColima)
+        dockerChecks = 0
+        check("Apple silicon on macOS 26 uses Apple container", await choose(cpu: .appleSilicon, macOS: 26, docker: "/d") == .appleContainer)
+        _ = await choose(override: "managedColima")
+        _ = await choose(remembered: .managedColima)
+        check("Docker is not started to check it when something else decides", dockerChecks == 0, "\(dockerChecks)")
+        check("otherwise a working Docker is reused", await choose(cpu: .intel, docker: "/d") == .existingDocker("/d") && dockerChecks == 1)
+        check("and without one MacControl installs Colima", await choose(cpu: .appleSilicon, macOS: 15) == .managedColima)
+        check("the override is read from its stored value", RuntimeSelection.override("appleContainer") == .appleContainer
+              && RuntimeSelection.override(nil) == nil && RuntimeSelection.override("existingDocker:/d") == nil)
+
+        // Removing MacControl
+        check("removal deletes the image from the user's Docker", RuntimeSelection.removalDeletesImage(.existingDocker("/d"), appleContainerInstalled: false))
+        check("removal deletes the VM, not the image, for the app's Colima", !RuntimeSelection.removalDeletesImage(.managedColima, appleContainerInstalled: true))
+        check("removal deletes the image from an installed Apple container", RuntimeSelection.removalDeletesImage(.appleContainer, appleContainerInstalled: true))
+        check("an Apple container that is not installed has no image", !RuntimeSelection.removalDeletesImage(.appleContainer, appleContainerInstalled: false))
+        check("no runtime, nothing to delete", !RuntimeSelection.removalDeletesImage(nil, appleContainerInstalled: true))
+
+        // A client's state
+        func status(ready: Bool = true, enabled: Bool = true, connected: Bool = false, entry: Bool = false) -> ClientStatus {
+            ClientStatus.of(locationReady: ready, enabled: enabled, connected: connected, hasEntry: entry)
+        }
+        check("connected", status(connected: true, entry: true) == ClientStatus(state: .done("Connected")))
+        check("an entry with older settings needs applying", status(entry: true) == ClientStatus(state: .needsAction("Connected with older settings"), stale: true))
+        check("no entry yet", status() == ClientStatus(state: .needsAction("Not connected yet")))
+        check("turned off but still connected is a leftover", status(enabled: false, entry: true) == ClientStatus(state: .notNeeded("Turned off, but still connected"), leftover: true))
+        check("turned off", status(enabled: false) == ClientStatus(state: .notNeeded("Turned off")))
+        check("outside Applications, an entry is never called outdated", !status(ready: false, entry: true).stale && status(ready: false, entry: true).state.isDone)
+        check("outside Applications, a turned-off client still shows as turned off", status(ready: false, enabled: false, entry: true).leftover)
+
+        // The summary
+        func summary(_ steps: [StepState] = [.done("")], busy: Bool = false, checked: Bool = true, translocated: Bool = false,
+                     stale: Int = 0, clients: Int = 1, permissions: Bool = false, oldServers: Bool = false, exec: Bool = true) -> Summary {
+            Summary.of(steps: steps, busy: busy, hasChecked: checked, isTranslocated: translocated, staleClients: stale,
+                       enabledClients: clients, helperPermissionsMissing: permissions, oldServersRunning: oldServers, enableExec: exec)
+        }
+        check("work in progress comes first", summary([.working(""), .failed("")], translocated: true).level == .working)
+        check("before the first check", summary(checked: false).text == "Checking this Mac…")
+        check("a translocated copy comes before failures", summary([.failed("")], translocated: true).text == "Quit MacControl, then open it from Applications.")
+        check("a failure", summary([.failed(""), .needsAction("")], stale: 1).level == .failed)
+        check("settings to apply come before steps left", summary([.needsAction("")], stale: 2).text == "Settings changed. Apply them to 2 clients.")
+        check("steps left are counted", summary([.needsAction(""), .needsAction(""), .notNeeded("")]).text == "2 steps left. Click Set Up.")
+        check("no client", summary(clients: 0).text == "Install or turn on Claude Desktop, Claude Code, or Codex.")
+        check("missing permissions", summary(permissions: true).text == "Turn on MacControlHelper in System Settings. Click Set Up.")
+        let restart = summary(oldServers: true)
+        check("old servers need a restart that Set Up cannot do", restart.level == .needsAction && !restart.setUpHelps)
+        check("ready with the sandbox", summary(clients: 2) == Summary(level: .ready, text: "Ready: 2 clients connected, sandbox ready."))
+        check("ready without the sandbox", summary(exec: false).text == "Ready: 1 client connected.")
 
         if failures > 0 {
             print("\(failures) app logic test(s) failed")

@@ -3,6 +3,7 @@ set -eu
 
 project_dir=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cache="$project_dir/.build/module-cache"
+. "$project_dir/scripts/sources.sh"
 "$project_dir/scripts/build.sh"
 
 # Tests are built here, not in build.sh, so a broken test never blocks the server from starting.
@@ -30,11 +31,11 @@ swiftc -module-cache-path "$cache" -parse-as-library \
   "$project_dir/Sources/MacExec/ContainerRuntime.swift" "$project_dir/Sources/MacExec/ProcessRunner.swift" \
   "$project_dir/Sources/Shared/Cancellation.swift" "$project_dir/tests/ContainerRuntimeTests.swift" \
   -o "$project_dir/.build/container-runtime-tests"
-swiftc -module-cache-path "$cache" -parse-as-library \
-  "$project_dir/App/Sources/ClientConfig.swift" "$project_dir/App/Sources/JSONEdit.swift" \
-  "$project_dir/App/Sources/RuntimePlan.swift" \
+IFS=$line_break
+swiftc -module-cache-path "$cache" -parse-as-library $(project_files "$app_logic_sources") \
   "$project_dir/tests/AppLogicTests.swift" \
   -o "$project_dir/.build/app-logic-tests"
+unset IFS
 
 "$project_dir/.build/terminal-text-tests"
 "$project_dir/.build/session-lock-tests"

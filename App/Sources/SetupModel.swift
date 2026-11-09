@@ -2,77 +2,6 @@ import AppKit
 import Foundation
 import ServiceManagement
 
-enum StepState: Equatable {
-    case unknown
-    case working(String)
-    case done(String)
-    case needsAction(String)
-    case failed(String)
-    case notNeeded(String)
-
-    var isDone: Bool {
-        switch self {
-        case .done, .notNeeded: return true
-        default: return false
-        }
-    }
-
-    var isFailed: Bool {
-        if case .failed = self { return true }
-        return false
-    }
-
-    var isWorking: Bool {
-        if case .working = self { return true }
-        return false
-    }
-
-    // What VoiceOver says for the status icon.
-    var accessibilityLabel: String {
-        switch self {
-        case .unknown: return String(localized: "Checking")
-        case .working: return String(localized: "In progress")
-        case .done: return String(localized: "Done")
-        case .needsAction: return String(localized: "Needs action")
-        case .failed: return String(localized: "Failed")
-        case .notNeeded: return String(localized: "Not needed")
-        }
-    }
-}
-
-enum Client: String, CaseIterable, Identifiable {
-    case claudeDesktop = "Claude Desktop"
-    case claudeCode = "Claude Code"
-    case codex = "Codex"
-
-    var id: String { rawValue }
-
-    // The app that macOS asks to grant Accessibility and Screen Recording to.
-    var permissionHolder: String {
-        switch self {
-        case .claudeDesktop: return "MacControlHelper"
-        case .claudeCode: return String(localized: "your terminal app (Terminal, iTerm2, …)")
-        case .codex: return String(localized: "MacControlHelper for the Codex app, or your terminal app")
-        }
-    }
-
-    var reloadHint: String {
-        switch self {
-        case .claudeDesktop: return String(localized: "Quit and reopen Claude to load the tools.")
-        case .claudeCode, .codex: return String(localized: "Start a new \(rawValue) session to load the tools.")
-        }
-    }
-}
-
-// The one-line state of the whole setup, shown in the header and the menu bar.
-struct Summary: Equatable {
-    enum Level { case ready, working, needsAction, failed }
-    let level: Level
-    let text: String
-    // False when the remaining step is outside MacControl, such as restarting a client, so Set Up cannot help.
-    var setUpHelps = true
-}
-
 @MainActor
 final class SetupModel: ObservableObject {
     // One model drives the window and the menu bar item.
@@ -127,44 +56,10 @@ final class SetupModel: ObservableObject {
     var enabledClients: [Client] { detectedClients.filter(isEnabled) }
 
     var summary: Summary {
-        let steps = [location, runtime, image] + enabledClients.compactMap { clients[$0] }
-        if busy || steps.contains(where: \.isWorking) { return Summary(level: .working, text: String(localized: "Setting up…")) }
-        if !hasChecked { return Summary(level: .working, text: String(localized: "Checking this Mac…")) }
-        // Set Up cannot fix a translocated copy; only moving the app can.
-        if isTranslocated {
-            return Summary(level: .needsAction, text: String(localized: "Quit MacControl, then open it from Applications."))
-        }
-        if steps.contains(where: \.isFailed) { return Summary(level: .failed, text: String(localized: "Something needs attention below.")) }
-        if !staleClients.isEmpty {
-            let count = staleClients.count
-            return Summary(level: .needsAction, text: count == 1
-                ? String(localized: "Settings changed. Apply them to 1 client.")
-                : String(localized: "Settings changed. Apply them to \(count) clients."))
-        }
-        let remaining = steps.filter { !$0.isDone }.count
-        if remaining > 0 {
-            return Summary(level: .needsAction, text: remaining == 1
-                ? String(localized: "1 step left. Click Set Up.")
-                : String(localized: "\(remaining) steps left. Click Set Up."))
-        }
-        if enabledClients.isEmpty {
-            return Summary(level: .needsAction, text: String(localized: "Install or turn on Claude Desktop, Claude Code, or Codex."))
-        }
-        if helperPermissionsMissing {
-            return Summary(level: .needsAction, text: String(localized: "Turn on MacControlHelper in System Settings. Click Set Up."))
-        }
-        if !oldServers.clients.isEmpty || oldServers.unknown > 0 {
-            return Summary(level: .needsAction, text: String(localized: "Restart your agent apps to use this version."), setUpHelps: false)
-        }
-        let count = enabledClients.count
-        let text: String
-        switch (count == 1, enableExec) {
-        case (true, true): text = String(localized: "Ready: 1 client connected, sandbox ready.")
-        case (true, false): text = String(localized: "Ready: 1 client connected.")
-        case (false, true): text = String(localized: "Ready: \(count) clients connected, sandbox ready.")
-        case (false, false): text = String(localized: "Ready: \(count) clients connected.")
-        }
-        return Summary(level: .ready, text: text)
+        Summary.of(steps: [location, runtime, image] + enabledClients.compactMap { clients[$0] }, busy: busy, hasChecked: hasChecked,
+                   isTranslocated: isTranslocated, staleClients: staleClients.count, enabledClients: enabledClients.count,
+                   helperPermissionsMissing: helperPermissionsMissing,
+                   oldServersRunning: !oldServers.clients.isEmpty || oldServers.unknown > 0, enableExec: enableExec)
     }
 
     func setOpenAtLogin(_ on: Bool) {
@@ -429,7 +324,7 @@ final class SetupModel: ObservableObject {
         }
         // In the user's own Docker or in Apple container, only the sandbox image is MacControl's; the runtime
         // stays. An image that cannot be checked because the runtime is not running is left, and noted.
-        if let choice = runtimeChoice, choice != .managedColima, choice != .appleContainer || Installer.appleContainerInstalled {
+        if let choice = runtimeChoice, RuntimeSelection.removalDeletesImage(choice, appleContainerInstalled: Installer.appleContainerInstalled) {
             let runtime = Installer.runtime(for: choice)
             let ready = (try? await Installer.run(runtime.program, runtime.readyArguments(), environment: runtime.environment, timeout: 30))?.exitCode == 0
             if !ready {
@@ -547,26 +442,10 @@ final class SetupModel: ObservableObject {
         var stale: Set<Client> = []
         var leftover: Set<Client> = []
         func record(_ client: Client, connected: Bool, hasEntry: Bool) {
-            // Until MacControl runs from Applications, its helper paths differ from what clients use, so a
-            // comparison would wrongly call every client outdated.
-            if !location.isDone, isEnabled(client) {
-                // Whether the entry works cannot be told from here, so only say that one exists. The Location
-                // step keeps the summary from reporting Ready meanwhile.
-                found[client] = .notNeeded(hasEntry ? String(localized: "Previously set up. Checked once MacControl runs from Applications.")
-                                                    : String(localized: "Connects once MacControl runs from Applications."))
-                return
-            }
-            if !isEnabled(client) {
-                if hasEntry { leftover.insert(client) }
-                found[client] = .notNeeded(hasEntry ? String(localized: "Turned off, but still connected") : String(localized: "Turned off"))
-            } else if connected {
-                found[client] = .done(String(localized: "Connected"))
-            } else if hasEntry {
-                found[client] = .needsAction(String(localized: "Connected with older settings"))
-                stale.insert(client)
-            } else {
-                found[client] = .needsAction(String(localized: "Not connected yet"))
-            }
+            let status = ClientStatus.of(locationReady: location.isDone, enabled: isEnabled(client), connected: connected, hasEntry: hasEntry)
+            found[client] = status.state
+            if status.stale { stale.insert(client) }
+            if status.leftover { leftover.insert(client) }
         }
         if FileManager.default.fileExists(atPath: "/Applications/Claude.app") || FileManager.default.fileExists(atPath: claudeDesktopConfig.path) {
             let current = try? Data(contentsOf: claudeDesktopConfig)
@@ -635,34 +514,17 @@ final class SetupModel: ObservableObject {
             image = .notNeeded(String(localized: "Not needed"))
             return
         }
-        let choice: RuntimeChoice
-        // For testing and support: `defaults write tw.com.eaman.MacControl runtimeOverride managedColima`
-        // (or appleContainer) forces a runtime regardless of this Mac.
         let override = defaults.string(forKey: "runtimeOverride")
-        let forced = override == "managedColima" || override == "appleContainer"
-        if override == "managedColima" {
-            choice = .managedColima
-        } else if override == "appleContainer" {
-            choice = .appleContainer
-        } else if let remembered = defaults.string(forKey: "runtime").flatMap(RuntimeChoice.init(stored:)),
-                  remembered.programExists {
-            // Once a runtime is set up, keep it: after an update or a macOS upgrade, switching by itself would
-            // leave the old VM and its image behind and give agents a different sandbox. A Docker that has been
-            // uninstalled is forgotten, so the app can find another.
-            choice = remembered
-        } else if FileManager.default.fileExists(atPath: paths.colima.path) {
-            // Set up by a version that did not remember the runtime. Its Colima may be older than this version
-            // wants, which Set Up then updates, so keep using it rather than switch.
-            choice = .managedColima
-        } else if cpu == .appleSilicon, macOSMajor >= 26 {
-            choice = .appleContainer
-        } else {
-            var workingDocker: String?
-            if let docker = await Installer.locate("docker"),
-               let info = try? await Installer.run(docker, ["info", "--format", "{{.ServerVersion}}"], timeout: 20), info.exitCode == 0 {
-                workingDocker = docker
-            }
-            choice = RuntimeSelection.choose(cpu: cpu, macOSMajor: macOSMajor, workingDocker: workingDocker)
+        let forced = RuntimeSelection.override(override) != nil
+        let choice = await RuntimeSelection.choose(
+            override: override,
+            remembered: defaults.string(forKey: "runtime").flatMap(RuntimeChoice.init(stored:)).flatMap { $0.programExists ? $0 : nil },
+            hasOlderColima: FileManager.default.fileExists(atPath: paths.colima.path), cpu: cpu, macOSMajor: macOSMajor
+        ) {
+            guard let docker = await Installer.locate("docker"),
+                  let info = try? await Installer.run(docker, ["info", "--format", "{{.ServerVersion}}"], timeout: 20),
+                  info.exitCode == 0 else { return nil }
+            return docker
         }
         runtimeChoice = choice
         var reachable = false

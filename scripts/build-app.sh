@@ -43,12 +43,10 @@ universal() {
 version_source=$(sh "$project_dir/scripts/write-version.sh" "$out/obj")
 universal mac-control-mcp "$project_dir"/Sources/MacControl/*.swift "$project_dir"/Sources/Shared/*.swift "$version_source"
 universal mac-exec-mcp "$project_dir"/Sources/MacExec/*.swift "$project_dir"/Sources/Shared/*.swift "$version_source"
-# The app shares the sandbox code with mac-exec, but not its server entry point.
-universal MacControl "$project_dir"/App/Sources/*.swift \
-  "$project_dir/Sources/MacExec/ProcessRunner.swift" \
-  "$project_dir/Sources/Shared/Cancellation.swift" \
-  "$project_dir/Sources/MacExec/ContainerRuntime.swift" \
-  "$project_dir/Sources/MacExec/PathGuard.swift"
+. "$project_dir/scripts/sources.sh"
+IFS=$line_break
+universal MacControl "$project_dir"/App/Sources/*.swift $(project_files "$app_sandbox_sources")
+unset IFS
 
 mkdir -p "$app/Contents/MacOS" "$app/Contents/Helpers" "$app/Contents/Resources/sandbox"
 cp "$project_dir/App/Info.plist" "$app/Contents/Info.plist"
