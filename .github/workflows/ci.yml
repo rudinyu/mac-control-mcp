@@ -1,0 +1,23 @@
+# Builds the servers and runs scripts/ci.sh: the unit tests, and the protocol tests, which need no permissions.
+# The sandbox tests are skipped, since the runner has no Docker. The release workflow runs this before releasing.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+
+      - name: Build and test
+        run: sh scripts/ci.sh

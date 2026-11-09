@@ -5,7 +5,7 @@
 #   NOTARY_KEY_P8_BASE64      base64 of the App Store Connect API key (AuthKey_<id>.p8)
 #   NOTARY_KEY_ID             its key ID
 #   NOTARY_ISSUER_ID          its issuer ID
-# Tests are not run here; they run on a Mac with sh scripts/ci.sh and the pre-commit hook before tagging.
+# The tests in ci.yml run first; nothing is signed or published unless they pass.
 # Without the secrets the tag is only checked, and the release is published from a Mac that holds the
 # Developer ID key: sh scripts/build-app.sh --sign, sh scripts/notarize.sh, then gh release create.
 name: Release
@@ -15,15 +15,24 @@ on:
     tags: ["v*"]
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
+  test:
+    uses: ./.github/workflows/ci.yml
+
   release:
+    needs: test
     runs-on: macos-latest
+    # Only this job holds the signing secrets and may publish.
+    permissions:
+      contents: write
     env:
       SIGNING: ${{ secrets.DEVELOPER_ID_P12_BASE64 != '' }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
 
       - name: Check that the tag matches the app version
         run: |
@@ -72,7 +81,8 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           dmg=$(ls .build/app/MacControl-*.dmg)
-          shasum -a 256 "$dmg" | tee "$dmg.sha256"
+          # The checksum file names only the DMG, so shasum -c works next to the download.
+          (cd "$(dirname "$dmg")" && shasum -a 256 "$(basename "$dmg")" | tee "$(basename "$dmg").sha256")
           gh release create "$GITHUB_REF_NAME" "$dmg" "$dmg.sha256" --title "MacControl ${GITHUB_REF_NAME#v}" --generate-notes
 
       - name: Remove the temporary keychain
