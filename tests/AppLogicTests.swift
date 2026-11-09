@@ -288,9 +288,12 @@ private enum AppLogicTests {
         check("turned off but still connected is a leftover", status(enabled: false, entry: true) == ClientStatus(state: .notNeeded("Turned off, but still connected"), leftover: true))
         check("turned off", status(enabled: false) == ClientStatus(state: .notNeeded("Turned off")))
         check("outside Applications, an entry is never called outdated", !status(ready: false, entry: true).stale && status(ready: false, entry: true).state.isDone)
+        check("outside Applications, a client without an entry connects later",
+              status(ready: false) == ClientStatus(state: .notNeeded("Connects once MacControl runs from Applications.")))
         check("outside Applications, a turned-off client still shows as turned off", status(ready: false, enabled: false, entry: true).leftover)
 
-        // The summary
+        // The summary. Texts are compared in English: the test has no localization bundle, so
+        // String(localized:) returns the key.
         func summary(_ steps: [StepState] = [.done("")], busy: Bool = false, checked: Bool = true, translocated: Bool = false,
                      stale: Int = 0, clients: Int = 1, permissions: Bool = false, oldServers: Bool = false, exec: Bool = true) -> Summary {
             Summary.of(steps: steps, busy: busy, hasChecked: checked, isTranslocated: translocated, staleClients: stale,
@@ -308,6 +311,10 @@ private enum AppLogicTests {
         check("old servers need a restart that Set Up cannot do", restart.level == .needsAction && !restart.setUpHelps)
         check("ready with the sandbox", summary(clients: 2) == Summary(level: .ready, text: "Ready: 2 clients connected, sandbox ready."))
         check("ready without the sandbox", summary(exec: false).text == "Ready: 1 client connected.")
+        check("ready with one client and the sandbox", summary().text == "Ready: 1 client connected, sandbox ready.")
+        check("busy alone is work in progress", summary(busy: true).level == .working)
+        check("one step left", summary([.done(""), .unknown]).text == "1 step left. Click Set Up.")
+        check("settings to apply to one client", summary(stale: 1).text == "Settings changed. Apply them to 1 client.")
 
         if failures > 0 {
             print("\(failures) app logic test(s) failed")

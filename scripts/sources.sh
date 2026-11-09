@@ -13,8 +13,9 @@ App/Sources/JSONEdit.swift
 App/Sources/RuntimePlan.swift
 App/Sources/SetupLogic.swift"
 
-# Prints each file of a list with the project folder in front, one per line. Split the output only at line
-# breaks, so a project folder with spaces stays one argument:  IFS=$line_break; cmd $(project_files "$list"); unset IFS
+# Prints each file of a list with the project folder in front, one per line. Use the output in a subshell that
+# splits only at line breaks and expands no patterns, so a project folder with spaces or * stays one argument:
+#   ( set -f; IFS=$line_break; cmd $(project_files "$list") )
 line_break='
 '
 project_files() {

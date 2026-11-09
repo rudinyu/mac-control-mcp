@@ -31,11 +31,12 @@ swiftc -module-cache-path "$cache" -parse-as-library \
   "$project_dir/Sources/MacExec/ContainerRuntime.swift" "$project_dir/Sources/MacExec/ProcessRunner.swift" \
   "$project_dir/Sources/Shared/Cancellation.swift" "$project_dir/tests/ContainerRuntimeTests.swift" \
   -o "$project_dir/.build/container-runtime-tests"
-IFS=$line_break
-swiftc -module-cache-path "$cache" -parse-as-library $(project_files "$app_logic_sources") \
-  "$project_dir/tests/AppLogicTests.swift" \
-  -o "$project_dir/.build/app-logic-tests"
-unset IFS
+(
+  set -f; IFS=$line_break
+  swiftc -module-cache-path "$cache" -parse-as-library $(project_files "$app_logic_sources") \
+    "$project_dir/tests/AppLogicTests.swift" \
+    -o "$project_dir/.build/app-logic-tests"
+)
 
 "$project_dir/.build/terminal-text-tests"
 "$project_dir/.build/session-lock-tests"
