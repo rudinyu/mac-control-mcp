@@ -274,9 +274,9 @@ A menu bar item from `mac_find` with `scope` `menubar` can be pressed without op
 | --- | --- | --- |
 | `mac_record_start` | `duration_seconds`, integer, 1 to 120, required | Starts recording the main display and returns a `recording_id` |
 | `mac_record_status` | `recording_id`, required | Reports `recording`, `ready`, or `failed`, with the file path once ready |
-| `mac_record_stop` | `recording_id`, required | Stops early |
+| `mac_record_stop` | `recording_id`, required | Stops early and keeps what was recorded |
 
-Only one recording runs at a time, across all clients; another client's `mac_record_start` fails with `BUSY` until it ends. When the client quits, its recording is stopped, and what was recorded may be lost. Files are QuickTime MOV, saved in `~/Movies/MacControl/` with MacControl.app, or in `.build/recordings/` inside the clone for a source build. Only your account can open the folder. Recordings have no audio. After `mac_record_stop`, the file may need a moment before `mac_record_status` reports `ready`.
+Only one recording runs at a time, across all clients; another client's `mac_record_start` fails with `BUSY` until it ends. When the client quits, its recording is stopped and kept. A recording runs about half a second longer than `duration_seconds`, since `screencapture` takes that long to start, and it stops at its time even if the server ends unexpectedly. Files are QuickTime MOV, saved in `~/Movies/MacControl/` with MacControl.app, or in `.build/recordings/` inside the clone for a source build. Only your account can open the folder. Recordings have no audio. `mac_record_stop` waits up to 10 seconds for the file to be finished and then returns the same fields as `mac_record_status`; if it times out, check `mac_record_status`, since the file may still be finished.
 
 ## Error results
 

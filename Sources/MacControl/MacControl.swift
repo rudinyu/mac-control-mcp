@@ -24,7 +24,7 @@ private let focusPollInterval: TimeInterval = 0.05
 // Gives the target app time to read the clipboard before the previous contents are restored.
 private let pasteSettleMicroseconds: useconds_t = 500_000
 
-// The screencapture process of the running recording, or 0. It is stopped when the server ends, so a recording
+// The process of the running recording (recordingScript), or 0. It is stopped when the server ends, so a recording
 // does not go on after the client has quit. A signal handler reads it, so it is a plain global.
 private var runningRecordingPID: pid_t = 0
 
@@ -90,6 +90,12 @@ private let waitMaxSeconds = 30.0
 private let waitDefaultSeconds = 10.0
 private let textLimit = 2000
 private let recordingSecondsLimit = 120
+
+// screencapture takes about half a second to start recording, so the time limit is that much longer, and a
+// recording is at least as long as asked for.
+private let recordingStartAllowance = 1
+// How long mac_record_stop waits for screencapture to finish the file.
+private let recordingStopSeconds = 10.0
 private let scrollLimit = 20
 private let mouseActions = ["move", "click", "double_click", "right_click", "drag"]
 private let windowActions = ["list", "focus", "move", "resize", "minimize", "restore"]
@@ -451,7 +457,7 @@ private final class MacControlServer: MCPServer {
             ],
             [
                 "name": "mac_record_stop",
-                "description": "Stop an active recording early. The recording may need a moment to finish writing before mac_record_status reports the file.",
+                "description": "Stop an active recording early and keep what was recorded. Waits for the file to be finished and returns the same fields as mac_record_status.",
                 "inputSchema": [
                     "type": "object",
                     "properties": ["recording_id": recordingID],
@@ -706,8 +712,11 @@ private final class MacControlServer: MCPServer {
         let id = UUID().uuidString
         let path = directory.appendingPathComponent("\(id).mov")
         let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/sbin/screencapture")
-        process.arguments = ["-x", "-m", "-v", "-V", String(Int(seconds)), path.path]
+        process.executableURL = URL(fileURLWithPath: "/bin/sh")
+        process.arguments = ["-c", recordingScript, "mac-control-recording", "/usr/sbin/screencapture", path.path,
+                             String(Int(seconds) + recordingStartAllowance)]
+        // Not the server's own standard input, which carries the client's requests.
+        process.standardInput = FileHandle.nullDevice
         process.standardOutput = FileHandle.nullDevice
         process.standardError = FileHandle.nullDevice
         process.terminationHandler = { ended in
@@ -790,12 +799,13 @@ private final class MacControlServer: MCPServer {
     private func recordStop(_ args: [String: Any]) throws -> [String: Any] {
         let (_, entry) = try recording(args)
         if entry.process.isRunning {
+            // The recording script passes this on to screencapture, which then finishes the file.
             entry.process.interrupt()
-            for _ in 0..<20 {
-                if !entry.process.isRunning { break }
-                usleep(50_000)
+            let deadline = Date().addingTimeInterval(recordingStopSeconds)
+            while entry.process.isRunning, Date() < deadline { usleep(50_000) }
+            if entry.process.isRunning {
+                throw ToolFailure("The recording did not stop within \(Int(recordingStopSeconds)) seconds. Check mac_record_status; it may still finish.", .timeout)
             }
-            if entry.process.isRunning { entry.process.terminate() }
         }
         return try recordStatus(args)
     }
@@ -2234,7 +2244,7 @@ private enum Main {
                   (try? data.write(to: URL(fileURLWithPath: arguments[1]), options: .atomic)) != nil else { exit(1) }
         default:
             // A client that quits closes standard input or sends one of these signals. Either way the running
-            // recording is stopped rather than left to run on. Child processes get default handlers on exec.
+            // recording is stopped rather than left to run on.
             // A write to a client that has gone fails instead of ending the server before it can stop it.
             signal(SIGPIPE, SIG_IGN)
             for number in [SIGTERM, SIGINT, SIGHUP] {
@@ -2247,7 +2257,7 @@ private enum Main {
             MacControlServer().serve()
             let pid = runningRecordingPID
             stopRunningRecording()
-            // Gives screencapture a moment to finish the file.
+            // Gives screencapture a moment to finish the file, which it keeps.
             let deadline = Date().addingTimeInterval(3)
             while pid > 0, kill(pid, 0) == 0, Date() < deadline { usleep(50_000) }
         }

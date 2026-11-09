@@ -22,6 +22,9 @@ swiftc -module-cache-path "$cache" -parse-as-library \
   "$project_dir/Sources/Shared/JSON.swift" "$project_dir/Sources/Shared/Cancellation.swift" "$project_dir/tests/SharedLockTests.swift" \
   -o "$project_dir/.build/shared-lock-tests"
 swiftc -module-cache-path "$cache" -parse-as-library \
+  "$project_dir/Sources/MacControl/RecordingScript.swift" "$project_dir/tests/RecordingScriptTests.swift" \
+  -o "$project_dir/.build/recording-script-tests"
+swiftc -module-cache-path "$cache" -parse-as-library \
   "$project_dir/Sources/MacControl/RefRegistry.swift" "$project_dir/tests/RefRegistryTests.swift" \
   -o "$project_dir/.build/ref-registry-tests"
 swiftc -module-cache-path "$cache" -parse-as-library \
@@ -43,6 +46,7 @@ swiftc -module-cache-path "$cache" -parse-as-library \
 "$project_dir/.build/failure-tests"
 "$project_dir/.build/ref-registry-tests"
 "$project_dir/.build/shared-lock-tests"
+"$project_dir/.build/recording-script-tests"
 sh "$project_dir/scripts/check-localization.sh"
 "$project_dir/.build/container-runtime-tests"
 "$project_dir/.build/app-logic-tests"
