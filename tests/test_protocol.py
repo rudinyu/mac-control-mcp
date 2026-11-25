@@ -60,7 +60,7 @@ class MCPProtocolTests(unittest.TestCase):
         self.assertEqual(
             {tool["name"] for tool in listed},
             {
-                "mac_status", "mac_screenshot", "mac_request_screen_recording", "mac_ui_tree", "mac_ax_action", "mac_find", "mac_wait", "mac_window", "mac_record_start",
+                "mac_status", "mac_curtain_status", "mac_screenshot", "mac_request_screen_recording", "mac_ui_tree", "mac_ax_action", "mac_find", "mac_wait", "mac_window", "mac_record_start",
                 "mac_record_status", "mac_record_stop", "mac_mouse", "mac_scroll", "mac_type_text", "mac_key",
             },
         )
@@ -77,7 +77,15 @@ class MCPProtocolTests(unittest.TestCase):
         self.assertIsInstance(info["display_available"], bool)
         self.assertIsInstance(info["screen_locked"], bool)
         self.assertEqual(info["screen_locked"], info["screen_locked_reason"] is not None)
+        self.assertIn(info["curtain_state"], {"off", "preparing", "active", "releasing", "fault"})
         self.assertIsInstance(info["main_display"]["width"], (int, float))
+
+        curtain_response = self.request("tools/call", {"name": "mac_curtain_status", "arguments": {}})
+        check_structured_result(self, listed["mac_curtain_status"], curtain_response["result"])
+        curtain = json.loads(curtain_response["result"]["content"][0]["text"])
+        self.assertIn(curtain["state"], {"off", "preparing", "active", "releasing", "fault"})
+        self.assertIsInstance(curtain["native_screen_locked"], bool)
+        self.assertIsInstance(curtain["display_count"], int)
 
     def test_03_invalid_actions_cannot_send_input(self):
         calls = [

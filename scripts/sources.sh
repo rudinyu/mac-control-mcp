@@ -3,7 +3,11 @@
 
 # The sandbox code the app shares with mac-exec, without mac-exec's server entry point.
 app_sandbox_sources="Sources/MacExec/ProcessRunner.swift
+Sources/Shared/CurtainState.swift
 Sources/Shared/Cancellation.swift
+Sources/Shared/JSON.swift
+Sources/MacControl/Failure.swift
+Sources/MacControl/SharedLock.swift
 Sources/MacExec/ContainerRuntime.swift
 Sources/MacExec/PathGuard.swift"
 

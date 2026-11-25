@@ -12,6 +12,7 @@ private func check(_ name: String, _ passed: Bool, _ detail: @autoclosure () -> 
 }
 
 private var fakeFile = ""
+private var fakeMarker = ""
 
 // Waits $FAKE_START_DELAY seconds before handling SIGINT, like a recorder that is still starting, and exits 3 at
 // once for a file named "fail". A program the script starts in the background begins with SIGINT ignored; this
@@ -19,14 +20,24 @@ private var fakeFile = ""
 private func fakeRecorder(_ arguments: [String]) -> Never {
     fakeFile = arguments.last ?? ""
     if (fakeFile as NSString).lastPathComponent == "fail" { exit(3) }
+    fakeMarker = fakeFile + ".running"
+    FileManager.default.createFile(atPath: fakeMarker, contents: Data())
+    let parent = getppid()
     if let delay = ProcessInfo.processInfo.environment["FAKE_START_DELAY"].flatMap(Double.init) {
         usleep(useconds_t(delay * 1_000_000))
     }
     signal(SIGINT) { _ in
         FileManager.default.createFile(atPath: fakeFile, contents: Data("stopped by SIGINT".utf8))
+        try? FileManager.default.removeItem(atPath: fakeMarker)
         exit(0)
     }
-    while true { pause() }
+    while true {
+        if getppid() != parent {
+            try? FileManager.default.removeItem(atPath: fakeMarker)
+            exit(0)
+        }
+        usleep(50_000)
+    }
 }
 
 private struct Run {
@@ -84,16 +95,13 @@ private enum RecordingScriptTests {
         check("a recorder still starting when asked to stop is stopped once it can be",
               starting.file == "stopped by SIGINT" && starting.seconds < 10, "\(starting)")
         // A signal that arrives before the script's first line, which sets the traps, ends the shell before it
-        // starts the recorder, so nothing is left recording.
+        // starts the recorder. The fake recorder removes its marker if its parent exits unexpectedly.
         let early = record("early", limit: 60, signal: SIGINT, after: 0)
-        let pgrep = Process()
-        pgrep.executableURL = URL(fileURLWithPath: "/usr/bin/pgrep")
-        pgrep.arguments = ["-f", folder.appendingPathComponent("early").path]
-        pgrep.standardOutput = FileHandle.nullDevice
-        try! pgrep.run()
-        pgrep.waitUntilExit()
+        let earlyMarker = folder.appendingPathComponent("early.running")
+        let markerDeadline = Date().addingTimeInterval(2)
+        while FileManager.default.fileExists(atPath: earlyMarker.path), Date() < markerDeadline { usleep(50_000) }
         check("a stop as the script starts ends it at once, with no recorder left running",
-              early.seconds < 10 && pgrep.terminationStatus == 1, "\(early)")
+              early.seconds < 10 && early.file == nil && !FileManager.default.fileExists(atPath: earlyMarker.path), "\(early)")
 
         let failed = record("fail", limit: 60)
         check("the recorder's exit status is the script's", failed.status == 3, "\(failed)")

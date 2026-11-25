@@ -14,6 +14,9 @@ swiftc -module-cache-path "$cache" -parse-as-library \
   "$project_dir/Sources/MacControl/SessionLock.swift" "$project_dir/tests/SessionLockTests.swift" \
   -o "$project_dir/.build/session-lock-tests"
 swiftc -module-cache-path "$cache" -parse-as-library \
+  "$project_dir/Sources/Shared/CurtainState.swift" "$project_dir/tests/CurtainStateTests.swift" \
+  -o "$project_dir/.build/curtain-state-tests"
+swiftc -module-cache-path "$cache" -parse-as-library \
   "$project_dir/Sources/MacControl/Failure.swift" "$project_dir/Sources/Shared/JSON.swift" \
   "$project_dir/tests/FailureTests.swift" \
   -o "$project_dir/.build/failure-tests"
@@ -43,6 +46,7 @@ swiftc -module-cache-path "$cache" -parse-as-library \
 
 "$project_dir/.build/terminal-text-tests"
 "$project_dir/.build/session-lock-tests"
+"$project_dir/.build/curtain-state-tests"
 "$project_dir/.build/failure-tests"
 "$project_dir/.build/ref-registry-tests"
 "$project_dir/.build/shared-lock-tests"

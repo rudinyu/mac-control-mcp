@@ -114,6 +114,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
 private struct MenuContent: View {
     @ObservedObject var model: SetupModel
+    @ObservedObject private var curtain = CurtainCoordinator.shared
     @Environment(\.openWindow) private var openWindow
     let delegate: AppDelegate
 
@@ -127,10 +128,21 @@ private struct MenuContent: View {
         if let update = model.availableUpdate {
             Button("Download Version \(update.version)…") { NSWorkspace.shared.open(update.page) }
         }
+        Section {
+            Label {
+                Text(verbatim: curtain.isActive ? "Active" : "Off")
+            } icon: {
+                Image(systemName: curtain.isActive ? "rectangle.slash" : "rectangle")
+            }
+            Text(verbatim: "Press Control-Option-Command-F12 to cover or restore the displays.")
+        } header: {
+            Text(verbatim: "Screen Curtain")
+        }
         Toggle("Open at Login", isOn: Binding(get: { model.openAtLogin }, set: { model.setOpenAtLogin($0) }))
         Divider()
         Button("Quit MacControl") { NSApp.terminate(nil) }
             .keyboardShortcut("q")
+            .disabled(curtain.isActive)
 
     }
 
@@ -163,6 +175,7 @@ private struct WindowOpenerCapture<Content: View>: View {
 struct MacControlApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var delegate
     @ObservedObject private var model = SetupModel.shared
+    @ObservedObject private var curtain = CurtainCoordinator.shared
 
     var body: some Scene {
         Window("MacControl", id: "setup") {
@@ -174,9 +187,12 @@ struct MacControlApp: App {
             MenuContent(model: model, delegate: delegate)
         } label: {
             WindowOpenerCapture(delegate: delegate) {
-                Image(systemName: model.summary.level == .ready || model.summary.level == .working
-                      ? "cursorarrow.rays" : "exclamationmark.triangle")
-                    .accessibilityLabel("MacControl: \(model.summary.text)")
+                Image(systemName: curtain.isActive ? "rectangle.slash" :
+                      (model.summary.level == .ready || model.summary.level == .working
+                       ? "cursorarrow.rays" : "exclamationmark.triangle"))
+                    .accessibilityLabel(curtain.isActive
+                                        ? Text(verbatim: "MacControl: Screen Curtain active")
+                                        : Text("MacControl: \(model.summary.text)"))
             }
         }
     }

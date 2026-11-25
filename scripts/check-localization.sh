@@ -14,6 +14,10 @@ swiftc -parse-as-library -module-cache-path "$project_dir/.build/module-cache" -
   "$project_dir"/App/Sources/*.swift \
   "$project_dir/Sources/MacExec/ProcessRunner.swift" \
   "$project_dir/Sources/Shared/Cancellation.swift" \
+  "$project_dir/Sources/Shared/CurtainState.swift" \
+  "$project_dir/Sources/Shared/JSON.swift" \
+  "$project_dir/Sources/MacControl/Failure.swift" \
+  "$project_dir/Sources/MacControl/SharedLock.swift" \
   "$project_dir/Sources/MacExec/ContainerRuntime.swift" \
   "$project_dir/Sources/MacExec/PathGuard.swift"
 python3 "$project_dir/tests/check_localization.py" "$out" "$project_dir"/App/Localization/*.json
