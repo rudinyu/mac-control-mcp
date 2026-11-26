@@ -650,7 +650,7 @@ private final class MacControlServer: MCPServer {
         let message: String
         switch phase {
         case .fault where check.problem != nil:
-            message = "\(check.problem!) Agent actions are paused; check MacControl.app at the Mac."
+            message = "\(check.problem ?? "") Agent actions are paused; check MacControl.app at the Mac."
         case .off:
             message = "The local Screen Curtain is off."
         case .active:
@@ -885,11 +885,13 @@ private final class MacControlServer: MCPServer {
     // owners and bounds are listed without Screen Recording permission.
     private func curtainCoverage() -> CurtainCoverage {
         var count: UInt32 = 0
-        guard CGGetActiveDisplayList(0, nil, &count) == .success, count > 0 else { return .none }
+        guard CGGetActiveDisplayList(0, nil, &count) == .success, count > 0 else { return .unknown }
         var displays = [CGDirectDisplayID](repeating: 0, count: Int(count))
-        guard CGGetActiveDisplayList(count, &displays, &count) == .success else { return .none }
+        guard CGGetActiveDisplayList(count, &displays, &count) == .success, count > 0 else { return .unknown }
         let displayBounds = displays.prefix(Int(count)).map { CGDisplayBounds($0) }
-        let windows = CGWindowListCopyWindowInfo([.optionOnScreenOnly], kCGNullWindowID) as? [[String: Any]] ?? []
+        guard let windows = CGWindowListCopyWindowInfo([.optionOnScreenOnly], kCGNullWindowID) as? [[String: Any]] else {
+            return .unknown
+        }
         let level = Int(CGWindowLevelForKey(.screenSaverWindow))
         var ownerIsApp: [pid_t: Bool] = [:]
         let panels: [CGRect] = windows.compactMap { window in

@@ -65,6 +65,8 @@ private enum CurtainStateTests {
         check("active without panels is a fault", evaluate(.active, .none) == .fault)
         check("locked session trusts active without panels", evaluate(.active, locked: true, .none) == .active)
         check("locked session still refuses a stale marker", evaluate(.active, stale: true, locked: true, .none) == .fault)
+        check("off is a fault when windows cannot be listed", evaluate(.off, .unknown) == .fault)
+        check("active is a fault when windows cannot be listed", evaluate(.active, .unknown) == .fault)
         check("preparing stays preparing", evaluate(.preparing, .partial) == .preparing)
         check("releasing stays releasing", evaluate(.releasing, .none) == .releasing)
         check("a recorded fault stays a fault without a problem",

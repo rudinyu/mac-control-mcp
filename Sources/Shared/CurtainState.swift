@@ -82,6 +82,7 @@ enum CurtainStateStore {
 
 // What the window server shows of MacControl.app's curtain panels on the displays in use.
 enum CurtainCoverage: Equatable {
+    case unknown
     case none
     case partial
     case full
@@ -101,7 +102,10 @@ struct CurtainCheck: Equatable {
             return CurtainCheck(phase: .fault, problem: "MacControl.app has not confirmed the curtain for over \(Int(CurtainStateStore.staleAfterSeconds)) seconds, so the displays may be uncovered.")
         }
         if sessionLocked { return CurtainCheck(phase: reading.phase, problem: nil) }
+        // The app shows its panels before it records active, and removes them before it records off.
         switch reading.phase {
+        case .off where coverage == .unknown, .active where coverage == .unknown:
+            return CurtainCheck(phase: .fault, problem: "The displays and windows could not be listed, so the curtain could not be checked.")
         case .off where coverage != .none:
             return CurtainCheck(phase: .fault, problem: "The curtain state says off, but curtain panels are still on the displays.")
         case .active where coverage != .full:
