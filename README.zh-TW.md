@@ -15,6 +15,7 @@
 | 工具 | 功能 |
 | --- | --- |
 | `mac_status` | 查看顯示器、前景 App 和權限狀態 |
+| `mac_curtain_status` | 回報 MacControl.app 蓋在所有顯示器上的本機螢幕簾幕狀態（見 [docs/USAGE.zh-TW.md](docs/USAGE.zh-TW.md#mac_curtain_status)） |
 | `mac_request_screen_recording` | 觸發 macOS 螢幕錄製權限提示 |
 | `mac_screenshot` | 擷取主螢幕，回傳 JPEG 給模型 |
 | `mac_ui_tree` | 讀取前景 App（或用 `app` 指定的 App）的輔助使用元素，遮蔽密碼欄位內容 |

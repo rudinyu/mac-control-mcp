@@ -43,7 +43,7 @@
 
 ### `mac_status`
 
-回報輔助使用和螢幕錄製權限、螢幕是否鎖定（`screen_locked` 和 `screen_locked_reason`）、前景 App、螢幕尺寸、游標位置，以及上一張截圖的尺寸。沒有參數，也不會改變任何東西。每個工作階段都先呼叫它。
+回報輔助使用和螢幕錄製權限、螢幕是否鎖定（`screen_locked` 和 `screen_locked_reason`）、螢幕簾幕狀態（`curtain_state`）、前景 App、螢幕尺寸、游標位置，以及上一張截圖的尺寸。沒有參數，也不會改變任何東西。每個工作階段都先呼叫它。
 
 ### `mac_screenshot`
 
@@ -267,6 +267,21 @@ App 停止回應時（例如忙碌或當掉），讀取會在那裡停止，不�
 {"ref": "k3f9q2.12", "action": "press", "app": "Calculator"}
 {"ref": "h5r1zb.4", "action": "set_value", "value": "Meeting notes", "app": "TextEdit"}
 ```
+
+### `mac_curtain_status`
+
+回報本機螢幕簾幕：`state`、`native_screen_locked`、`display_count`，以及說明代理為何暫停的 `message`（若有暫停）。沒有參數，也不會改變任何東西。
+
+螢幕簾幕是 MacControl.app 蓋在每部顯示器上的黑色遮罩，讓 Mac 旁邊的人看不到代理在做什麼。只有在 Mac 前的人能按 Control-Option-Command-F12 開關它，任何工具都不能。它只遮住畫面，不是 macOS 鎖定畫面，也不能阻止在 Mac 前的人使用電腦。
+
+| `state` | 代理能做什麼 |
+| --- | --- |
+| `off` | 全部，和沒有簾幕時相同 |
+| `active` | 透過輔助使用讀取及操作：`mac_ui_tree`、`mac_find`、`mac_wait`、`mac_ax_action`，以及 `mac_window` 的 `list`。截圖、錄影、滑鼠、捲動、鍵盤和變更視窗會以 `ACTION_UNSUPPORTED` 失敗 |
+| `preparing`、`releasing` | 簾幕正在蓋上或移除，只能用 `mac_status` 和 `mac_curtain_status`，其他工具以 `SETUP_PROBLEM` 失敗 |
+| `fault` | 同上，直到在 Mac 前的人再按一次快捷鍵。伺服器無法確認簾幕時也是這個狀態：MacControl.app 停止更新狀態、遮罩沒有蓋住每部顯示器，或記錄為關閉時仍有遮罩 |
+
+簾幕蓋上時正在進行的錄影仍可停止，但不會回傳檔案。macOS 鎖定期間，簾幕藏在鎖定畫面後，由鎖定本身的限制決定代理能做什麼。
 
 ### `mac_record_start`、`mac_record_status`、`mac_record_stop`
 

@@ -43,7 +43,7 @@ A successful call returns one JSON object, as the result's `structuredContent` a
 
 ### `mac_status`
 
-Reports Accessibility and Screen Recording permission, whether the screen is locked (`screen_locked` and `screen_locked_reason`), the frontmost app, the display size, the cursor position, and the size of the last screenshot. It takes no parameters and changes nothing. Call it first in every session.
+Reports Accessibility and Screen Recording permission, whether the screen is locked (`screen_locked` and `screen_locked_reason`), the Screen Curtain's state (`curtain_state`), the frontmost app, the display size, the cursor position, and the size of the last screenshot. It takes no parameters and changes nothing. Call it first in every session.
 
 ### `mac_screenshot`
 
@@ -267,6 +267,21 @@ A menu bar item from `mac_find` with `scope` `menubar` can be pressed without op
 {"ref": "k3f9q2.12", "action": "press", "app": "Calculator"}
 {"ref": "h5r1zb.4", "action": "set_value", "value": "Meeting notes", "app": "TextEdit"}
 ```
+
+### `mac_curtain_status`
+
+Reports the local Screen Curtain: `state`, `native_screen_locked`, `display_count`, and a `message` that says why agents are paused, if they are. It takes no parameters and changes nothing.
+
+The Screen Curtain is a black cover that MacControl.app puts over every display, so people near the Mac do not see what the agent is doing. Only the person at the Mac turns it on and off, by pressing Control-Option-Command-F12; no tool can. It is a visual cover, not the macOS lock screen, and does not stop someone at the Mac from using it.
+
+| `state` | What agents can do |
+| --- | --- |
+| `off` | Everything, as without a curtain |
+| `active` | Read and act through Accessibility: `mac_ui_tree`, `mac_find`, `mac_wait`, `mac_ax_action`, and `mac_window` `list`. Screenshots, recording, mouse, scroll, keyboard, and window changes fail with `ACTION_UNSUPPORTED` |
+| `preparing`, `releasing` | Nothing but `mac_status` and `mac_curtain_status`, while the curtain is being put up or taken down. Other tools fail with `SETUP_PROBLEM` |
+| `fault` | The same, until the person at the Mac presses the shortcut again. This also covers a curtain the server cannot confirm: MacControl.app has stopped updating it, its panels do not cover every display, or panels still show while the curtain is recorded as off |
+
+A recording that is running when the curtain goes up can still be stopped, but its file is not returned. While macOS is locked, the curtain stays hidden behind the lock screen, and the lock's own limits apply.
 
 ### `mac_record_start`, `mac_record_status`, `mac_record_stop`
 
