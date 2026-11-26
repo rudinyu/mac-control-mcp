@@ -103,6 +103,8 @@ private let keyModifiers = ["cmd", "shift", "alt", "ctrl"]
 // Tools that send input, and how long one waits while another client's server is sending input.
 private let inputTools: Set<String> = ["mac_mouse", "mac_scroll", "mac_type_text", "mac_key", "mac_ax_action", "mac_screenshot", "mac_record_start", "mac_request_screen_recording"]
 private let inputLockSeconds: TimeInterval = 10
+// MacControl.app, whose screen-saver-level windows are the Screen Curtain's panels.
+private let curtainAppBundleID = "tw.com.eaman.MacControl"
 
 // mac_key names of keys that do not type a character, and their virtual key codes, which are the same on
 // every layout.
@@ -198,7 +200,7 @@ private final class MacControlServer: MCPServer {
     let instructions = "Use mac_status first. Use mac_screenshot before mac_mouse; mouse coordinates use the most recent screenshot. When mac_ui_tree or mac_find gives the element a ref, mac_ax_action can act on it without coordinates or focus; use mac_wait to wait for the result. Pass app with the name of the app you are working in to mac_screenshot, mac_mouse, mac_scroll, mac_type_text, and mac_key, so input cannot land in another app. A failed call also returns JSON with code, delivered, and retry; follow retry, and check the app before repeating an action whose retry is \"check\", since it may have happened. A mac_ax_action result says whether it was verified; when verified is false, read the app before relying on the result. Ask the user before irreversible actions."
 
     private var lastCapture: CaptureSize?
-    private var lastCurtainPhase = CurtainStateStore.read()
+    private lazy var lastCurtainPhase = curtainCheck().phase
     private var recordings: [String: Recording] = [:]
     private let refs = RefRegistry()
     // Shared with the other mac-control servers of this user, which other clients start.
@@ -567,7 +569,7 @@ private final class MacControlServer: MCPServer {
                 throw ToolFailure("\(name) does not take \(unknown.sorted().joined(separator: ", ")). It accepts: \(accepted.isEmpty ? "no parameters" : accepted).")
             }
         }
-        let curtainPhase = CurtainStateStore.read()
+        let curtainPhase = curtainCheck().phase
         if curtainPhase != lastCurtainPhase {
             lastCapture = nil
             lastCurtainPhase = curtainPhase
@@ -628,7 +630,7 @@ private final class MacControlServer: MCPServer {
         let blockReason = inputBlockReason()
         info["screen_locked"] = blockReason != nil
         info["screen_locked_reason"] = blockReason ?? NSNull()
-        info["curtain_state"] = CurtainStateStore.read().rawValue
+        info["curtain_state"] = curtainCheck().phase.rawValue
         if let cursor = CGEvent(source: nil)?.location {
             info["cursor_display"] = ["x": cursor.x, "y": cursor.y]
             if let capture = lastCapture, capture.displayBounds.width > 0, capture.displayBounds.height > 0 {
@@ -642,13 +644,13 @@ private final class MacControlServer: MCPServer {
     }
 
     private func curtainStatus() -> [String: Any] {
-        let reading = CurtainStateStore.reading()
-        let phase = reading.phase
+        let check = curtainCheck()
+        let phase = check.phase
         let locked = inputBlockReason() != nil
         let message: String
         switch phase {
-        case .fault where reading.stale && reading.recorded != .fault:
-            message = "MacControl.app has not confirmed the curtain for over \(Int(CurtainStateStore.staleAfterSeconds)) seconds, so the displays may be uncovered. Agent actions are paused; check MacControl.app at the Mac."
+        case .fault where check.problem != nil:
+            message = "\(check.problem!) Agent actions are paused; check MacControl.app at the Mac."
         case .off:
             message = "The local Screen Curtain is off."
         case .active:
@@ -831,7 +833,7 @@ private final class MacControlServer: MCPServer {
 
     private func recordStatus(_ args: [String: Any]) throws -> [String: Any] {
         let (id, entry) = try recording(args)
-        if CurtainStateStore.read() != .off {
+        if curtainCheck().phase != .off {
             throw ToolFailure("Recording results are unavailable while the local Screen Curtain is active. Use mac_record_stop to end it without retrieving its file.", .unsupported)
         }
         let size = (try? FileManager.default.attributesOfItem(atPath: entry.path.path)[.size] as? NSNumber)?.intValue ?? 0
@@ -858,7 +860,7 @@ private final class MacControlServer: MCPServer {
                 throw ToolFailure("The recording did not stop within \(Int(recordingStopSeconds)) seconds. Check mac_record_status; it may still finish.", .timeout)
             }
         }
-        if CurtainStateStore.read() != .off {
+        if curtainCheck().phase != .off {
             return ["recording_id": id, "state": "failed", "duration_seconds": entry.duration,
                     "elapsed_seconds": Int(Date().timeIntervalSince(entry.startedAt)), "path": "", "bytes": 0,
                     "message": "The recording was stopped; its file is unavailable while the local Screen Curtain is active."]
@@ -871,12 +873,47 @@ private final class MacControlServer: MCPServer {
         sessionInputBlockReason(CGSessionCopyCurrentDictionary() as? [String: Any])
     }
 
+    private func curtainCheck() -> CurtainCheck {
+        let reading = CurtainStateStore.reading()
+        let locked = (CGSessionCopyCurrentDictionary() as? [String: Any])
+            .flatMap { ($0["CGSSessionScreenIsLocked"] as? NSNumber)?.boolValue } == true
+        return CurtainCheck.evaluate(reading, sessionLocked: locked, coverage: curtainCoverage())
+    }
+
+    // Finds MacControl.app's curtain panels through the window server, which no file write can change: windows
+    // at the screen saver level, owned by a running MacControl.app, each covering a whole display. Window
+    // owners and bounds are listed without Screen Recording permission.
+    private func curtainCoverage() -> CurtainCoverage {
+        var count: UInt32 = 0
+        guard CGGetActiveDisplayList(0, nil, &count) == .success, count > 0 else { return .none }
+        var displays = [CGDirectDisplayID](repeating: 0, count: Int(count))
+        guard CGGetActiveDisplayList(count, &displays, &count) == .success else { return .none }
+        let displayBounds = displays.prefix(Int(count)).map { CGDisplayBounds($0) }
+        let windows = CGWindowListCopyWindowInfo([.optionOnScreenOnly], kCGNullWindowID) as? [[String: Any]] ?? []
+        let level = Int(CGWindowLevelForKey(.screenSaverWindow))
+        var ownerIsApp: [pid_t: Bool] = [:]
+        let panels: [CGRect] = windows.compactMap { window in
+            guard (window[kCGWindowLayer as String] as? NSNumber)?.intValue == level,
+                  let pid = (window[kCGWindowOwnerPID as String] as? NSNumber)?.int32Value,
+                  let boundsInfo = window[kCGWindowBounds as String] as? NSDictionary,
+                  let bounds = CGRect(dictionaryRepresentation: boundsInfo) else { return nil }
+            let isApp = ownerIsApp[pid] ?? (NSRunningApplication(processIdentifier: pid)?.bundleIdentifier == curtainAppBundleID)
+            ownerIsApp[pid] = isApp
+            return isApp ? bounds : nil
+        }
+        if panels.isEmpty { return .none }
+        let covered = displayBounds.allSatisfy { display in
+            panels.contains { $0.insetBy(dx: -1, dy: -1).contains(display) }
+        }
+        return covered ? .full : .partial
+    }
+
     private func requireUnlocked() throws {
         if let reason = inputBlockReason() { throw ToolFailure(reason, .screenLocked) }
     }
 
     private func requireCurtainOff(_ operation: String) throws {
-        let phase = CurtainStateStore.read()
+        let phase = curtainCheck().phase
         guard phase == .off else {
             throw ToolFailure("\(operation.capitalized) are unavailable while the local Screen Curtain is \(phase.rawValue). Use Accessibility actions, or restore the desktop locally.", .unsupported)
         }

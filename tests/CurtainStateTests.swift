@@ -52,6 +52,28 @@ private enum CurtainStateTests {
         try Data("unexpected\n".utf8).write(to: file)
         check("invalid marker fails closed", phase() == .fault)
 
+        func evaluate(_ recorded: CurtainPhase, stale: Bool = false, locked: Bool = false,
+                      _ coverage: CurtainCoverage) -> CurtainPhase {
+            CurtainCheck.evaluate(CurtainReading(recorded: recorded, stale: stale), sessionLocked: locked,
+                                  coverage: coverage).phase
+        }
+        check("off without panels is off", evaluate(.off, .none) == .off)
+        check("off written while panels show is a fault", evaluate(.off, .full) == .fault)
+        check("off written while some panels show is a fault", evaluate(.off, .partial) == .fault)
+        check("active covering every display is active", evaluate(.active, .full) == .active)
+        check("active missing a display is a fault", evaluate(.active, .partial) == .fault)
+        check("active without panels is a fault", evaluate(.active, .none) == .fault)
+        check("locked session trusts active without panels", evaluate(.active, locked: true, .none) == .active)
+        check("locked session still refuses a stale marker", evaluate(.active, stale: true, locked: true, .none) == .fault)
+        check("preparing stays preparing", evaluate(.preparing, .partial) == .preparing)
+        check("releasing stays releasing", evaluate(.releasing, .none) == .releasing)
+        check("a recorded fault stays a fault without a problem",
+              CurtainCheck.evaluate(CurtainReading(recorded: .fault, stale: true), sessionLocked: false, coverage: .none)
+                == CurtainCheck(phase: .fault, problem: nil))
+        check("a forged off names the panels",
+              CurtainCheck.evaluate(CurtainReading(recorded: .off, stale: false), sessionLocked: false, coverage: .full)
+                .problem?.contains("still on the displays") == true)
+
         if failures > 0 { exit(1) }
         print("All curtain state tests passed")
     }

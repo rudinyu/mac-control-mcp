@@ -79,3 +79,35 @@ enum CurtainStateStore {
         }
     }
 }
+
+// What the window server shows of MacControl.app's curtain panels on the displays in use.
+enum CurtainCoverage: Equatable {
+    case none
+    case partial
+    case full
+}
+
+// The marker is a file any process of this user can write, so the servers do not take it on its own word:
+// a curtain the marker calls active must be on every display, and a marker that says off while curtain
+// panels are still showing is not believed. Writing the file can therefore never lift the curtain's limits
+// while the curtain is up. While the session is locked, the app hides its panels behind the lock screen,
+// and the marker alone decides.
+struct CurtainCheck: Equatable {
+    let phase: CurtainPhase
+    let problem: String?
+
+    static func evaluate(_ reading: CurtainReading, sessionLocked: Bool, coverage: CurtainCoverage) -> CurtainCheck {
+        if reading.stale && reading.recorded != .fault {
+            return CurtainCheck(phase: .fault, problem: "MacControl.app has not confirmed the curtain for over \(Int(CurtainStateStore.staleAfterSeconds)) seconds, so the displays may be uncovered.")
+        }
+        if sessionLocked { return CurtainCheck(phase: reading.phase, problem: nil) }
+        switch reading.phase {
+        case .off where coverage != .none:
+            return CurtainCheck(phase: .fault, problem: "The curtain state says off, but curtain panels are still on the displays.")
+        case .active where coverage != .full:
+            return CurtainCheck(phase: .fault, problem: "The curtain state says active, but curtain panels do not cover every display.")
+        default:
+            return CurtainCheck(phase: reading.phase, problem: nil)
+        }
+    }
+}
