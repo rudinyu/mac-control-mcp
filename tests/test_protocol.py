@@ -79,6 +79,10 @@ class MCPProtocolTests(unittest.TestCase):
         self.assertEqual(info["screen_locked"], info["screen_locked_reason"] is not None)
         self.assertIn(info["curtain_state"], {"off", "preparing", "active", "releasing", "fault"})
         self.assertIsInstance(info["main_display"]["width"], (int, float))
+        self.assertEqual([d["index"] for d in info["displays"]], list(range(1, len(info["displays"]) + 1)))
+        if info["displays"]:
+            self.assertTrue(info["displays"][0]["main"])
+            self.assertEqual(sum(d["main"] for d in info["displays"]), 1)
 
         curtain_response = self.request("tools/call", {"name": "mac_curtain_status", "arguments": {}})
         check_structured_result(self, listed["mac_curtain_status"], curtain_response["result"])
@@ -197,6 +201,10 @@ class MCPProtocolTests(unittest.TestCase):
             ("mac_ax_action", {"ref": "zzzzzz.1", "action": "press"}, "STALE_REF", "refresh"),
             ("mac_ax_action", {"ref": "3.12", "action": "press"}, "INVALID_ARGS", "fix"),
             ("mac_record_status", {"recording_id": "missing"}, "INVALID_ARGS", "fix"),
+            ("mac_screenshot", {"display": 0}, "INVALID_ARGS", "fix"),
+            ("mac_screenshot", {"display": 1.5}, "INVALID_ARGS", "fix"),
+            ("mac_screenshot", {"display": True}, "INVALID_ARGS", "fix"),
+            ("mac_screenshot", {"display": 99}, "INVALID_ARGS", "fix"),
         ]:
             with self.subTest(name=name, arguments=arguments):
                 details = self.error_details(name, arguments)

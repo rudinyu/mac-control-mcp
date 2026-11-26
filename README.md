@@ -17,7 +17,7 @@ The repository also contains **mac-exec**, a separate MCP server that runs comma
 | `mac_status` | Reports the display, the frontmost app, and permission status |
 | `mac_curtain_status` | Reports the local Screen Curtain, which MacControl.app draws over every display (see [docs/USAGE.md](docs/USAGE.md#mac_curtain_status)) |
 | `mac_request_screen_recording` | Triggers the macOS Screen Recording permission prompt |
-| `mac_screenshot` | Captures the main display and returns a JPEG to the model |
+| `mac_screenshot` | Captures the main display, or another one, and returns a JPEG to the model |
 | `mac_ui_tree` | Reads Accessibility elements of the frontmost app, or of the app named by `app`, with password field values hidden |
 | `mac_find` | Searches an app's windows for elements by role and text, returning refs |
 | `mac_wait` | Waits until a matching element appears or goes away |

@@ -3,6 +3,11 @@ import ApplicationServices
 import Carbon.HIToolbox
 import CoreGraphics
 import Foundation
+import ScreenCaptureKit
+
+private final class CaptureBox<T>: @unchecked Sendable {
+    var result: Result<T, Error>?
+}
 
 private struct CaptureSize {
     let width: Int
@@ -283,7 +288,7 @@ private final class MacControlServer: MCPServer {
         return [
             [
                 "name": "mac_status",
-                "description": "Report macOS Screen Recording and Accessibility permission, whether the screen is locked, the frontmost app, and main display geometry. Call this before controlling the Mac. While screen_locked is true, mouse and keyboard tools refuse to send input.",
+                "description": "Report macOS Screen Recording and Accessibility permission, whether the screen is locked, the frontmost app, and the displays. Call this before controlling the Mac. While screen_locked is true, mouse and keyboard tools refuse to send input.",
                 "inputSchema": ["type": "object", "properties": [:], "additionalProperties": false],
                 "outputSchema": output([
                     "screen_recording": boolean, "accessibility": boolean, "display_available": boolean,
@@ -291,10 +296,13 @@ private final class MacControlServer: MCPServer {
                     "curtain_state": ["type": "string", "enum": ["off", "preparing", "active", "releasing", "fault"]],
                     "screen_locked_reason": optionalString, "frontmost_app": optionalString, "frontmost_bundle_id": optionalString,
                     "main_display": rectangle.merging(["description": "In screen points."]) { $1 },
+                    "displays": ["type": "array", "description": "Displays in use, main display first; pass index as mac_screenshot display. Frames are in screen points.",
+                                 "items": ["type": "object", "properties": ["index": integer, "main": boolean, "x": number, "y": number, "width": number, "height": number],
+                                           "required": ["index", "main", "x", "y", "width", "height"]]],
                     "last_screenshot": ["type": ["object", "null"], "properties": ["width": integer, "height": integer],
                                         "description": "The image size of the last mac_screenshot."],
                     "cursor_display": point, "cursor_screenshot": point
-                ], required: ["screen_recording", "accessibility", "display_available", "screen_locked", "curtain_state", "main_display"]),
+                ], required: ["screen_recording", "accessibility", "display_available", "screen_locked", "curtain_state", "main_display", "displays"]),
                 "annotations": readsOnly
             ],
             [
@@ -309,11 +317,12 @@ private final class MacControlServer: MCPServer {
             ],
             [
                 "name": "mac_screenshot",
-                "description": "Capture the main display. The image is the size of the screen in points, the units of mac_window frames, and its x/y positions are the coordinates for mac_mouse until the next screenshot. Requires Screen Recording permission, and Accessibility permission when app is given.",
+                "description": "Capture the main display, or the display given by display. While the local Screen Curtain is active, the image leaves out the curtain and shows the desktop beneath it, and mouse input stays paused. The image is the size of the screen in points, the units of mac_window frames, and its x/y positions are the coordinates for mac_mouse until the next screenshot. Requires Screen Recording permission, and Accessibility permission when app is given.",
                 "inputSchema": [
                     "type": "object",
                     "properties": [
                         "app": appProperty("It is brought to the front first, which also brings back a window from the Stage Manager strip; an app with no open window may open a new one. mac_mouse with the same app then checks that its window has not changed since."),
+                        "display": ["type": "integer", "minimum": 1, "description": "The index of a display in mac_status displays. Default 1, the main display."],
                         "full_resolution": ["type": "boolean", "description": "Keep every pixel of a Retina display, for reading small text. The image is then larger, usually twice the width and height, and mac_mouse takes positions in it. Default false."]
                     ],
                     "additionalProperties": false
@@ -322,10 +331,11 @@ private final class MacControlServer: MCPServer {
                     "width": ["type": "integer", "description": "Image width, the x range for mac_mouse."],
                     "height": ["type": "integer", "description": "Image height, the y range for mac_mouse."],
                     "full_resolution": ["type": "boolean", "description": "The image keeps every pixel, so its positions are pixels, not screen points."],
+                    "display": ["type": "integer", "description": "The index of the captured display in mac_status displays."],
                     "front_app": optionalString,
                     "changed_during_capture": ["type": "boolean", "description": "The front app or its window changed during the capture; take another screenshot before clicking with app. Missing without Accessibility permission."],
                     "message": message
-                ], required: ["width", "height", "full_resolution", "front_app", "message"]),
+                ], required: ["width", "height", "full_resolution", "display", "front_app", "message"]),
                 "annotations": ["readOnlyHint": false, "destructiveHint": false, "idempotentHint": true, "openWorldHint": false]
             ],
             [
@@ -631,6 +641,11 @@ private final class MacControlServer: MCPServer {
         info["screen_locked"] = blockReason != nil
         info["screen_locked_reason"] = blockReason ?? NSNull()
         info["curtain_state"] = curtainCheck().phase.rawValue
+        info["displays"] = displayList().enumerated().map { index, id -> [String: Any] in
+            let frame = CGDisplayBounds(id)
+            return ["index": index + 1, "main": id == display, "x": frame.origin.x, "y": frame.origin.y,
+                    "width": frame.width, "height": frame.height]
+        }
         if let cursor = CGEvent(source: nil)?.location {
             info["cursor_display"] = ["x": cursor.x, "y": cursor.y]
             if let capture = lastCapture, capture.displayBounds.width > 0, capture.displayBounds.height > 0 {
@@ -654,7 +669,7 @@ private final class MacControlServer: MCPServer {
         case .off:
             message = "The local Screen Curtain is off."
         case .active:
-            message = "The local Screen Curtain is active. AX actions remain available while macOS is unlocked; visual capture and coordinate input are paused."
+            message = "The local Screen Curtain is active. AX actions remain available while macOS is unlocked, and mac_screenshot leaves out the curtain; coordinate input, keyboard input, and recording are paused."
         case .preparing, .releasing, .fault:
             message = "Curtain coverage is changing or could not be confirmed. Agent actions are paused; recover at the Mac."
         }
@@ -663,12 +678,31 @@ private final class MacControlServer: MCPServer {
     }
 
     private func screenshot(_ args: [String: Any]) throws -> [String: Any] {
-        try requireCurtainOff("screenshots")
+        // Under the curtain the panels are left out of the image, so the curtain may be active; any other phase
+        // has already been refused before the call got here.
+        let curtain = curtainCheck().phase
+        guard curtain == .off || curtain == .active else { try requireCurtainOff("screenshots"); return [:] }
         if let value = args["full_resolution"], !(value is Bool) { throw ToolFailure("full_resolution must be true or false.") }
         let fullResolution = args["full_resolution"] as? Bool ?? false
+        let displays = displayList()
+        var index = 1
+        if let value = args["display"] {
+            guard let number = value as? NSNumber, CFGetTypeID(number) != CFBooleanGetTypeID(),
+                  number.doubleValue.rounded() == number.doubleValue, number.intValue >= 1 else {
+                throw ToolFailure("display must be an integer from 1 to \(max(displays.count, 1)), an index in mac_status displays.")
+            }
+            index = number.intValue
+        }
         let target = try targetApp(args)
-        guard CGDisplayBounds(CGMainDisplayID()).width > 0 else {
+        guard let display = displays.first, CGDisplayBounds(display).width > 0 else {
             throw ToolFailure("No Mac display is available to this process. Run the MCP host in a logged-in local desktop session.", .setup)
+        }
+        guard index <= displays.count else {
+            throw ToolFailure("There is no display \(index); mac_status displays lists \(displays.count).")
+        }
+        let chosen = displays[index - 1]
+        if target != nil && curtain == .active {
+            throw ToolFailure("While the local Screen Curtain is active, mac_screenshot does not bring an app to the front. Call it without app.", .unsupported)
         }
         guard CGPreflightScreenCaptureAccess() else {
             throw ToolFailure("Screen Recording permission is missing. \(PermissionHint.screenRecording)", .permissionDenied)
@@ -681,6 +715,50 @@ private final class MacControlServer: MCPServer {
         let trusted = AXIsProcessTrusted()
         let focused = trusted ? focusedApp() : nil
         let frame = focused.flatMap(windowFrame)
+        let bounds = CGDisplayBounds(chosen)
+        let captured: NSBitmapImageRep, data: Data
+        if curtain == .off && chosen == display {
+            (captured, data) = try captureMainDisplay()
+        } else {
+            (captured, data) = try captureLeavingOutCurtain(chosen, fullResolution: fullResolution, curtain: curtain)
+        }
+        // By default the image is scaled to the screen's size in points: a quarter of the data on a Retina
+        // display, under the size clients shrink images to, and in the units of window frames.
+        let (image, jpeg) = try fullResolution ? (captured, data) : scaled(captured, data, to: bounds.size)
+        let after = trusted ? focusedApp() : nil
+        let steady = after?.processIdentifier == focused?.processIdentifier && after.flatMap(windowFrame) == frame
+        lastCapture = CaptureSize(width: image.pixelsWide, height: image.pixelsHigh, displayBounds: bounds,
+                                  focusedPID: steady ? focused?.processIdentifier : nil, windowFrame: steady ? frame : nil)
+        let units = fullResolution ? "pixels" : "screen points"
+        let name = chosen == display ? "Main display" : "Display \(index)"
+        var description = "\(name) screenshot: \(image.pixelsWide) x \(image.pixelsHigh) \(units). Use these coordinates with mac_mouse."
+        if curtain == .active {
+            description = "\(name) screenshot beneath the local Screen Curtain: \(image.pixelsWide) x \(image.pixelsHigh) \(units). Mouse input stays paused while the curtain is active; act through mac_ax_action."
+        }
+        if let focused { description += " \(focused.localizedName ?? "An app") is in front." }
+        if trusted, !steady { description += " The front app or its window changed during the capture; take another screenshot before clicking with app." }
+        var info: [String: Any] = ["width": image.pixelsWide, "height": image.pixelsHigh, "full_resolution": fullResolution,
+                                   "display": index, "front_app": focused?.localizedName ?? NSNull(), "message": description]
+        // Only known with Accessibility permission.
+        if trusted { info["changed_during_capture"] = !steady }
+        return toolResult(info, images: [["type": "image", "data": jpeg.base64EncodedString(), "mimeType": "image/jpeg"]])
+    }
+
+    // Displays in use, main display first, then by position; a display that mirrors another is left out.
+    private func displayList() -> [CGDirectDisplayID] {
+        var count: UInt32 = 0
+        guard CGGetActiveDisplayList(0, nil, &count) == .success, count > 0 else { return [] }
+        var ids = [CGDirectDisplayID](repeating: 0, count: Int(count))
+        guard CGGetActiveDisplayList(count, &ids, &count) == .success else { return [] }
+        let main = CGMainDisplayID()
+        return ids.prefix(Int(count)).filter { CGDisplayMirrorsDisplay($0) == kCGNullDirectDisplay }.sorted { a, b in
+            if (a == main) != (b == main) { return a == main }
+            let fa = CGDisplayBounds(a), fb = CGDisplayBounds(b)
+            return (fa.minX, fa.minY) < (fb.minX, fb.minY)
+        }
+    }
+
+    private func captureMainDisplay() throws -> (NSBitmapImageRep, Data) {
         let path = FileManager.default.temporaryDirectory.appendingPathComponent("mac-control-\(UUID().uuidString).jpg")
         defer { try? FileManager.default.removeItem(at: path) }
         let process = Process()
@@ -697,23 +775,75 @@ private final class MacControlServer: MCPServer {
               let captured = NSBitmapImageRep(data: data) else {
             throw ToolFailure("Screen capture failed. Check Screen Recording permission and that this process runs in a logged-in Mac desktop session.", .setup)
         }
-        let bounds = CGDisplayBounds(CGMainDisplayID())
-        // By default the image is scaled to the screen's size in points: a quarter of the data on a Retina
-        // display, under the size clients shrink images to, and in the units of window frames.
-        let (image, jpeg) = try fullResolution ? (captured, data) : scaled(captured, data, to: bounds.size)
-        let after = trusted ? focusedApp() : nil
-        let steady = after?.processIdentifier == focused?.processIdentifier && after.flatMap(windowFrame) == frame
-        lastCapture = CaptureSize(width: image.pixelsWide, height: image.pixelsHigh, displayBounds: bounds,
-                                  focusedPID: steady ? focused?.processIdentifier : nil, windowFrame: steady ? frame : nil)
-        let units = fullResolution ? "pixels" : "screen points"
-        var description = "Main display screenshot: \(image.pixelsWide) x \(image.pixelsHigh) \(units). Use these coordinates with mac_mouse."
-        if let focused { description += " \(focused.localizedName ?? "An app") is in front." }
-        if trusted, !steady { description += " The front app or its window changed during the capture; take another screenshot before clicking with app." }
-        var info: [String: Any] = ["width": image.pixelsWide, "height": image.pixelsHigh, "full_resolution": fullResolution,
-                                   "front_app": focused?.localizedName ?? NSNull(), "message": description]
-        // Only known with Accessibility permission.
-        if trusted { info["changed_during_capture"] = !steady }
-        return toolResult(info, images: [["type": "image", "data": jpeg.base64EncodedString(), "mimeType": "image/jpeg"]])
+        return (captured, data)
+    }
+
+    // Captures a display with ScreenCaptureKit, leaving out MacControl.app's curtain panels, at full resolution
+    // or at the display's size in points. Under the curtain, an image that still shows only the curtain, or a
+    // curtain that changed during the capture, is refused rather than returned.
+    private func captureLeavingOutCurtain(_ id: CGDirectDisplayID, fullResolution: Bool,
+                                          curtain: CurtainPhase) throws -> (NSBitmapImageRep, Data) {
+        let level = Int(CGWindowLevelForKey(.screenSaverWindow))
+        let result = try awaitCapture { () async throws -> (CGImage, Int) in
+            let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
+            guard let display = content.displays.first(where: { $0.displayID == id }) else {
+                throw ToolFailure("The display went away during the capture; check mac_status displays.", .internalError)
+            }
+            let panels = content.windows.filter {
+                $0.owningApplication?.bundleIdentifier == curtainAppBundleID && $0.windowLayer == level
+            }
+            let configuration = SCStreamConfiguration()
+            let mode = CGDisplayCopyDisplayMode(id)
+            configuration.width = fullResolution ? (mode?.pixelWidth ?? display.width) : display.width
+            configuration.height = fullResolution ? (mode?.pixelHeight ?? display.height) : display.height
+            configuration.showsCursor = false
+            let image = try await SCScreenshotManager.captureImage(
+                contentFilter: SCContentFilter(display: display, excludingWindows: panels), configuration: configuration)
+            return (image, panels.count)
+        }
+        let (image, panelCount) = result
+        if curtain == .active {
+            guard panelCount > 0, curtainCheck().phase == .active else {
+                throw ToolFailure("The local Screen Curtain changed during the capture; no image was returned. Check mac_curtain_status, then try again.", .internalError)
+            }
+            guard !isAllDark(image) else {
+                throw ToolFailure("The capture beneath the local Screen Curtain came back black, so it may show the curtain instead of the desktop; no image was returned.", .internalError)
+            }
+        }
+        let rep = NSBitmapImageRep(cgImage: image)
+        guard let jpeg = rep.representation(using: .jpeg, properties: [.compressionFactor: 0.8]) else {
+            throw ToolFailure("The screenshot could not be encoded.", .internalError)
+        }
+        return (rep, jpeg)
+    }
+
+    // Runs an async capture from this synchronous server, giving up after 10 seconds.
+    private func awaitCapture<T>(_ work: @escaping @Sendable () async throws -> T) throws -> T {
+        let done = DispatchSemaphore(value: 0)
+        let box = CaptureBox<T>()
+        Task.detached {
+            do { box.result = .success(try await work()) } catch { box.result = .failure(error) }
+            done.signal()
+        }
+        guard done.wait(timeout: .now() + 10) == .success, let result = box.result else {
+            throw ToolFailure("Screen capture did not finish within 10 seconds.", .timeout)
+        }
+        if case .failure(let error) = result, !(error is ToolFailure) {
+            throw ToolFailure("Screen capture failed: \(error.localizedDescription). Check Screen Recording permission.", .setup)
+        }
+        return try result.get()
+    }
+
+    // True when every pixel of a small copy of the image is close to black.
+    private func isAllDark(_ image: CGImage) -> Bool {
+        let side = 32
+        guard let context = CGContext(data: nil, width: side, height: side, bitsPerComponent: 8, bytesPerRow: side * 4,
+                                      space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue),
+              let pixels = context.data else { return false }
+        context.draw(image, in: CGRect(x: 0, y: 0, width: side, height: side))
+        let bytes = pixels.bindMemory(to: UInt8.self, capacity: side * side * 4)
+        for i in 0..<(side * side) where bytes[i * 4] > 8 || bytes[i * 4 + 1] > 8 || bytes[i * 4 + 2] > 8 { return false }
+        return true
     }
 
     // The capture redrawn at size, as JPEG. A capture already that size or smaller is kept as it is.
@@ -917,7 +1047,7 @@ private final class MacControlServer: MCPServer {
     private func requireCurtainOff(_ operation: String) throws {
         let phase = curtainCheck().phase
         guard phase == .off else {
-            throw ToolFailure("\(operation.capitalized) are unavailable while the local Screen Curtain is \(phase.rawValue). Use Accessibility actions, or restore the desktop locally.", .unsupported)
+            throw ToolFailure("The local Screen Curtain is \(phase.rawValue), so \(operation) cannot be used. Use Accessibility actions, or restore the desktop at the Mac.", .unsupported)
         }
     }
 

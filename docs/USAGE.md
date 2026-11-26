@@ -43,15 +43,16 @@ A successful call returns one JSON object, as the result's `structuredContent` a
 
 ### `mac_status`
 
-Reports Accessibility and Screen Recording permission, whether the screen is locked (`screen_locked` and `screen_locked_reason`), the Screen Curtain's state (`curtain_state`), the frontmost app, the display size, the cursor position, and the size of the last screenshot. It takes no parameters and changes nothing. Call it first in every session.
+Reports Accessibility and Screen Recording permission, whether the screen is locked (`screen_locked` and `screen_locked_reason`), the Screen Curtain's state (`curtain_state`), the frontmost app, the main display's size, every display in use (`displays`), the cursor position, and the size of the last screenshot. It takes no parameters and changes nothing. Call it first in every session.
 
 ### `mac_screenshot`
 
-Captures the main display as a JPEG, scaled to the screen's size in points. The image size sets the coordinate space for `mac_mouse` until the next screenshot, and the result's `width`, `height`, and `full_resolution` say what it is. It needs Screen Recording permission.
+Captures the main display, or another one, as a JPEG, scaled to the screen's size in points. The image size sets the coordinate space for `mac_mouse` until the next screenshot, and the result's `width`, `height`, `full_resolution`, and `display` say what it is. It needs Screen Recording permission. While the [Screen Curtain](#mac_curtain_status) is active, the image leaves out the curtain and shows the desktop beneath it; `app` is refused then, and mouse input stays paused.
 
 | Parameter | Type | Notes |
 | --- | --- | --- |
 | `app` | string | App to bring to the front before capturing, as for `mac_type_text`. Also brings its window back from the Stage Manager strip; an app with no open window may open a new one. Needs Accessibility permission. |
+| `display` | integer | The `index` of a display in `mac_status` `displays`, which lists the main display first. Default 1. `mac_mouse` then takes positions on that display. |
 | `full_resolution` | boolean | Keep every pixel of a Retina display, for reading small text. The image is about four times the data, and `mac_mouse` takes positions in its pixels. Default false. |
 
 ### `mac_request_screen_recording`
@@ -277,7 +278,7 @@ The Screen Curtain is a black cover that MacControl.app puts over every display,
 | `state` | What agents can do |
 | --- | --- |
 | `off` | Everything, as without a curtain |
-| `active` | Read and act through Accessibility: `mac_ui_tree`, `mac_find`, `mac_wait`, `mac_ax_action`, and `mac_window` `list`. Screenshots, recording, mouse, scroll, keyboard, and window changes fail with `ACTION_UNSUPPORTED` |
+| `active` | Read and act through Accessibility: `mac_ui_tree`, `mac_find`, `mac_wait`, `mac_ax_action`, and `mac_window` `list`. `mac_screenshot` without `app` shows the desktop beneath the curtain. Recording, mouse, scroll, keyboard, and window changes fail with `ACTION_UNSUPPORTED` |
 | `preparing`, `releasing` | Nothing but `mac_status` and `mac_curtain_status`, while the curtain is being put up or taken down. Other tools fail with `SETUP_PROBLEM` |
 | `fault` | The same, until the person at the Mac presses the shortcut again. This also covers a curtain the server cannot confirm: MacControl.app has stopped updating it, its panels do not cover every display, or panels still show while the curtain is recorded as off |
 

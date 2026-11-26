@@ -43,15 +43,16 @@
 
 ### `mac_status`
 
-回報輔助使用和螢幕錄製權限、螢幕是否鎖定（`screen_locked` 和 `screen_locked_reason`）、螢幕簾幕狀態（`curtain_state`）、前景 App、螢幕尺寸、游標位置，以及上一張截圖的尺寸。沒有參數，也不會改變任何東西。每個工作階段都先呼叫它。
+回報輔助使用和螢幕錄製權限、螢幕是否鎖定（`screen_locked` 和 `screen_locked_reason`）、螢幕簾幕狀態（`curtain_state`）、前景 App、主螢幕尺寸、使用中的所有顯示器（`displays`）、游標位置，以及上一張截圖的尺寸。沒有參數，也不會改變任何東西。每個工作階段都先呼叫它。
 
 ### `mac_screenshot`
 
-把主螢幕擷取成 JPEG，縮放成螢幕以點為單位的大小。影像尺寸就是下一次截圖之前 `mac_mouse` 使用的座標系，結果裡的 `width`、`height` 和 `full_resolution` 會說明是哪一種。需要螢幕錄製權限。
+把主螢幕或其他顯示器擷取成 JPEG，縮放成螢幕以點為單位的大小。影像尺寸就是下一次截圖之前 `mac_mouse` 使用的座標系，結果裡的 `width`、`height`、`full_resolution` 和 `display` 會說明是哪一種。需要螢幕錄製權限。[螢幕簾幕](#mac_curtain_status)開啟時，影像會排除簾幕，顯示簾幕底下的桌面；這時不接受 `app`，滑鼠輸入仍暫停。
 
 | 參數 | 型別 | 說明 |
 | --- | --- | --- |
 | `app` | 字串 | 截圖前要切到前景的 App，用法同 `mac_type_text`。也會把它的視窗從「幕前調度」側邊帶回來；沒有開啟視窗的 App 可能會開一個新視窗。需要輔助使用權限。 |
+| `display` | 整數 | `mac_status` 的 `displays` 裡顯示器的 `index`，主螢幕排第一。預設 1。之後 `mac_mouse` 使用該顯示器上的位置。 |
 | `full_resolution` | 布林 | 保留 Retina 螢幕的每個像素，用來看清小字。資料量約為四倍，`mac_mouse` 這時使用它的像素位置。預設 false。 |
 
 ### `mac_request_screen_recording`
@@ -277,7 +278,7 @@ App 停止回應時（例如忙碌或當掉），讀取會在那裡停止，不�
 | `state` | 代理能做什麼 |
 | --- | --- |
 | `off` | 全部，和沒有簾幕時相同 |
-| `active` | 透過輔助使用讀取及操作：`mac_ui_tree`、`mac_find`、`mac_wait`、`mac_ax_action`，以及 `mac_window` 的 `list`。截圖、錄影、滑鼠、捲動、鍵盤和變更視窗會以 `ACTION_UNSUPPORTED` 失敗 |
+| `active` | 透過輔助使用讀取及操作：`mac_ui_tree`、`mac_find`、`mac_wait`、`mac_ax_action`，以及 `mac_window` 的 `list`。不帶 `app` 的 `mac_screenshot` 會顯示簾幕底下的桌面。錄影、滑鼠、捲動、鍵盤和變更視窗會以 `ACTION_UNSUPPORTED` 失敗 |
 | `preparing`、`releasing` | 簾幕正在蓋上或移除，只能用 `mac_status` 和 `mac_curtain_status`，其他工具以 `SETUP_PROBLEM` 失敗 |
 | `fault` | 同上，直到在 Mac 前的人再按一次快捷鍵。伺服器無法確認簾幕時也是這個狀態：MacControl.app 停止更新狀態、遮罩沒有蓋住每部顯示器，或記錄為關閉時仍有遮罩 |
 
