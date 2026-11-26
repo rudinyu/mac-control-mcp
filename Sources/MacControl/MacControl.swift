@@ -40,6 +40,10 @@ private let pasteSettleMicroseconds: useconds_t = 500_000
 // back after a moment.
 private let backgroundKeyMicroseconds: useconds_t = 5_000
 private let backgroundSettleMicroseconds: useconds_t = 300_000
+// The most UTF-16 units one key event carries; a character longer than this cannot be typed in the background.
+private let backgroundUnitsPerEvent = 20
+// How much of a field's text is read back to check background input.
+private let backgroundValueLimit = 1_000_000
 // Focused roles that take typed text, so background keys cannot press a button or toggle a box instead.
 private let backgroundTextRoles: Set<String> = ["AXTextField", "AXTextArea", "AXComboBox", "AXSearchField"]
 
@@ -547,7 +551,7 @@ private final class MacControlServer: MCPServer {
                     "type": "object",
                     "properties": [
                         "text": ["type": "string", "maxLength": textLimit, "description": "The text to insert."],
-                        "app": appProperty("It is brought to the front first, and nothing is pasted unless it is still in front. Without app or window, nothing is pasted while the app running this agent is in front."),
+                        "app": appProperty("It is brought to the front first, and nothing is pasted unless it is still in front; with background it stays where it is. Without app or window, nothing is pasted while the app running this agent is in front."),
                         "window": keyboardWindow,
                         "background": backgroundProperty
                     ],
@@ -564,9 +568,9 @@ private final class MacControlServer: MCPServer {
                     "properties": [
                         "key": ["type": "string", "description": "A character typed by one key without modifiers on the current keyboard layout, such as a, 7, or /, found by what it types, so cmd+z works on AZERTY and Dvorak too; or one of \(namedKeys.joined(separator: ", ")). delete is forward delete."],
                         "modifiers": ["type": "array", "items": ["type": "string", "enum": keyModifiers], "uniqueItems": true, "description": "Keys to hold down while pressing key."],
-                        "app": appProperty("It is brought to the front first, and no key is sent unless it is still in front. Without app or window, no key is sent while the app running this agent is in front."),
+                        "app": appProperty("It is brought to the front first, and no key is sent unless it is still in front; with background it stays where it is. Without app or window, no key is sent while the app running this agent is in front."),
                         "window": keyboardWindow,
-                        "background": backgroundProperty.merging(["description": "Press the key in app's focused text field without bringing app to the front, posting to its process instead of the system. Requires app, not window, and takes no modifier but shift: apps handle shortcuts only while in front, so use mac_find with scope menubar and mac_ax_action for menu commands. Nothing is sent unless that field takes text and is not a password field. Works while the local Screen Curtain is active. Default false."]) { $1 }
+                        "background": backgroundProperty.merging(["description": "Press the key in app's focused text field without bringing app to the front, posting to its process instead of the system. As in front, enter or return may submit a form or send a message. Requires app, not window, and takes no modifier but shift: apps handle shortcuts only while in front, so use mac_find with scope menubar and mac_ax_action for menu commands. Nothing is sent unless that field takes text and is not a password field. Works while the local Screen Curtain is active. Default false."]) { $1 }
                     ],
                     "required": ["key"], "additionalProperties": false
                 ],
@@ -1425,29 +1429,39 @@ private final class MacControlServer: MCPServer {
         }
         if background {
             let (target, field) = try backgroundTarget(args)
-            // Up to 20 UTF-16 units go in one key event, split only between characters.
+            // Up to backgroundUnitsPerEvent UTF-16 units go in one key event, split only between characters.
             var chunks: [String] = [], chunk = ""
             for character in value {
-                if chunk.utf16.count + String(character).utf16.count > 20, !chunk.isEmpty { chunks.append(chunk); chunk = "" }
+                let units = String(character).utf16.count
+                guard units <= backgroundUnitsPerEvent else {
+                    throw ToolFailure("The text has a character of \(units) UTF-16 units, such as a long emoji sequence, which background input cannot type whole; no input was sent. Leave out background, or split the text around it.")
+                }
+                if chunk.utf16.count + units > backgroundUnitsPerEvent, !chunk.isEmpty { chunks.append(chunk); chunk = "" }
                 chunk.append(character)
             }
             if !chunk.isEmpty { chunks.append(chunk) }
-            var events: [CGEvent] = []
+            var events: [(down: CGEvent, up: CGEvent)] = []
             for piece in chunks {
                 var units = Array(piece.utf16)
-                for down in [true, false] {
-                    guard let event = CGEvent(keyboardEventSource: nil, virtualKey: 0, keyDown: down) else {
-                        throw ToolFailure("Could not create a keyboard event; no input was sent.", .internalError)
-                    }
+                guard let down = CGEvent(keyboardEventSource: nil, virtualKey: 0, keyDown: true),
+                      let up = CGEvent(keyboardEventSource: nil, virtualKey: 0, keyDown: false) else {
+                    throw ToolFailure("Could not create a keyboard event; no input was sent.", .internalError)
+                }
+                for event in [down, up] {
                     event.flags = []
                     event.keyboardSetUnicodeString(stringLength: units.count, unicodeString: &units)
-                    events.append(event)
                 }
+                events.append((down, up))
             }
             try cancellation.check()
-            for event in events { event.postToPid(target.processIdentifier); usleep(backgroundKeyMicroseconds) }
+            // Focus is checked again before every piece, so text never follows focus into another field.
+            for (index, pair) in events.enumerated() {
+                try requireBackgroundFocus(target, field, sent: index * backgroundUnitsPerEvent)
+                pair.down.postToPid(target.processIdentifier); usleep(backgroundKeyMicroseconds)
+                pair.up.postToPid(target.processIdentifier); usleep(backgroundKeyMicroseconds)
+            }
             usleep(backgroundSettleMicroseconds)
-            let after = shortString(attribute(field.element, kAXValueAttribute as CFString), limit: 1_000_000) ?? ""
+            let after = backgroundState(field.element).value ?? ""
             let shown = after != (field.value ?? "") && after.contains(value)
             let name = target.localizedName ?? "the app"
             return ["characters": value.count, "app": name, "window": field.window ?? NSNull(), "background": true, "verified": shown,
@@ -1543,6 +1557,7 @@ private final class MacControlServer: MCPServer {
             down.flags = names.isEmpty ? [] : .maskShift
             up.flags = down.flags
             try cancellation.check()
+            try requireBackgroundFocus(target, field, sent: 0)
             down.postToPid(target.processIdentifier)
             usleep(backgroundKeyMicroseconds)
             up.postToPid(target.processIdentifier)
@@ -1615,8 +1630,20 @@ private final class MacControlServer: MCPServer {
         return (target, BackgroundField(element: element, role: role, value: state.value, selection: state.selection, window: window))
     }
 
+    // The field checked before sending must still have focus; otherwise nothing more is sent.
+    private func requireBackgroundFocus(_ target: NSRunningApplication, _ field: BackgroundField, sent: Int) throws {
+        let appElement = AXUIElementCreateApplication(target.processIdentifier)
+        AXUIElementSetMessagingTimeout(appElement, axMessagingTimeout)
+        guard let now = elementAttribute(appElement, kAXFocusedUIElementAttribute as CFString), CFEqual(now, field.element) else {
+            let name = target.localizedName ?? "The app"
+            throw ToolFailure(sent == 0 ? "\(name)'s focus moved away from the field; no input was sent."
+                                        : "\(name)'s focus moved away from the field after part of the text was typed; the rest was not sent. Read the field before typing again.",
+                              sent == 0 ? .focusLost : .outcomeUnknown)
+        }
+    }
+
     private func backgroundState(_ element: AXUIElement) -> (value: String?, selection: CFRange?) {
-        let value = shortString(attribute(element, kAXValueAttribute as CFString), limit: 1_000_000)
+        let value = shortString(attribute(element, kAXValueAttribute as CFString), limit: backgroundValueLimit)
         var range = CFRange()
         guard let raw = attribute(element, kAXSelectedTextRangeAttribute as CFString), CFGetTypeID(raw) == AXValueGetTypeID(),
               AXValueGetValue(raw as! AXValue, .cfRange, &range) else { return (value, nil) }
