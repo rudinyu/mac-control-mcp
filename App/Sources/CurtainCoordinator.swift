@@ -19,11 +19,14 @@ final class CurtainCoordinator: ObservableObject {
     private let inputLock = SharedLock("input")
     private let recordingLock = SharedLock("recording")
     private var hiddenForNativeLock = false
+    private var lastHeartbeat = Date.distantPast
 
     var isActive: Bool { phase == .active }
 
     private init() {
-        phase = CurtainStateStore.read()
+        // The recorded phase, not the checked one: after a crash the marker is stale, and the curtain
+        // that was on should come back instead of being left as a fault.
+        phase = CurtainStateStore.reading().recorded
         installRecoveryHotKey()
         screenObserver = NotificationCenter.default.addObserver(
             forName: NSApplication.didChangeScreenParametersNotification, object: nil, queue: .main
@@ -31,7 +34,10 @@ final class CurtainCoordinator: ObservableObject {
             Task { @MainActor in self?.screensChanged() }
         }
         lockTimer = Timer.scheduledTimer(withTimeInterval: 0.25, repeats: true) { [weak self] _ in
-            Task { @MainActor in self?.updateForNativeLock() }
+            Task { @MainActor in
+                self?.updateForNativeLock()
+                self?.confirmCoverage()
+            }
         }
         if phase == .active || phase == .preparing || phase == .releasing {
             beginTransition(to: .active)
@@ -78,14 +84,14 @@ final class CurtainCoordinator: ObservableObject {
         guard target == .active || target == .off, !sessionIsLocked else { return }
         let interim: CurtainPhase = target == .active ? .preparing : .releasing
         do {
-            try CurtainStateStore.write(interim)
+            try record(interim)
             phase = interim
             transitionTarget = target
             transitionDeadline = Date().addingTimeInterval(10)
             advanceTransition()
         } catch {
             phase = .fault
-            try? CurtainStateStore.write(.fault)
+            try? record(.fault)
         }
     }
 
@@ -96,7 +102,7 @@ final class CurtainCoordinator: ObservableObject {
                 if Date() >= (transitionDeadline ?? .distantPast) {
                     transitionTarget = nil
                     phase = .fault
-                    try? CurtainStateStore.write(.fault)
+                    try? record(.fault)
                     return
                 }
                 if transitionTimer == nil {
@@ -117,18 +123,18 @@ final class CurtainCoordinator: ObservableObject {
                 guard try recordingLock.tryLock() else { throw CurtainError.recordingInProgress }
                 defer { recordingLock.unlock() }
                 try showPanels()
-                try CurtainStateStore.write(.active)
+                try record(.active)
                 phase = .active
             } else {
                 panels.forEach { $0.orderOut(nil); $0.close() }
                 panels.removeAll()
-                try CurtainStateStore.write(.off)
+                try record(.off)
                 phase = .off
             }
         } catch {
             if target == .off { try? showPanels() }
             phase = .fault
-            try? CurtainStateStore.write(.fault)
+            try? record(.fault)
         }
     }
 
@@ -179,6 +185,30 @@ final class CurtainCoordinator: ObservableObject {
         } else if hiddenForNativeLock {
             beginTransition(to: .active)
         }
+    }
+
+    // The servers trust the marker only while this keeps rewriting it, so a crashed or hung app cannot
+    // leave agents working behind panels that are gone. Coverage that no longer matches the displays is
+    // rebuilt instead of confirmed.
+    private func confirmCoverage() {
+        guard phase != .off, phase != .fault else { return }
+        if phase == .active, !hiddenForNativeLock,
+           panels.count != NSScreen.screens.count || !panels.allSatisfy(\.isVisible) {
+            beginTransition(to: .active)
+            return
+        }
+        guard Date().timeIntervalSince(lastHeartbeat) >= CurtainStateStore.heartbeatSeconds else { return }
+        do {
+            try record(phase)
+        } catch {
+            phase = .fault
+            try? record(.fault)
+        }
+    }
+
+    private func record(_ recorded: CurtainPhase) throws {
+        try CurtainStateStore.write(recorded)
+        lastHeartbeat = Date()
     }
 
     private var sessionIsLocked: Bool {
