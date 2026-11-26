@@ -96,6 +96,7 @@ It scrolls wherever the pointer is, so move the pointer over the target with `ma
 | `text` | string, required | 1 to 2000 characters; any Unicode, including Chinese and emoji |
 | `app` | string | Name or bundle ID of a running app to type into, such as `TextEdit` or `com.apple.TextEdit` |
 | `window` | string | A window ref from `mac_window list`; nothing is pasted unless it is its app's focused window |
+| `background` | boolean | Type into `app`'s focused text field without bringing `app` to the front and without the clipboard. See [Background input](#background-input). |
 
 ```json
 {"text": "測試中文 abc", "app": "TextEdit"}
@@ -113,6 +114,7 @@ The result names the app that received the text, for example `Inserted 8 charact
 | `modifiers` | array | Any of `cmd`, `shift`, `alt`, `ctrl` |
 | `app` | string | Same as for `mac_type_text` |
 | `window` | string | Same as for `mac_type_text` |
+| `background` | boolean | Press the key in `app`'s focused text field without bringing `app` to the front. Takes no modifier but `shift`. See [Background input](#background-input). |
 
 ```json
 {"key": "n", "modifiers": ["cmd"], "app": "TextEdit"}
@@ -120,6 +122,19 @@ The result names the app that received the text, for example `Inserted 8 charact
 ```
 
 A character is found on the keyboard layout in use, so `cmd`+`z` presses the key marked Z on AZERTY or Dvorak too. With a non-Latin layout, such as Russian, the Latin layout macOS uses for shortcuts is used. A digit is the top-row key even on AZERTY, where that key types the digit only with `shift`, since macOS matches shortcuts such as `cmd`+`1` to it; to type digits there, use `mac_type_text`. For a character that needs `shift` or `alt`, give the key and the modifier, such as `1` with `shift` for `!` on a US keyboard, or type it with `mac_type_text`. Media keys, such as volume, are not supported.
+
+### Background input
+
+With `background: true`, `mac_type_text` and `mac_key` send their input to `app`'s own process, so `app` stays where it is and whatever you are using keeps the keyboard. It needs `app`, and does not take `window`.
+
+- Nothing is sent unless `app`'s focused element is a text field, text area, combo box, or search field, and not a password field. Focus one first, for example with `mac_ax_action` `focus`.
+- Text goes in as typed characters, without the clipboard and without the input method, so Chinese and emoji arrive as given.
+- `mac_key` takes no modifier but `shift`, since apps handle shortcuts such as Command-Z only while in front. For a menu command, use `mac_find` with `scope: "menubar"` and `mac_ax_action`.
+- Afterwards the field is read back, and `verified` says whether it shows the text, or whether a key changed the text or selection. A key such as `end`, which only scrolls a text area, reports `verified: false`.
+- It also works while the [Screen Curtain](#mac_curtain_status) is active, when other keyboard input is paused.
+- Mouse input cannot be sent this way: apps ignore clicks posted to a window that is not in front. Use `mac_ax_action` instead.
+
+It was checked with TextEdit. Other apps, especially browsers and Electron apps, may handle background keys differently; check `verified`.
 
 ### `mac_ui_tree`
 
@@ -278,7 +293,7 @@ The Screen Curtain is a black cover that MacControl.app puts over every display,
 | `state` | What agents can do |
 | --- | --- |
 | `off` | Everything, as without a curtain |
-| `active` | Read and act through Accessibility: `mac_ui_tree`, `mac_find`, `mac_wait`, `mac_ax_action`, and `mac_window` `list`. `mac_screenshot` without `app` shows the desktop beneath the curtain. Recording, mouse, scroll, keyboard, and window changes fail with `ACTION_UNSUPPORTED` |
+| `active` | Read and act through Accessibility: `mac_ui_tree`, `mac_find`, `mac_wait`, `mac_ax_action`, and `mac_window` `list`. `mac_screenshot` without `app` shows the desktop beneath the curtain, and `mac_type_text` and `mac_key` work with `background`. Recording, mouse, scroll, other keyboard input, and window changes fail with `ACTION_UNSUPPORTED` |
 | `preparing`, `releasing` | Nothing but `mac_status` and `mac_curtain_status`, while the curtain is being put up or taken down. Other tools fail with `SETUP_PROBLEM` |
 | `fault` | The same, until the person at the Mac presses the shortcut again. This also covers a curtain the server cannot confirm: MacControl.app has stopped updating it, its panels do not cover every display, or panels still show while the curtain is recorded as off |
 

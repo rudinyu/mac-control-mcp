@@ -96,6 +96,7 @@
 | `text` | 字串，必填 | 1 到 2000 個字元；任何 Unicode 都可以，包括中文和 emoji |
 | `app` | 字串 | 要輸入的執行中 App 名稱或 bundle ID，例如 `TextEdit` 或 `com.apple.TextEdit` |
 | `window` | 字串 | `mac_window list` 的視窗 ref；只有它是所屬 App 的焦點視窗時才會貼上 |
+| `background` | 布林 | 打進 `app` 的焦點文字欄位，不把 `app` 切到前景，也不經過剪貼簿。見[背景輸入](#背景輸入)。 |
 
 ```json
 {"text": "測試中文 abc", "app": "TextEdit"}
@@ -113,6 +114,7 @@
 | `modifiers` | 陣列 | `cmd`、`shift`、`alt`、`ctrl` 任意組合 |
 | `app` | 字串 | 同 `mac_type_text` |
 | `window` | 字串 | 同 `mac_type_text` |
+| `background` | 布林 | 在 `app` 的焦點文字欄位按鍵，不把 `app` 切到前景。只接受 `shift` 這個修飾鍵。見[背景輸入](#背景輸入)。 |
 
 ```json
 {"key": "n", "modifiers": ["cmd"], "app": "TextEdit"}
@@ -120,6 +122,19 @@
 ```
 
 字元會依目前使用的鍵盤配置找到對應的按鍵，所以在 AZERTY 或 Dvorak 上，`cmd`+`z` 也會按下標著 Z 的鍵。使用俄文等非拉丁字母配置時，會改用 macOS 處理快速鍵時搭配的拉丁字母配置。數字一律對應最上排的鍵，即使在 AZERTY 上那排要加 `shift` 才打得出數字也一樣，因為 macOS 會把 `cmd`+`1` 等快速鍵對應到那排鍵；要在那種配置上輸入數字，請用 `mac_type_text`。需要 `shift` 或 `alt` 才能打出的字元，請給按鍵加上修飾鍵，例如在美式鍵盤上用 `1` 加 `shift` 打出 `!`，或改用 `mac_type_text` 輸入。不支援音量等多媒體鍵。
+
+### 背景輸入
+
+加上 `background: true` 時，`mac_type_text` 和 `mac_key` 會把輸入直接送給 `app` 的程序，`app` 不會切到前景，你正在用的 App 仍保有鍵盤。必須給 `app`，不接受 `window`。
+
+- 只有 `app` 的焦點元素是文字欄位、文字區、組合方塊或搜尋欄位，而且不是密碼欄位時才會送出。可以先用 `mac_ax_action` 的 `focus` 把焦點移過去。
+- 文字以打字的方式送入，不經過剪貼簿，也不經過輸入法，所以中文和 emoji 會照原樣送達。
+- `mac_key` 只接受 `shift` 這個修飾鍵，因為 App 只有在前景時才會處理 Command-Z 這類快捷鍵。要執行選單指令，請用 `mac_find` 加 `scope: "menubar"`，再用 `mac_ax_action`。
+- 送出後會讀回欄位，`verified` 表示欄位是否顯示了這段文字，或按鍵是否改變了文字或選取範圍。像 `end` 這種在文字區只會捲動的按鍵，會回報 `verified: false`。
+- [螢幕簾幕](#mac_curtain_status)開啟、其他鍵盤輸入暫停時也能使用。
+- 滑鼠輸入無法用這種方式送出：App 會忽略送到非前景視窗的點擊。請改用 `mac_ax_action`。
+
+目前只在 TextEdit 驗證過。其他 App，尤其是瀏覽器和 Electron App，處理背景按鍵的方式可能不同，請看 `verified`。
 
 ### `mac_ui_tree`
 
@@ -278,7 +293,7 @@ App 停止回應時（例如忙碌或當掉），讀取會在那裡停止，不�
 | `state` | 代理能做什麼 |
 | --- | --- |
 | `off` | 全部，和沒有簾幕時相同 |
-| `active` | 透過輔助使用讀取及操作：`mac_ui_tree`、`mac_find`、`mac_wait`、`mac_ax_action`，以及 `mac_window` 的 `list`。不帶 `app` 的 `mac_screenshot` 會顯示簾幕底下的桌面。錄影、滑鼠、捲動、鍵盤和變更視窗會以 `ACTION_UNSUPPORTED` 失敗 |
+| `active` | 透過輔助使用讀取及操作：`mac_ui_tree`、`mac_find`、`mac_wait`、`mac_ax_action`，以及 `mac_window` 的 `list`。不帶 `app` 的 `mac_screenshot` 會顯示簾幕底下的桌面，`mac_type_text` 和 `mac_key` 可加 `background` 使用。錄影、滑鼠、捲動、其他鍵盤輸入和變更視窗會以 `ACTION_UNSUPPORTED` 失敗 |
 | `preparing`、`releasing` | 簾幕正在蓋上或移除，只能用 `mac_status` 和 `mac_curtain_status`，其他工具以 `SETUP_PROBLEM` 失敗 |
 | `fault` | 同上，直到在 Mac 前的人再按一次快捷鍵。伺服器無法確認簾幕時也是這個狀態：MacControl.app 停止更新狀態、遮罩沒有蓋住每部顯示器，或記錄為關閉時仍有遮罩 |
 

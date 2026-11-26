@@ -144,7 +144,7 @@ flowchart TD
 | `mac_ax_action` | 新增選填的 `mode`，預設 `standard`；`background` 使用鎖定下的授權路徑；`curtain` 使用未鎖定且遮罩正常的授權路徑。兩者都必須指定 App 及有效 ref |
 | `mac_screenshot` | 原生鎖定時不作為背景觀測後端。已實作：未鎖定的簾幕模式以 ScreenCaptureKit 擷取並排除遮罩，不接受 `app`（不切換前景）；全黑影像或擷取期間簾幕改變都不回傳。另新增 `display` 參數及 `mac_status` 的 `displays`，可擷取其他顯示器 |
 | `mac_record_start` | 第一版不在原生鎖定或簾幕模式下啟動錄影 |
-| `mac_mouse`、`mac_scroll`、`mac_key`、`mac_type_text`、變更視窗的 `mac_window` | 鎖定時維持拒絕；背景路徑不呼叫它們 |
+| `mac_mouse`、`mac_scroll`、`mac_key`、`mac_type_text`、變更視窗的 `mac_window` | 鎖定時維持拒絕；背景路徑不呼叫它們。已實作：`mac_type_text`、`mac_key` 的 `background` 以 `CGEvent.postToPid` 送給指定 App 的程序，不切換前景；送出前確認焦點元素是非密碼的文字欄位，送出後讀回。簾幕開啟時可用。實測（TextEdit）：一般按鍵與 shift 可送達，Command 快捷鍵與滑鼠點擊在背景無效，因此不開放 |
 
 例如，以下是未來可能接受的呼叫，並非現在可直接使用的參數：
 

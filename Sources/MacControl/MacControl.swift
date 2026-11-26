@@ -5,6 +5,14 @@ import CoreGraphics
 import Foundation
 import ScreenCaptureKit
 
+private struct BackgroundField {
+    let element: AXUIElement
+    let role: String
+    let value: String?
+    let selection: CFRange?
+    let window: String?
+}
+
 private final class CaptureBox<T>: @unchecked Sendable {
     var result: Result<T, Error>?
 }
@@ -28,6 +36,12 @@ private let activationTimeout: TimeInterval = 2
 private let focusPollInterval: TimeInterval = 0.05
 // Gives the target app time to read the clipboard before the previous contents are restored.
 private let pasteSettleMicroseconds: useconds_t = 500_000
+// Background input goes straight to the app's process, a little apart so it keeps the order, and the field is read
+// back after a moment.
+private let backgroundKeyMicroseconds: useconds_t = 5_000
+private let backgroundSettleMicroseconds: useconds_t = 300_000
+// Focused roles that take typed text, so background keys cannot press a button or toggle a box instead.
+private let backgroundTextRoles: Set<String> = ["AXTextField", "AXTextArea", "AXComboBox", "AXSearchField"]
 
 // The process of the running recording (recordingScript), or 0. It is stopped when the server ends, so a recording
 // does not go on after the client has quit. A signal handler reads it, so it is a plain global.
@@ -255,6 +269,8 @@ private final class MacControlServer: MCPServer {
         let inputApp: [String: Any] = ["type": "string", "description": "The app in front when the input was sent."]
         let inputWindow: [String: Any] = ["type": ["string", "null"], "description": "The title of the focused window when the input was sent."]
         let keyboardWindow: [String: Any] = ["type": "string", "description": "A window ref from mac_window list. Nothing is sent unless it is the focused window of its app; use mac_window focus with it first. Its app is used when app is left out."]
+        let backgroundProperty: [String: Any] = ["type": "boolean", "description": "Send to app's focused text field without bringing app to the front, posting to its process instead of the system. Requires app, not window. Nothing is sent unless that field takes text and is not a password field; the field is read back afterwards. Works while the local Screen Curtain is active. Default false."]
+        let verified: [String: Any] = ["type": "boolean", "description": "With background, whether reading the field back showed the input."]
         let snapshot: [String: Any] = ["type": ["string", "null"], "description": "The snapshot the refs belong to."]
         let elementProperties: [String: Any] = [
             "role": string, "title": string, "value": string, "description": string,
@@ -526,17 +542,18 @@ private final class MacControlServer: MCPServer {
             ],
             [
                 "name": "mac_type_text",
-                "description": "Insert Unicode text into the focused field by placing it on the clipboard for a moment and pressing Command-V, then restore the prior clipboard when possible. Requires Accessibility permission.",
+                "description": "Insert Unicode text into the focused field by placing it on the clipboard for a moment and pressing Command-V, then restore the prior clipboard when possible. With background, type it into app's focused text field instead, without the clipboard and without bringing app to the front. Requires Accessibility permission.",
                 "inputSchema": [
                     "type": "object",
                     "properties": [
                         "text": ["type": "string", "maxLength": textLimit, "description": "The text to insert."],
                         "app": appProperty("It is brought to the front first, and nothing is pasted unless it is still in front. Without app or window, nothing is pasted while the app running this agent is in front."),
-                        "window": keyboardWindow
+                        "window": keyboardWindow,
+                        "background": backgroundProperty
                     ],
                     "required": ["text"], "additionalProperties": false
                 ],
-                "outputSchema": output(["characters": integer, "app": inputApp, "window": inputWindow, "message": message], required: ["characters", "app", "window", "message"]),
+                "outputSchema": output(["characters": integer, "app": inputApp, "window": inputWindow, "background": boolean, "verified": verified, "message": message], required: ["characters", "app", "window", "message"]),
                 "annotations": sendsInput
             ],
             [
@@ -548,11 +565,12 @@ private final class MacControlServer: MCPServer {
                         "key": ["type": "string", "description": "A character typed by one key without modifiers on the current keyboard layout, such as a, 7, or /, found by what it types, so cmd+z works on AZERTY and Dvorak too; or one of \(namedKeys.joined(separator: ", ")). delete is forward delete."],
                         "modifiers": ["type": "array", "items": ["type": "string", "enum": keyModifiers], "uniqueItems": true, "description": "Keys to hold down while pressing key."],
                         "app": appProperty("It is brought to the front first, and no key is sent unless it is still in front. Without app or window, no key is sent while the app running this agent is in front."),
-                        "window": keyboardWindow
+                        "window": keyboardWindow,
+                        "background": backgroundProperty.merging(["description": "Press the key in app's focused text field without bringing app to the front, posting to its process instead of the system. Requires app, not window, and takes no modifier but shift: apps handle shortcuts only while in front, so use mac_find with scope menubar and mac_ax_action for menu commands. Nothing is sent unless that field takes text and is not a password field. Works while the local Screen Curtain is active. Default false."]) { $1 }
                     ],
                     "required": ["key"], "additionalProperties": false
                 ],
-                "outputSchema": output(["keys": ["type": "string", "description": "The keys pressed, such as cmd+c."], "app": inputApp, "window": inputWindow, "message": message], required: ["keys", "app", "window", "message"]),
+                "outputSchema": output(["keys": ["type": "string", "description": "The keys pressed, such as cmd+c."], "app": inputApp, "window": inputWindow, "background": boolean, "verified": verified, "message": message], required: ["keys", "app", "window", "message"]),
                 "annotations": sendsInput
             ]
         ]
@@ -1400,9 +1418,41 @@ private final class MacControlServer: MCPServer {
     }
 
     private func typeText(_ args: [String: Any]) throws -> [String: Any] {
-        try requireCurtainOff("keyboard input")
+        let background = try backgroundFlag(args)
+        if !background { try requireCurtainOff("keyboard input") }
         guard let value = args["text"] as? String, !value.isEmpty, value.count <= textLimit else {
             throw ToolFailure("text must contain 1 to \(textLimit) characters.")
+        }
+        if background {
+            let (target, field) = try backgroundTarget(args)
+            // Up to 20 UTF-16 units go in one key event, split only between characters.
+            var chunks: [String] = [], chunk = ""
+            for character in value {
+                if chunk.utf16.count + String(character).utf16.count > 20, !chunk.isEmpty { chunks.append(chunk); chunk = "" }
+                chunk.append(character)
+            }
+            if !chunk.isEmpty { chunks.append(chunk) }
+            var events: [CGEvent] = []
+            for piece in chunks {
+                var units = Array(piece.utf16)
+                for down in [true, false] {
+                    guard let event = CGEvent(keyboardEventSource: nil, virtualKey: 0, keyDown: down) else {
+                        throw ToolFailure("Could not create a keyboard event; no input was sent.", .internalError)
+                    }
+                    event.flags = []
+                    event.keyboardSetUnicodeString(stringLength: units.count, unicodeString: &units)
+                    events.append(event)
+                }
+            }
+            try cancellation.check()
+            for event in events { event.postToPid(target.processIdentifier); usleep(backgroundKeyMicroseconds) }
+            usleep(backgroundSettleMicroseconds)
+            let after = shortString(attribute(field.element, kAXValueAttribute as CFString), limit: 1_000_000) ?? ""
+            let shown = after != (field.value ?? "") && after.contains(value)
+            let name = target.localizedName ?? "the app"
+            return ["characters": value.count, "app": name, "window": field.window ?? NSNull(), "background": true, "verified": shown,
+                    "message": shown ? "Typed \(value.count) characters into \(name)'s focused \(field.role) in the background; reading it back shows the text."
+                                     : "Typed \(value.count) characters into \(name)'s focused \(field.role) in the background, but reading it back did not show the text. Read the field before typing again."]
         }
         let window = try inputWindow(args)
         let target = try targetApp(args) ?? window?.app
@@ -1463,7 +1513,6 @@ private final class MacControlServer: MCPServer {
 
 
     private func key(_ args: [String: Any]) throws -> [String: Any] {
-        try requireCurtainOff("keyboard input")
         guard let keyName = (args["key"] as? String)?.lowercased(), !keyName.isEmpty else {
             throw ToolFailure("key must be a character or a key name.")
         }
@@ -1482,6 +1531,32 @@ private final class MacControlServer: MCPServer {
               names.allSatisfy({ keyModifiers.contains($0) }) else {
             throw ToolFailure("Invalid modifiers")
         }
+        if try backgroundFlag(args) {
+            guard names.allSatisfy({ $0 == "shift" }) else {
+                throw ToolFailure("With background, mac_key takes no modifier but shift: apps handle shortcuts only while in front. For a menu command, use mac_find with scope menubar and mac_ax_action; or leave out background.", .unsupported)
+            }
+            let (target, field) = try backgroundTarget(args)
+            guard let down = CGEvent(keyboardEventSource: nil, virtualKey: code, keyDown: true),
+                  let up = CGEvent(keyboardEventSource: nil, virtualKey: code, keyDown: false) else {
+                throw ToolFailure("Could not create a keyboard event.", .internalError)
+            }
+            down.flags = names.isEmpty ? [] : .maskShift
+            up.flags = down.flags
+            try cancellation.check()
+            down.postToPid(target.processIdentifier)
+            usleep(backgroundKeyMicroseconds)
+            up.postToPid(target.processIdentifier)
+            usleep(backgroundSettleMicroseconds)
+            let after = backgroundState(field.element)
+            let changed = after.value != field.value || after.selection?.location != field.selection?.location
+                || after.selection?.length != field.selection?.length
+            let keys = (names + [keyName]).joined(separator: "+")
+            let name = target.localizedName ?? "the app"
+            return ["keys": keys, "app": name, "window": field.window ?? NSNull(), "background": true, "verified": changed,
+                    "message": changed ? "Pressed \(keys) in \(name)'s focused \(field.role) in the background; its text or selection changed."
+                                       : "Pressed \(keys) in \(name)'s focused \(field.role) in the background, but its text and selection did not change. The key may have done something else, such as submitting a form; read the app before pressing it again."]
+        }
+        try requireCurtainOff("keyboard input")
         let window = try inputWindow(args)
         let target = try targetApp(args) ?? window?.app
         try requireAccessibility()
@@ -1503,6 +1578,49 @@ private final class MacControlServer: MCPServer {
         up.post(tap: .cghidEventTap)
         let keys = (names + [keyName]).joined(separator: "+")
         return ["keys": keys, "app": receiver.app, "window": receiver.window ?? NSNull(), "message": "Pressed \(keys) in \(receiver.app)."]
+    }
+
+    private func backgroundFlag(_ args: [String: Any]) throws -> Bool {
+        guard let value = args["background"] else { return false }
+        guard let flag = value as? Bool else { throw ToolFailure("background must be true or false.") }
+        return flag
+    }
+
+    // The app and its focused text field for background input, checked before anything is sent: the app is named,
+    // the Mac is unlocked, and the field takes text and is not a password field.
+    private func backgroundTarget(_ args: [String: Any]) throws -> (NSRunningApplication, BackgroundField) {
+        guard args["window"] == nil else {
+            throw ToolFailure("With background, pass app instead of window; the input goes to app's focused field.")
+        }
+        guard let target = try targetApp(args) else {
+            throw ToolFailure("With background, app is required: it names the app whose focused field gets the input.")
+        }
+        try requireAccessibility()
+        try requireUnlocked()
+        let appElement = AXUIElementCreateApplication(target.processIdentifier)
+        AXUIElementSetMessagingTimeout(appElement, axMessagingTimeout)
+        let name = target.localizedName ?? "The app"
+        guard let element = elementAttribute(appElement, kAXFocusedUIElementAttribute as CFString) else {
+            throw ToolFailure("\(name) reports no focused element, so the input has nowhere to go; no input was sent. Focus a text field first, for example with mac_ax_action focus.", .unsupported)
+        }
+        let role = shortString(attribute(element, kAXRoleAttribute as CFString)) ?? "unknown"
+        guard !isSecure(element, role: role) else {
+            throw ToolFailure("\(name)'s focused element is a password field; background input does not type into password fields. No input was sent.", .unsupported)
+        }
+        guard backgroundTextRoles.contains(role) else {
+            throw ToolFailure("\(name)'s focused element is \(role), not a text field, so background input could do something else; no input was sent. Focus a text field first, for example with mac_ax_action focus.", .unsupported)
+        }
+        let state = backgroundState(element)
+        let window = elementAttribute(appElement, kAXFocusedWindowAttribute as CFString).flatMap(windowTitle)
+        return (target, BackgroundField(element: element, role: role, value: state.value, selection: state.selection, window: window))
+    }
+
+    private func backgroundState(_ element: AXUIElement) -> (value: String?, selection: CFRange?) {
+        let value = shortString(attribute(element, kAXValueAttribute as CFString), limit: 1_000_000)
+        var range = CFRange()
+        guard let raw = attribute(element, kAXSelectedTextRangeAttribute as CFString), CFGetTypeID(raw) == AXValueGetTypeID(),
+              AXValueGetValue(raw as! AXValue, .cfRange, &range) else { return (value, nil) }
+        return (value, range)
     }
 
     private func attribute(_ element: AXUIElement, _ name: CFString) -> CFTypeRef? {
