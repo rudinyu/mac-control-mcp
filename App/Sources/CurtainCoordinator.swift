@@ -198,16 +198,13 @@ final class CurtainCoordinator: ObservableObject {
             return
         }
         guard Date().timeIntervalSince(lastHeartbeat) >= CurtainStateStore.heartbeatSeconds else { return }
-        do {
-            try record(phase)
-        } catch {
-            phase = .fault
-            try? record(.fault)
-        }
+        // A failed write is tried again on the next tick; until one succeeds, the marker ages and the
+        // servers already treat it as a fault.
+        try? record(phase)
     }
 
-    private func record(_ recorded: CurtainPhase) throws {
-        try CurtainStateStore.write(recorded)
+    private func record(_ phase: CurtainPhase) throws {
+        try CurtainStateStore.write(phase)
         lastHeartbeat = Date()
     }
 

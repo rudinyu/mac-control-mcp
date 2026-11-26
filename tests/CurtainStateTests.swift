@@ -33,6 +33,14 @@ private enum CurtainStateTests {
               phase(at: now.addingTimeInterval(CurtainStateStore.staleAfterSeconds - 1)) == .active)
         check("marker far in the future is a fault", phase(at: now.addingTimeInterval(-60)) == .fault)
 
+        try CurtainStateStore.write(.fault, at: file, now: now)
+        check("an old fault stays a recorded fault",
+              CurtainStateStore.reading(at: file, now: late).recorded == .fault)
+        try CurtainStateStore.write(.releasing, at: file, now: now)
+        check("unconfirmed releasing marker is a fault", phase(at: late) == .fault)
+        try Data("active\ninf\n".utf8).write(to: file)
+        check("active marker with an infinite time is a fault", phase() == .fault)
+
         try CurtainStateStore.write(.off, at: file, now: now)
         check("off marker round trips", phase() == .off)
         check("off needs no confirmation", phase(at: late) == .off)

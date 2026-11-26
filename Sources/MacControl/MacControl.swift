@@ -574,7 +574,7 @@ private final class MacControlServer: MCPServer {
         }
         if [.preparing, .releasing, .fault].contains(curtainPhase), name != "mac_status", name != "mac_curtain_status" {
             if !(curtainPhase == .fault && ["mac_record_status", "mac_record_stop"].contains(name)) {
-                throw ToolFailure("The local Screen Curtain is changing, or MacControl.app cannot confirm that it covers the displays. All agent actions are paused; recover at the Mac.", .setup)
+                throw ToolFailure("The local Screen Curtain is changing, or MacControl.app cannot confirm that it covers the displays. All agent actions are paused; restore it at the Mac with MacControl.app or its recovery shortcut, Control-Option-Command-F12.", .setup)
             }
         }
         if curtainPhase == .active && name == "mac_request_screen_recording" {
@@ -647,7 +647,7 @@ private final class MacControlServer: MCPServer {
         let locked = inputBlockReason() != nil
         let message: String
         switch phase {
-        case .fault where reading.stale:
+        case .fault where reading.stale && reading.recorded != .fault:
             message = "MacControl.app has not confirmed the curtain for over \(Int(CurtainStateStore.staleAfterSeconds)) seconds, so the displays may be uncovered. Agent actions are paused; check MacControl.app at the Mac."
         case .off:
             message = "The local Screen Curtain is off."
