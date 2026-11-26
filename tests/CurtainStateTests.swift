@@ -43,6 +43,8 @@ private enum CurtainStateTests {
 
         try CurtainStateStore.write(.off, at: file, now: now)
         check("off marker round trips", phase() == .off)
+        check("off is written as a bare phase that older servers read",
+              (try? String(contentsOf: file, encoding: .utf8)) == "off\n")
         check("off needs no confirmation", phase(at: late) == .off)
 
         try Data("active\n".utf8).write(to: file)

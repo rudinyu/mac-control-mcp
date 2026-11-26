@@ -71,7 +71,10 @@ enum CurtainStateStore {
         let directory = url.deletingLastPathComponent()
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true,
                                                 attributes: [.posixPermissions: 0o700])
-        let text = phase.rawValue + "\n" + String(format: "%.3f", now.timeIntervalSince1970) + "\n"
+        // Off is written without a time: it needs no confirmation, and servers from before the time was added
+        // read only a bare phase, so they would otherwise see a fault and stay paused after the curtain is off.
+        let text = phase == .off ? "off\n"
+            : phase.rawValue + "\n" + String(format: "%.3f", now.timeIntervalSince1970) + "\n"
         try Data(text.utf8).write(to: url, options: .atomic)
         guard chmod(url.path, 0o600) == 0 else {
             throw NSError(domain: NSPOSIXErrorDomain, code: Int(errno),
