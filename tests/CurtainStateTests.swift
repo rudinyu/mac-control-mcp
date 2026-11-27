@@ -78,6 +78,19 @@ private enum CurtainStateTests {
               CurtainCheck.evaluate(CurtainReading(recorded: .off, stale: false), sessionLocked: false, coverage: .full)
                 .problem?.contains("still on the displays") == true)
 
+        let t0 = Date(timeIntervalSince1970: 1_000_000)
+        func decide(_ age: TimeInterval, armed: TimeInterval = 0, shortcut: TimeInterval = -100, at now: TimeInterval = 10) -> LocalUseDecision {
+            LocalUseDecision.decide(now: t0.addingTimeInterval(now), armedAt: t0.addingTimeInterval(armed),
+                                    inputAge: age, lastShortcutAt: t0.addingTimeInterval(shortcut))
+        }
+        check("input before the grace ended waits", decide(11) == .wait)
+        check("input after the grace locks", decide(1) == .lock)
+        check("input just seen waits for the shortcut", decide(0.1) == .wait)
+        check("input next to the shortcut is let through", decide(1, shortcut: 9.2) == .ignoreShortcut)
+        check("input well after the shortcut locks", decide(1, shortcut: 5) == .lock)
+        check("no input recorded waits", decide(.infinity) == .wait)
+        check("a negative age waits", decide(-1) == .wait)
+
         if failures > 0 { exit(1) }
         print("All curtain state tests passed")
     }

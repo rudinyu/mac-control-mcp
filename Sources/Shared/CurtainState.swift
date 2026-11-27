@@ -118,3 +118,22 @@ struct CurtainCheck: Equatable {
         }
     }
 }
+
+// Whether keyboard or mouse input at the Mac, while the curtain is active, should lock it. Input counts once it is
+// after the grace that ends at armedAt and has been seen for a moment, so the recovery shortcut, whose own key
+// press is input too, can take the curtain down first; input close to that shortcut is let through.
+enum LocalUseDecision: Equatable {
+    case wait
+    case ignoreShortcut
+    case lock
+
+    static let settleSeconds: TimeInterval = 0.3
+    static let shortcutWindowSeconds: TimeInterval = 1
+
+    static func decide(now: Date, armedAt: Date, inputAge: TimeInterval, lastShortcutAt: Date) -> LocalUseDecision {
+        guard inputAge.isFinite, inputAge >= 0 else { return .wait }
+        let inputAt = now.addingTimeInterval(-inputAge)
+        guard inputAt > armedAt, inputAge >= settleSeconds else { return .wait }
+        return abs(lastShortcutAt.timeIntervalSince(inputAt)) < shortcutWindowSeconds ? .ignoreShortcut : .lock
+    }
+}

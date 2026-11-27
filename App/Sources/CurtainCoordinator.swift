@@ -32,6 +32,11 @@ final class CurtainCoordinator: ObservableObject {
     var isActive: Bool { phase == .active }
 
     func setLockOnLocalUse(_ on: Bool) {
+        if on && lockScreenFunction == nil {
+            SetupModel.shared.note("Screen Curtain: this macOS does not offer the lock MacControl uses, so Lock the Mac When Someone Uses It stays off.")
+            lockOnLocalUse = false
+            return
+        }
         lockOnLocalUse = on
         UserDefaults.standard.set(on, forKey: lockOnLocalUseKey)
         armedAt = Date().addingTimeInterval(localUseGraceSeconds)
@@ -222,41 +227,40 @@ final class CurtainCoordinator: ObservableObject {
             if sessionIsLocked {
                 lockRequestedAt = nil
                 SetupModel.shared.note("Screen Curtain: the Mac locked after local use.", show: false)
-            } else if now.timeIntervalSince(requested) > 3 {
-                // The lock did not happen; agents stay paused until someone at the Mac restores the displays.
-                lockRequestedAt = nil
-                lockedForLocalUse = false
-                SetupModel.shared.note("Screen Curtain: the Mac did not lock after local use; pausing agents.", show: false)
-                phase = .fault
-                try? record(.fault)
+            } else if now.timeIntervalSince(requested) > lockConfirmSeconds {
+                failLocalUseLock("the Mac did not lock within \(Int(lockConfirmSeconds)) seconds")
             }
             return
         }
         guard lockOnLocalUse, phase == .active, !hiddenForNativeLock, !sessionIsLocked, now >= armedAt else { return }
         let age = localInputTypes.map { CGEventSource.secondsSinceLastEventType(.hidSystemState, eventType: $0) }.min() ?? .infinity
-        let inputAt = now.addingTimeInterval(-age)
-        // A moment for the recovery shortcut, whose key press is input too, to take the curtain down first.
-        guard inputAt > armedAt, now.timeIntervalSince(inputAt) >= 0.3 else { return }
-        if abs(lastHotKeyAt.timeIntervalSince(inputAt)) < 1 {
-            armedAt = now
+        switch LocalUseDecision.decide(now: now, armedAt: armedAt, inputAge: age, lastShortcutAt: lastHotKeyAt) {
+        case .wait:
             return
-        }
-        SetupModel.shared.note("Screen Curtain: keyboard or mouse used at the Mac; locking it.", show: false)
-        lockRequestedAt = now
-        lockedForLocalUse = true
-        if !lockScreen() {
-            lockRequestedAt = now.addingTimeInterval(-10)
+        case .ignoreShortcut:
+            armedAt = now
+        case .lock:
+            SetupModel.shared.note("Screen Curtain: keyboard or mouse used at the Mac; locking it.", show: false)
+            guard let lock = lockScreenFunction else {
+                failLocalUseLock("this macOS does not offer the lock MacControl uses")
+                return
+            }
+            lockRequestedAt = now
+            lockedForLocalUse = true
+            // Whether it worked is read from the session on the next ticks, not from what the call returns.
+            _ = lock()
         }
     }
 
-    // Locks the session as Control-Command-Q does, through the login framework that macOS uses for it. Whether
-    // it worked is read from the session afterwards, not from what the call returns.
-    private func lockScreen() -> Bool {
-        guard let handle = dlopen("/System/Library/PrivateFrameworks/login.framework/Versions/Current/login", RTLD_LAZY),
-              let symbol = dlsym(handle, "SACLockScreenImmediate") else { return false }
-        typealias LockScreen = @convention(c) () -> Int32
-        _ = unsafeBitCast(symbol, to: LockScreen.self)()
-        return true
+    // The Mac did not lock: the curtain stays and agents pause until someone at the Mac restores the displays.
+    private func failLocalUseLock(_ reason: String) {
+        lockRequestedAt = nil
+        lockedForLocalUse = false
+        SetupModel.shared.note("Screen Curtain: \(reason) after local use; pausing agents.", show: false)
+        phase = .fault
+        do { try record(.fault) } catch {
+            SetupModel.shared.note("Screen Curtain: could not record the fault (\(error.localizedDescription)); agents pause once the state goes stale.", show: false)
+        }
     }
 
     // The servers trust the marker only while this keeps rewriting it, so a crashed or hung app cannot
@@ -287,6 +291,15 @@ final class CurtainCoordinator: ObservableObject {
 
 private let lockOnLocalUseKey = "curtainLockOnLocalUse"
 private let localUseGraceSeconds: TimeInterval = 2
+private let lockConfirmSeconds: TimeInterval = 3
+
+// SACLockScreenImmediate locks the session as Control-Command-Q does. It is in the login framework that macOS uses
+// for that, which is not public API, so it is looked up once and may be missing.
+private let lockScreenFunction: (@convention(c) () -> Int32)? = {
+    guard let handle = dlopen("/System/Library/PrivateFrameworks/login.framework/Versions/Current/login", RTLD_LAZY),
+          let symbol = dlsym(handle, "SACLockScreenImmediate") else { return nil }
+    return unsafeBitCast(symbol, to: (@convention(c) () -> Int32).self)
+}()
 private let localInputTypes: [CGEventType] = [.keyDown, .leftMouseDown, .rightMouseDown, .otherMouseDown, .mouseMoved,
                                               .leftMouseDragged, .rightMouseDragged, .otherMouseDragged, .scrollWheel]
 
