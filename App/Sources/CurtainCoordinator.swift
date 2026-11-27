@@ -1,6 +1,7 @@
 import AppKit
 import ApplicationServices
 import Carbon.HIToolbox
+import Darwin
 import SwiftUI
 
 @MainActor
@@ -20,8 +21,22 @@ final class CurtainCoordinator: ObservableObject {
     private let recordingLock = SharedLock("recording")
     private var hiddenForNativeLock = false
     private var lastHeartbeat = Date.distantPast
+    // Lock when used at the Mac: input from the keyboard or mouse after armedAt locks the Mac, and the unlock
+    // that follows restores the desktop, since the person who unlocked it is the user.
+    @Published private(set) var lockOnLocalUse = UserDefaults.standard.bool(forKey: lockOnLocalUseKey)
+    private var armedAt = Date.distantFuture
+    private var lastHotKeyAt = Date.distantPast
+    private var lockRequestedAt: Date?
+    private var lockedForLocalUse = false
 
     var isActive: Bool { phase == .active }
+
+    func setLockOnLocalUse(_ on: Bool) {
+        lockOnLocalUse = on
+        UserDefaults.standard.set(on, forKey: lockOnLocalUseKey)
+        armedAt = Date().addingTimeInterval(localUseGraceSeconds)
+        SetupModel.shared.note("Screen Curtain: lock when used at the Mac \(on ? "on" : "off").", show: false)
+    }
 
     private init() {
         // The recorded phase, not the checked one: after a crash the marker is stale, and the curtain
@@ -37,6 +52,7 @@ final class CurtainCoordinator: ObservableObject {
             Task { @MainActor in
                 self?.updateForNativeLock()
                 self?.confirmCoverage()
+                self?.watchForLocalUse()
             }
         }
         if phase == .active || phase == .preparing || phase == .releasing {
@@ -60,6 +76,7 @@ final class CurtainCoordinator: ObservableObject {
     }
 
     func toggleFromLocalHotKey() {
+        lastHotKeyAt = Date()
         switch phase {
         case .off:
             enable()
@@ -125,6 +142,7 @@ final class CurtainCoordinator: ObservableObject {
                 try showPanels()
                 try record(.active)
                 phase = .active
+                armedAt = Date().addingTimeInterval(localUseGraceSeconds)
             } else {
                 panels.forEach { $0.orderOut(nil); $0.close() }
                 panels.removeAll()
@@ -183,8 +201,62 @@ final class CurtainCoordinator: ObservableObject {
                 hiddenForNativeLock = true
             }
         } else if hiddenForNativeLock {
-            beginTransition(to: .active)
+            if lockedForLocalUse {
+                // The person who just unlocked the Mac is the user, so the desktop comes back.
+                lockedForLocalUse = false
+                SetupModel.shared.note("Screen Curtain: unlocked after a lock for local use; restoring the displays.", show: false)
+                beginTransition(to: .off)
+            } else {
+                beginTransition(to: .active)
+            }
         }
+    }
+
+    // Keyboard and mouse input in the HID state comes from the Mac's own keyboard and mouse, or from a program
+    // posting there. While the curtain is active, mac-control posts nothing there: its keyboard and mouse tools
+    // are paused, and background input goes to an app's process. So any such input after a short grace locks
+    // the Mac. Modifier keys are not counted, and the recovery shortcut's own key press is let through.
+    private func watchForLocalUse() {
+        let now = Date()
+        if let requested = lockRequestedAt {
+            if sessionIsLocked {
+                lockRequestedAt = nil
+                SetupModel.shared.note("Screen Curtain: the Mac locked after local use.", show: false)
+            } else if now.timeIntervalSince(requested) > 3 {
+                // The lock did not happen; agents stay paused until someone at the Mac restores the displays.
+                lockRequestedAt = nil
+                lockedForLocalUse = false
+                SetupModel.shared.note("Screen Curtain: the Mac did not lock after local use; pausing agents.", show: false)
+                phase = .fault
+                try? record(.fault)
+            }
+            return
+        }
+        guard lockOnLocalUse, phase == .active, !hiddenForNativeLock, !sessionIsLocked, now >= armedAt else { return }
+        let age = localInputTypes.map { CGEventSource.secondsSinceLastEventType(.hidSystemState, eventType: $0) }.min() ?? .infinity
+        let inputAt = now.addingTimeInterval(-age)
+        // A moment for the recovery shortcut, whose key press is input too, to take the curtain down first.
+        guard inputAt > armedAt, now.timeIntervalSince(inputAt) >= 0.3 else { return }
+        if abs(lastHotKeyAt.timeIntervalSince(inputAt)) < 1 {
+            armedAt = now
+            return
+        }
+        SetupModel.shared.note("Screen Curtain: keyboard or mouse used at the Mac; locking it.", show: false)
+        lockRequestedAt = now
+        lockedForLocalUse = true
+        if !lockScreen() {
+            lockRequestedAt = now.addingTimeInterval(-10)
+        }
+    }
+
+    // Locks the session as Control-Command-Q does, through the login framework that macOS uses for it. Whether
+    // it worked is read from the session afterwards, not from what the call returns.
+    private func lockScreen() -> Bool {
+        guard let handle = dlopen("/System/Library/PrivateFrameworks/login.framework/Versions/Current/login", RTLD_LAZY),
+              let symbol = dlsym(handle, "SACLockScreenImmediate") else { return false }
+        typealias LockScreen = @convention(c) () -> Int32
+        _ = unsafeBitCast(symbol, to: LockScreen.self)()
+        return true
     }
 
     // The servers trust the marker only while this keeps rewriting it, so a crashed or hung app cannot
@@ -212,6 +284,11 @@ final class CurtainCoordinator: ObservableObject {
         ((CGSessionCopyCurrentDictionary() as? [String: Any])?["CGSSessionScreenIsLocked"] as? NSNumber)?.boolValue == true
     }
 }
+
+private let lockOnLocalUseKey = "curtainLockOnLocalUse"
+private let localUseGraceSeconds: TimeInterval = 2
+private let localInputTypes: [CGEventType] = [.keyDown, .leftMouseDown, .rightMouseDown, .otherMouseDown, .mouseMoved,
+                                              .leftMouseDragged, .rightMouseDragged, .otherMouseDragged, .scrollWheel]
 
 private enum CurtainError: Error {
     case noDisplays

@@ -135,6 +135,8 @@ private struct MenuContent: View {
                 Image(systemName: curtain.isActive ? "rectangle.slash" : "rectangle")
             }
             Text(verbatim: "Press Control-Option-Command-F12 to cover or restore the displays.")
+            Toggle("Lock the Mac When Someone Uses It", isOn: Binding(get: { curtain.lockOnLocalUse },
+                                                                       set: { curtain.setLockOnLocalUse($0) }))
         } header: {
             Text(verbatim: "Screen Curtain")
         }

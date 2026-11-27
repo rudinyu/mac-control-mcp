@@ -201,5 +201,6 @@
   "%@ refused the server %@, so its previous entry was put back: %@": "%1$@ 拒絕了伺服器 %2$@，所以放回了原本的設定：%3$@",
   "%@ refused the server %@, and its previous entry could not be put back, so add it again yourself: %@": "%1$@ 拒絕了伺服器 %2$@，而且無法放回原本的設定，請自行重新加入：%3$@",
   "%@ refused the server %@: %@": "%1$@ 拒絕了伺服器 %2$@：%3$@",
-  "Kept %@ in %@, since it does not run MacControl.": "保留了 %2$@ 裡的 %1$@，因為它執行的不是 MacControl。"
+  "Kept %@ in %@, since it does not run MacControl.": "保留了 %2$@ 裡的 %1$@，因為它執行的不是 MacControl。",
+  "Lock the Mac When Someone Uses It": "有人使用這台 Mac 時鎖定"
 }

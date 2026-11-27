@@ -29,7 +29,7 @@ MacControl.app 是使用 mac-control 和 mac-exec 最簡單的方式。它內含
 
 ## 日常使用
 
-Set Up 完成後，視窗會關閉，MacControl 會常駐在**選單列**。選單會顯示目前狀態，並有 **Open MacControl…**、**Check Now**、**Open at Login** 和 **Quit**，並顯示**螢幕簾幕**是否開啟。按 Control-Option-Command-F12 可用黑色蓋住所有顯示器，代理仍可透過輔助使用繼續工作；再按一次恢復畫面，詳見[簾幕的工具說明](USAGE.zh-TW.md#mac_curtain_status)。簾幕開啟時無法 **Quit**。只有視窗開著時才會出現 Dock 圖示；關閉視窗不會結束 MacControl。如果選單列太滿，macOS 可能會把圖示藏起來；這時從「應用程式」或 Spotlight 再打開 MacControl，就會出現視窗。
+Set Up 完成後，視窗會關閉，MacControl 會常駐在**選單列**。選單會顯示目前狀態，並有 **Open MacControl…**、**Check Now**、**Open at Login** 和 **Quit**，並顯示**螢幕簾幕**是否開啟。按 Control-Option-Command-F12 可用黑色蓋住所有顯示器，代理仍可透過輔助使用繼續工作；再按一次恢復畫面，詳見[簾幕的工具說明](USAGE.zh-TW.md#mac_curtain_status)。「**有人使用這台 Mac 時鎖定**」會在簾幕開啟期間有人使用鍵盤或滑鼠時鎖定 Mac，解鎖後恢復畫面。簾幕開啟時無法 **Quit**。只有視窗開著時才會出現 Dock 圖示；關閉視窗不會結束 MacControl。如果選單列太滿，macOS 可能會把圖示藏起來；這時從「應用程式」或 Spotlight 再打開 MacControl，就會出現視窗。
 
 視窗頂端會用一行字說明整體狀態，例如「Ready: 3 clients connected, sandbox running.」。每個客戶端都有一個開關：打開就會連接；關閉時會先詢問，再從該客戶端移除 `mac-control` 和 `mac-exec`。修改設定後，橫幅會列出還在用舊設定的客戶端，按 **Apply** 就會更新。MacControl 必須放在「應用程式」裡才能連接客戶端，以免客戶端指到「下載項目」裡的副本。
 
